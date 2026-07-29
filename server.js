@@ -3,7 +3,7 @@ const cors = require("cors");
 
 const db = require("./firebase");
 const authRoutes = require("./auth");
-const authenticate = require("./authenticate");
+const authenticate = require("./middleware");
 const tournamentRoutes = require("./tournaments");
 
 
