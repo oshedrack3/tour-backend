@@ -186,4 +186,55 @@ router.patch("/:id", authenticate, async (req, res) => {
   }
 });
 
+router.post("/:id/team-logo", authenticate, async (req, res) => {
+  try {
+    const user = req.user;
+    const id = req.params.id;
+    const { logo, teamName } = req.body;
+    
+    if (!logo || !teamName) {
+      return res.status(400).json({
+        success: false,
+        message: "Logo and team name are required."
+      });
+    }
+    
+    const snapshot = await db.ref(`tournaments/${id}`).once("value");
+    
+    if (!snapshot.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "Tournament not found."
+      });
+    }
+    
+    const tournament = snapshot.val();
+    
+    if (tournament.adminUid !== user.uid) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied."
+      });
+    }
+    
+    const imageUrl = await uploadBase64Image(
+      logo,
+      "team-logos",
+      `${id}_${teamName}`
+    );
+    
+    res.json({
+      success: true,
+      imageUrl
+    });
+    
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+
 module.exports = router;
