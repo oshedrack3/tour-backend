@@ -1,9 +1,7 @@
 const db = require("./firebase");
 
 async function authenticate(req, res, next) {
-  
   try {
-    
     const token = req.headers.authorization;
     
     if (!token) {
@@ -49,22 +47,21 @@ async function authenticate(req, res, next) {
       });
     }
     
-    req.user = userSnapshot.val();
+    const user = userSnapshot.val();
+    
+    user.uid = session.uid;
+    
+    req.user = user;
     req.token = token;
     
     next();
     
   } catch (err) {
-    
     res.status(500).json({
       success: false,
       message: err.message
     });
-    
   }
-  
 }
 
 module.exports = authenticate;
-
-// end
