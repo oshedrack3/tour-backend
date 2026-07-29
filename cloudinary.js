@@ -1,5 +1,6 @@
 const { v2: cloudinary } = require("cloudinary");
 
+console.log("CLOUDINARY_URL =", process.env.CLOUDINARY_URL);
 cloudinary.config({
   secure: true
 });
