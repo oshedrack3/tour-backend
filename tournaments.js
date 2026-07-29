@@ -1,7 +1,9 @@
 const express = require("express");
 const { v4: uuid } = require("uuid");
 const db = require("./firebase");
-const authenticate = require("./authenticate");
+const authenticate = require("./middleware");
+
+
 
 const router = express.Router();
 
