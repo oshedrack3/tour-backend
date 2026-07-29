@@ -2,7 +2,7 @@ const express = require("express");
 const { v4: uuid } = require("uuid");
 const db = require("./firebase");
 const authenticate = require("./middleware");
-
+const { uploadBase64Image } = require("./cloudinary");
 
 
 const router = express.Router();
@@ -18,7 +18,11 @@ router.post("/create", authenticate, async (req, res) => {
       });
     }
 
-    const { name, format } = req.body;
+  const {
+  name,
+  format,
+  tournamentImage
+} = req.body;
 
     if (!name || !format) {
       return res.status(400).json({
@@ -28,16 +32,28 @@ router.post("/create", authenticate, async (req, res) => {
     }
 
     const id = uuid();
+    let imageUrl = null;
+
+if (tournamentImage) {
+  imageUrl = await uploadBase64Image(
+    tournamentImage,
+    "tournaments",
+    id
+  );
+}
+
 
     const tournament = {
-      id,
-      name,
-      format,
-      adminUid: user.uid,
-      teams: {},
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
+  id,
+  name,
+  format,
+  tournamentImage: imageUrl,
+  adminUid: user.uid,
+  teams: {},
+  createdAt: Date.now(),
+  updatedAt: Date.now()
+};
+
 
     await db.ref(`tournaments/${id}`).set(tournament);
 
