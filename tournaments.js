@@ -52,7 +52,6 @@ router.post("/create", authenticate, async (req, res) => {
   }
 });
 
-module.exports = router;
 
 
 router.get("/my", authenticate, async (req, res) => {
@@ -95,3 +94,6 @@ router.get("/my", authenticate, async (req, res) => {
     });
   }
 });
+
+
+module.exports = router;

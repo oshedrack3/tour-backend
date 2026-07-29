@@ -26,7 +26,6 @@ app.use("/tournaments", tournamentRoutes);
 app.get("/", (req, res) => {
   res.send("Backend Running");
 });
-
 app.get("/events", authenticate, (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
