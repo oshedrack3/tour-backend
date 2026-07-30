@@ -138,51 +138,48 @@ router.patch("/:id", authenticate, async (req, res) => {
   try {
     const user = req.user;
     const id = req.params.id;
-    
     const { path, value, updates } = req.body;
     
     if (!path && !updates) {
-      return res.status(400).json({
-        success: false,
-        message: "Update data is required."
-      });
+      return res.status(400).json({ success: false, message: "Update data is required." });
     }
     
     const snapshot = await db.ref(`tournaments/${id}`).once("value");
-    
-    if (!snapshot.exists()) {
-      return res.status(404).json({
-        success: false,
-        message: "Tournament not found."
-      });
-    }
+    if (!snapshot.exists()) return res.status(404).json({ success: false, message: "Tournament not found." });
     
     const tournament = snapshot.val();
-    
-    if (tournament.adminUid !== user.uid) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied."
-      });
-    }
+    if (tournament.adminUid !== user.uid) return res.status(403).json({ success: false, message: "Access denied." });
     
     if (updates) {
       updates.updatedAt = Date.now();
-      await db.ref(`tournaments/${id}`).update(updates);
+      
+      // FIX: If updating teams/teamLogos, merge instead of replace
+      const updatePayload = {};
+      for (const key in updates) {
+        if (key === 'teams' || key === 'teamLogos') {
+          // deep merge each team
+          for (const teamId in updates[key]) {
+            updatePayload[`teams/${teamId}`] = updates[key][teamId];
+          }
+        } else if (key === 'teamLogos') {
+          for (const name in updates[key]) {
+            updatePayload[`teamLogos/${name}`] = updates[key][name];
+          }
+        } else {
+          updatePayload[key] = updates[key];
+        }
+      }
+      
+      await db.ref(`tournaments/${id}`).update(updatePayload);
     } else {
       await db.ref(`tournaments/${id}/${path}`).set(value);
       await db.ref(`tournaments/${id}/updatedAt`).set(Date.now());
     }
     
-    res.json({
-      success: true
-    });
+    res.json({ success: true });
     
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
@@ -226,6 +223,43 @@ router.post("/:id/team-logo", authenticate, async (req, res) => {
     res.json({
       success: true,
       imageUrl
+    });
+    
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+router.delete("/:id", authenticate, async (req, res) => {
+  try {
+    const user = req.user;
+    const id = req.params.id;
+    
+    const snapshot = await db.ref(`tournaments/${id}`).once("value");
+    
+    if (!snapshot.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "Tournament not found."
+      });
+    }
+    
+    const tournament = snapshot.val();
+    
+    if (tournament.adminUid !== user.uid) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied."
+      });
+    }
+    
+    await db.ref(`tournaments/${id}`).remove();
+    
+    res.json({
+      success: true,
+      message: "Tournament deleted successfully."
     });
     
   } catch (err) {
