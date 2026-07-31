@@ -110,14 +110,18 @@ router.get("/my", authenticate, async (req, res) => {
       );
     } else {
       result = Object.values(tournaments).filter(t => {
-        return (
-          t.players &&
-          t.players[user.uid]
-        );
-      });
-    }
-    
-    res.json({
+  const player = t.players?.[user.uid];
+  
+  return (
+    player &&
+    (
+      player.status === "pending" ||
+      player.status === "accepted"
+    )
+  );
+});
+}
+       res.json({
       success: true,
       tournaments: result
     });
