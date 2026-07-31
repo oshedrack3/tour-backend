@@ -142,45 +142,79 @@ router.patch("/:id", authenticate, async (req, res) => {
     const { path, value, updates } = req.body;
     
     if (!path && !updates) {
-      return res.status(400).json({ success: false, message: "Update data is required." });
+      return res.status(400).json({
+        success: false,
+        message: "Update data is required."
+      });
     }
     
     const snapshot = await db.ref(`tournaments/${id}`).once("value");
-    if (!snapshot.exists()) return res.status(404).json({ success: false, message: "Tournament not found." });
+    
+    if (!snapshot.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "Tournament not found."
+      });
+    }
     
     const tournament = snapshot.val();
-    if (tournament.adminUid !== user.uid) return res.status(403).json({ success: false, message: "Access denied." });
+    
+    const isAdmin = tournament.adminUid === user.uid;
+    
+    if (!isAdmin) {
+      if (!updates) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied."
+        });
+      }
+      
+      const allowed = Object.keys(updates).every(key =>
+        key.startsWith("teams/") ||
+        key.startsWith("teamLogos/") ||
+        key.startsWith("matchSubmissions/")
+      );
+      
+      if (!allowed) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied."
+        });
+      }
+      
+      for (const key of Object.keys(updates)) {
+        if (key.startsWith("teams/")) {
+          const teamId = key.split("/")[1];
+          const team = tournament.teams?.[teamId];
+          
+          if (!team || team.ownerUid !== user.uid) {
+            return res.status(403).json({
+              success: false,
+              message: "You do not own this team."
+            });
+          }
+        }
+      }
+    }
     
     if (updates) {
       updates.updatedAt = Date.now();
       
-      
-      const updatePayload = {};
-      for (const key in updates) {
-        if (key === 'teams' || key === 'teamLogos') {
-          
-          for (const teamId in updates[key]) {
-            updatePayload[`teams/${teamId}`] = updates[key][teamId];
-          }
-        } else if (key === 'teamLogos') {
-          for (const name in updates[key]) {
-            updatePayload[`teamLogos/${name}`] = updates[key][name];
-          }
-        } else {
-          updatePayload[key] = updates[key];
-        }
-      }
-      
-      await db.ref(`tournaments/${id}`).update(updatePayload);
+      await db.ref(`tournaments/${id}`).update(updates);
     } else {
       await db.ref(`tournaments/${id}/${path}`).set(value);
       await db.ref(`tournaments/${id}/updatedAt`).set(Date.now());
     }
     
-    res.json({ success: true });
+    res.json({
+      success: true
+    });
     
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
   }
 });
 
