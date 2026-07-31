@@ -369,6 +369,63 @@ router.post("/:id/invite", authenticate, async (req, res) => {
     });
   }
 });
+router.post("/:id/respond", authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action } = req.body;
+    
+    if (!["accept", "decline"].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid response."
+      });
+    }
+    
+    const snapshot = await db.ref(`tournaments/${id}`).once("value");
+    
+    if (!snapshot.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "Tournament not found."
+      });
+    }
+    
+    const tournament = snapshot.val();
+    
+    if (
+      !tournament.players ||
+      !tournament.players[req.user.uid]
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not invited to this tournament."
+      });
+    }
+    
+    if (action === "accept") {
+      tournament.players[req.user.uid].status = "accepted";
+      tournament.players[req.user.uid].joinedAt = Date.now();
+    } else {
+      tournament.players[req.user.uid].status = "declined";
+      tournament.players[req.user.uid].respondedAt = Date.now();
+    }
+    
+    await db
+      .ref(`tournaments/${id}/players`)
+      .set(tournament.players);
+    
+    res.json({
+      success: true,
+      status: tournament.players[req.user.uid].status
+    });
+    
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
 
 
 module.exports = router;
