@@ -162,6 +162,15 @@ router.patch("/:id", authenticate, async (req, res) => {
     const isAdmin = tournament.adminUid === user.uid;
     
     if (!isAdmin) {
+      const player = tournament.players?.[user.uid];
+      
+      if (!player || player.status !== "accepted") {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied."
+        });
+      }
+      
       if (!updates) {
         return res.status(403).json({
           success: false,
@@ -183,14 +192,35 @@ router.patch("/:id", authenticate, async (req, res) => {
       }
       
       for (const key of Object.keys(updates)) {
-        if (key.startsWith("teams/")) {
-          const teamId = key.split("/")[1];
-          const team = tournament.teams?.[teamId];
-          
-          if (!team || team.ownerUid !== user.uid) {
+        if (!key.startsWith("teams/")) continue;
+        
+        const teamId = key.split("/")[1];
+        const existingTeam = tournament.teams?.[teamId];
+        const incomingTeam = updates[key];
+        
+        if (existingTeam) {
+          if (existingTeam.ownerUid !== user.uid) {
             return res.status(403).json({
               success: false,
               message: "You do not own this team."
+            });
+          }
+        } else {
+          const alreadyOwnsTeam = Object.values(tournament.teams || {}).some(
+            team => team.ownerUid === user.uid
+          );
+          
+          if (alreadyOwnsTeam) {
+            return res.status(403).json({
+              success: false,
+              message: "You already own a team."
+            });
+          }
+          
+          if (incomingTeam.ownerUid !== user.uid) {
+            return res.status(403).json({
+              success: false,
+              message: "Invalid owner."
             });
           }
         }
@@ -199,7 +229,6 @@ router.patch("/:id", authenticate, async (req, res) => {
     
     if (updates) {
       updates.updatedAt = Date.now();
-      
       await db.ref(`tournaments/${id}`).update(updates);
     } else {
       await db.ref(`tournaments/${id}/${path}`).set(value);
@@ -217,7 +246,6 @@ router.patch("/:id", authenticate, async (req, res) => {
     });
   }
 });
-
 router.post("/:id/team-logo", authenticate, async (req, res) => {
   try {
     const user = req.user;
