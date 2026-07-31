@@ -5,6 +5,33 @@ const authenticate = require("./middleware");
 const { uploadBase64Image } = require("./cloudinary");
 
 const router = express.Router();
+const PERMISSIONS = {
+  admin: [
+    "teams",
+    "teamLogos",
+    "matches",
+    "table",
+    "groups",
+    "groupMatches",
+    "qualifiedTeams",
+    "knockoutMatches",
+    "settings",
+    "players",
+    "matchSubmissions"
+  ],
+  
+  player: [
+    "teams",
+    "teamLogos",
+    "matchSubmissions"
+  ]
+};
+
+function canUpdate(role, key) {
+  const root = key.split("/")[0];
+  return PERMISSIONS[role]?.includes(root);
+}
+
 
 router.post("/create", authenticate, async (req, res) => {
   try {
@@ -115,12 +142,13 @@ router.get("/my", authenticate, async (req, res) => {
   return (
     player &&
     (
-      player.status === "pending" ||
-      player.status === "accepted"
+      player.status === "accepted" ||
+      player.hasNewInvitation === true
     )
   );
 });
-}
+      
+    }
        res.json({
       success: true,
       tournaments: result
@@ -133,7 +161,6 @@ router.get("/my", authenticate, async (req, res) => {
     });
   }
 });
-
 
 router.patch("/:id", authenticate, async (req, res) => {
   try {
@@ -160,6 +187,7 @@ router.patch("/:id", authenticate, async (req, res) => {
     const tournament = snapshot.val();
     
     const isAdmin = tournament.adminUid === user.uid;
+    const role = isAdmin ? "admin" : "player";
     
     if (!isAdmin) {
       const player = tournament.players?.[user.uid];
@@ -179,9 +207,7 @@ router.patch("/:id", authenticate, async (req, res) => {
       }
       
       const allowed = Object.keys(updates).every(key =>
-        key.startsWith("teams/") ||
-        key.startsWith("teamLogos/") ||
-        key.startsWith("matchSubmissions/")
+        canUpdate(role, key)
       );
       
       if (!allowed) {
@@ -191,44 +217,20 @@ router.patch("/:id", authenticate, async (req, res) => {
         });
       }
       
-      for (const key of Object.keys(updates)) {
-        if (!key.startsWith("teams/")) continue;
-        
-        const teamId = key.split("/")[1];
-        const existingTeam = tournament.teams?.[teamId];
-        const incomingTeam = updates[key];
-        
-        if (existingTeam) {
-          if (existingTeam.ownerUid !== user.uid) {
-            return res.status(403).json({
-              success: false,
-              message: "You do not own this team."
-            });
-          }
-        } else {
-          const alreadyOwnsTeam = Object.values(tournament.teams || {}).some(
-            team => team.ownerUid === user.uid
-          );
-          
-          if (alreadyOwnsTeam) {
-            return res.status(403).json({
-              success: false,
-              message: "You already own a team."
-            });
-          }
-          
-          if (incomingTeam.ownerUid !== user.uid) {
-            return res.status(403).json({
-              success: false,
-              message: "Invalid owner."
-            });
-          }
-        }
+      const validation = validateTeamUpdate(
+        tournament,
+        user,
+        updates
+      );
+      
+      if (!validation.success) {
+        return res.status(403).json(validation);
       }
     }
     
     if (updates) {
       updates.updatedAt = Date.now();
+      
       await db.ref(`tournaments/${id}`).update(updates);
     } else {
       await db.ref(`tournaments/${id}/${path}`).set(value);
@@ -246,6 +248,67 @@ router.patch("/:id", authenticate, async (req, res) => {
     });
   }
 });
+
+function validateTeamUpdate(tournament, user, updates) {
+  for (const key of Object.keys(updates)) {
+    if (!key.startsWith("teams/")) continue;
+    
+    const teamId = key.split("/")[1];
+    const existingTeam = tournament.teams?.[teamId];
+    const incomingTeam = updates[key];
+    
+    if (existingTeam) {
+      if (existingTeam.ownerUid !== user.uid) {
+        return {
+          success: false,
+          message: "You do not own this team."
+        };
+      }
+      
+      continue;
+    }
+    
+    const alreadyOwnsTeam = Object.values(tournament.teams || {}).some(
+      team => team.ownerUid === user.uid
+    );
+    
+    if (alreadyOwnsTeam) {
+      return {
+        success: false,
+        message: "You have already registered a team."
+      };
+    }
+    
+    const duplicateName = Object.values(tournament.teams || {}).some(
+      team =>
+      team.name &&
+      incomingTeam.name &&
+      team.name.trim().toLowerCase() ===
+      incomingTeam.name.trim().toLowerCase()
+    );
+    
+    if (duplicateName) {
+      return {
+        success: false,
+        message: "A team with this name already exists."
+      };
+    }
+    
+    if (incomingTeam.ownerUid !== user.uid) {
+      return {
+        success: false,
+        message: "Invalid owner."
+      };
+    }
+  }
+  
+  return {
+    success: true
+  };
+}
+
+
+
 router.post("/:id/team-logo", authenticate, async (req, res) => {
   try {
     const user = req.user;
@@ -353,7 +416,6 @@ router.post("/:id/invite", authenticate, async (req, res) => {
       });
     }
     
-    
     const tournamentSnap = await db.ref(`tournaments/${id}`).once("value");
     
     if (!tournamentSnap.exists()) {
@@ -365,14 +427,12 @@ router.post("/:id/invite", authenticate, async (req, res) => {
     
     const tournament = tournamentSnap.val();
     
-    
     if (tournament.adminUid !== req.user.uid) {
       return res.status(403).json({
         success: false,
         message: "Only the tournament admin can invite players."
       });
     }
-    
     
     const usersSnap = await db.ref("users").once("value");
     
@@ -399,7 +459,6 @@ router.post("/:id/invite", authenticate, async (req, res) => {
       });
     }
     
-    
     if (invitedUid === req.user.uid) {
       return res.status(400).json({
         success: false,
@@ -409,20 +468,54 @@ router.post("/:id/invite", authenticate, async (req, res) => {
     
     tournament.players = tournament.players || {};
     
+    const existing = tournament.players[invitedUid];
     
-    if (tournament.players[invitedUid]) {
-      return res.status(400).json({
-        success: false,
-        message: "Player already invited."
-      });
+    if (existing) {
+      if (existing.status === "accepted") {
+        return res.status(400).json({
+          success: false,
+          message: "Player is already part of this tournament."
+        });
+      }
+      
+      if (
+        existing.status === "pending" &&
+        existing.hasNewInvitation
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invitation already pending."
+        });
+      }
+      
+      if (existing.status === "declined") {
+        existing.hasNewInvitation = true;
+        existing.invitedAt = Date.now();
+        existing.invitationCount =
+          (existing.invitationCount || 1) + 1;
+        
+        await db
+          .ref(`tournaments/${id}/players`)
+          .set(tournament.players);
+        
+        return res.json({
+          success: true,
+          message: "Invitation sent again successfully."
+        });
+      }
     }
-    
     
     tournament.players[invitedUid] = {
       uid: invitedUid,
       username: invitedUser.username,
+      
       status: "pending",
-      invitedAt: Date.now()
+      
+      invitedAt: Date.now(),
+      
+      hasNewInvitation: true,
+      
+      invitationCount: 1
     };
     
     await db
@@ -476,13 +569,24 @@ router.post("/:id/respond", authenticate, async (req, res) => {
       });
     }
     
-    if (action === "accept") {
-      tournament.players[req.user.uid].status = "accepted";
-      tournament.players[req.user.uid].joinedAt = Date.now();
-    } else {
-      tournament.players[req.user.uid].status = "declined";
-      tournament.players[req.user.uid].respondedAt = Date.now();
+    const player = tournament.players[req.user.uid];
+    
+    if (!player.hasNewInvitation) {
+      return res.status(400).json({
+        success: false,
+        message: "No pending invitation."
+      });
     }
+    
+    if (action === "accept") {
+      player.status = "accepted";
+      player.joinedAt = Date.now();
+    } else {
+      player.status = "declined";
+      player.respondedAt = Date.now();
+    }
+    
+    player.hasNewInvitation = false;
     
     await db
       .ref(`tournaments/${id}/players`)
@@ -490,7 +594,50 @@ router.post("/:id/respond", authenticate, async (req, res) => {
     
     res.json({
       success: true,
-      status: tournament.players[req.user.uid].status
+      status: player.status
+    });
+    
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+router.get("/:id", authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = req.user;
+    
+    const snapshot = await db.ref(`tournaments/${id}`).once("value");
+    
+    if (!snapshot.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "Tournament not found."
+      });
+    }
+    
+    const tournament = snapshot.val();
+    
+    const isAdmin = tournament.adminUid === user.uid;
+    
+    const isAcceptedPlayer =
+      tournament.players &&
+      tournament.players[user.uid] &&
+      tournament.players[user.uid].status === "accepted";
+    
+    if (!isAdmin && !isAcceptedPlayer) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied."
+      });
+    }
+    
+    res.json({
+      success: true,
+      tournament
     });
     
   } catch (err) {
