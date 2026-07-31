@@ -109,18 +109,12 @@ router.get("/my", authenticate, async (req, res) => {
         t => t.adminUid === user.uid
       );
     } else {
-      const teamSnapshot = await db.ref("teams").once("value");
-      const teams = teamSnapshot.val() || {};
-      
-      const myTeam = Object.values(teams).find(
-        team => team.ownerUid === user.uid
-      );
-      
-      if (myTeam) {
-        result = Object.values(tournaments).filter(
-          t => t.teams && t.teams[myTeam.id]
+      result = Object.values(tournaments).filter(t => {
+        return (
+          t.players &&
+          t.players[user.uid]
         );
-      }
+      });
     }
     
     res.json({
@@ -135,6 +129,7 @@ router.get("/my", authenticate, async (req, res) => {
     });
   }
 });
+
 
 router.patch("/:id", authenticate, async (req, res) => {
   try {
