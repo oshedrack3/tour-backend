@@ -242,7 +242,14 @@ router.post("/:id/team-logo", authenticate, async (req, res) => {
     
     const tournament = snapshot.val();
     
-    if (tournament.adminUid !== user.uid) {
+    const isAdmin = tournament.adminUid === user.uid;
+    
+    const isAcceptedPlayer =
+      tournament.players &&
+      tournament.players[user.uid] &&
+      tournament.players[user.uid].status === "accepted";
+    
+    if (!isAdmin && !isAcceptedPlayer) {
       return res.status(403).json({
         success: false,
         message: "Access denied."
@@ -267,6 +274,7 @@ router.post("/:id/team-logo", authenticate, async (req, res) => {
     });
   }
 });
+
 router.delete("/:id", authenticate, async (req, res) => {
   try {
     const user = req.user;
