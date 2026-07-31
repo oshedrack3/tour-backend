@@ -60,7 +60,9 @@ router.post("/create", authenticate, async (req, res) => {
       
       tournamentImage: imageUrl,
       
-      teams: [],
+      players: {},
+      
+      teams: {},
       matches: [],
       table: [],
       
@@ -153,11 +155,11 @@ router.patch("/:id", authenticate, async (req, res) => {
     if (updates) {
       updates.updatedAt = Date.now();
       
-      // FIX: If updating teams/teamLogos, merge instead of replace
+      
       const updatePayload = {};
       for (const key in updates) {
         if (key === 'teams' || key === 'teamLogos') {
-          // deep merge each team
+          
           for (const teamId in updates[key]) {
             updatePayload[`teams/${teamId}`] = updates[key][teamId];
           }
@@ -266,6 +268,109 @@ router.delete("/:id", authenticate, async (req, res) => {
     res.status(500).json({
       success: false,
       message: err.message
+    });
+  }
+});
+
+router.post("/:id/invite", authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { username } = req.body;
+    
+    if (!username || !username.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Username is required."
+      });
+    }
+    
+    
+    const tournamentSnap = await db.ref(`tournaments/${id}`).once("value");
+    
+    if (!tournamentSnap.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "Tournament not found."
+      });
+    }
+    
+    const tournament = tournamentSnap.val();
+    
+    
+    if (tournament.adminUid !== req.user.uid) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the tournament admin can invite players."
+      });
+    }
+    
+    
+    const usersSnap = await db.ref("users").once("value");
+    
+    let invitedUid = null;
+    let invitedUser = null;
+    
+    usersSnap.forEach(child => {
+      const user = child.val();
+      
+      if (
+        user.username &&
+        user.username.trim().toLowerCase() ===
+        username.trim().toLowerCase()
+      ) {
+        invitedUid = child.key;
+        invitedUser = user;
+      }
+    });
+    
+    if (!invitedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found."
+      });
+    }
+    
+    
+    if (invitedUid === req.user.uid) {
+      return res.status(400).json({
+        success: false,
+        message: "You cannot invite yourself."
+      });
+    }
+    
+    tournament.players = tournament.players || {};
+    
+    
+    if (tournament.players[invitedUid]) {
+      return res.status(400).json({
+        success: false,
+        message: "Player already invited."
+      });
+    }
+    
+    
+    tournament.players[invitedUid] = {
+      uid: invitedUid,
+      username: invitedUser.username,
+      status: "pending",
+      invitedAt: Date.now()
+    };
+    
+    await db
+      .ref(`tournaments/${id}/players`)
+      .set(tournament.players);
+    
+    return res.json({
+      success: true,
+      message: "Invitation sent successfully."
+    });
+    
+  } catch (err) {
+    console.error(err);
+    
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Failed to invite player."
     });
   }
 });
