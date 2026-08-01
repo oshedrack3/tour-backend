@@ -1001,6 +1001,7 @@ router.post("/:id/rebuild-table", authenticate, async (req, res) => {
 router.post("/:id/match-submission", authenticate, async (req, res) => {
   try {
     const { id } = req.params;
+    
     const {
       matchId,
       homeGoals,
@@ -1021,13 +1022,21 @@ router.post("/:id/match-submission", authenticate, async (req, res) => {
     
     const player = tournament.players?.[req.user.uid];
     
-    if (
-      !player ||
-      player.status !== "accepted"
-    ) {
+    if (!player || player.status !== "accepted") {
       return res.status(403).json({
         success: false,
         message: "Only accepted players can submit results."
+      });
+    }
+    
+    const playerTeam = Object.values(tournament.teams || {}).find(
+      team => team.ownerUid === req.user.uid
+    );
+    
+    if (!playerTeam) {
+      return res.status(403).json({
+        success: false,
+        message: "You have not registered a team."
       });
     }
     
@@ -1042,10 +1051,42 @@ router.post("/:id/match-submission", authenticate, async (req, res) => {
       });
     }
     
-    const submissionId = uuid();
+    if (
+      match.home !== playerTeam.name &&
+      match.away !== playerTeam.name
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only submit results for your own team's matches."
+      });
+    }
+    
+    if (match.played) {
+      return res.status(400).json({
+        success: false,
+        message: "This match has already been played."
+      });
+    }
     
     tournament.matchSubmissions =
       tournament.matchSubmissions || {};
+    
+    const existingSubmission = Object.values(
+      tournament.matchSubmissions
+    ).find(
+      s =>
+      String(s.matchId) === String(matchId) &&
+      s.status === "pending"
+    );
+    
+    if (existingSubmission) {
+      return res.status(400).json({
+        success: false,
+        message: "A submission for this match is already awaiting review."
+      });
+    }
+    
+    const submissionId = uuid();
     
     tournament.matchSubmissions[submissionId] = {
       id: submissionId,
@@ -1065,19 +1106,18 @@ router.post("/:id/match-submission", authenticate, async (req, res) => {
       createdAt: Date.now()
     };
     
+    await db
+      .ref(`tournaments/${id}/matchSubmissions`)
+      .set(tournament.matchSubmissions);
     
-    await db.ref(
-      `tournaments/${id}/matchSubmissions`
-    ).set(
-      tournament.matchSubmissions
-    );
-    
+    await db
+      .ref(`tournaments/${id}/updatedAt`)
+      .set(Date.now());
     
     res.json({
       success: true,
       submissionId
     });
-    
     
   } catch (err) {
     
