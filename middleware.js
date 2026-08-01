@@ -2,7 +2,11 @@ const db = require("./firebase");
 
 async function authenticate(req, res, next) {
   try {
-    const token = req.headers.authorization;
+    
+    const token =
+      req.headers.authorization ||
+      req.query.token;
+    
     
     if (!token) {
       return res.status(401).json({
@@ -11,7 +15,10 @@ async function authenticate(req, res, next) {
       });
     }
     
-    const sessionSnapshot = await db.ref(`sessions/${token}`).once("value");
+    
+    const sessionSnapshot =
+      await db.ref(`sessions/${token}`).once("value");
+    
     
     if (!sessionSnapshot.exists()) {
       return res.status(401).json({
@@ -20,7 +27,9 @@ async function authenticate(req, res, next) {
       });
     }
     
+    
     const session = sessionSnapshot.val();
+    
     
     if (!session.active) {
       return res.status(401).json({
@@ -29,7 +38,9 @@ async function authenticate(req, res, next) {
       });
     }
     
+    
     if (Date.now() > session.expiresAt) {
+      
       await db.ref(`sessions/${token}`).remove();
       
       return res.status(401).json({
@@ -38,7 +49,10 @@ async function authenticate(req, res, next) {
       });
     }
     
-    const userSnapshot = await db.ref(`users/${session.uid}`).once("value");
+    
+    const userSnapshot =
+      await db.ref(`users/${session.uid}`).once("value");
+    
     
     if (!userSnapshot.exists()) {
       return res.status(401).json({
@@ -47,21 +61,28 @@ async function authenticate(req, res, next) {
       });
     }
     
+    
     const user = userSnapshot.val();
     
     user.uid = session.uid;
     
+    
     req.user = user;
     req.token = token;
     
+    
     next();
     
+    
   } catch (err) {
+    
     res.status(500).json({
       success: false,
       message: err.message
     });
+    
   }
 }
+
 
 module.exports = authenticate;

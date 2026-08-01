@@ -3,6 +3,11 @@ const { v4: uuid } = require("uuid");
 const db = require("./firebase");
 const authenticate = require("./middleware");
 const { uploadBase64Image } = require("./cloudinary");
+const {
+  addClient,
+  removeClient,
+  sendTournamentUpdate
+} = require("./events");
 
 const router = express.Router();
 const PERMISSIONS = {
@@ -236,7 +241,9 @@ router.patch("/:id", authenticate, async (req, res) => {
       await db.ref(`tournaments/${id}/${path}`).set(value);
       await db.ref(`tournaments/${id}/updatedAt`).set(Date.now());
     }
-    
+   sendTournamentUpdate(id, {
+  type: "TOURNAMENT_UPDATED"
+}); 
     res.json({
       success: true
     });
@@ -497,6 +504,9 @@ router.post("/:id/invite", authenticate, async (req, res) => {
         await db
           .ref(`tournaments/${id}/players`)
           .set(tournament.players);
+          sendTournamentUpdate(id, {
+  type: "TOURNAMENT_UPDATED"
+});
         
         return res.json({
           success: true,
@@ -890,6 +900,9 @@ router.post("/:id/match-submission/:submissionId/review", authenticate, async (r
       matchSubmissions: tournament.matchSubmissions,
       updatedAt: tournament.updatedAt
     });
+    sendTournamentUpdate(id, {
+  type: "TOURNAMENT_UPDATED"
+});
     
     res.json({
       success: true,
@@ -992,7 +1005,9 @@ router.post("/:id/rebuild-table", authenticate, async (req, res) => {
       prevRanks: tournament.prevRanks || {},
       updatedAt: Date.now()
     });
-    
+    sendTournamentUpdate(id, {
+  type: "TOURNAMENT_UPDATED"
+});
     res.json({
       success: true,
       tournament
@@ -1121,12 +1136,14 @@ router.post("/:id/match-submission", authenticate, async (req, res) => {
     await db
       .ref(`tournaments/${id}/updatedAt`)
       .set(Date.now());
-    
+    sendTournamentUpdate(id, {
+  type: "TOURNAMENT_UPDATED"
+});
     res.json({
       success: true,
       submissionId
     });
-    
+   
   } catch (err) {
     
     res.status(500).json({
@@ -1136,4 +1153,51 @@ router.post("/:id/match-submission", authenticate, async (req, res) => {
     
   }
 });
+
+
+router.get("/:id/events", authenticate, async (req, res) => {
+  
+  const tournamentId = req.params.id;
+  
+  
+  res.setHeader(
+    "Content-Type",
+    "text/event-stream"
+  );
+  
+  res.setHeader(
+    "Cache-Control",
+    "no-cache"
+  );
+  
+  res.setHeader(
+    "Connection",
+    "keep-alive"
+  );
+  
+  
+  res.flushHeaders();
+  
+  
+  addClient(tournamentId, res);
+  
+  
+  res.write(
+    `event: connected\n` +
+    `data: {"success":true}\n\n`
+  );
+  
+  
+  req.on("close", () => {
+    
+    removeClient(
+      tournamentId,
+      res
+    );
+    
+  });
+  
+});
+
+
 module.exports = router;

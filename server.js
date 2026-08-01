@@ -5,6 +5,10 @@ const db = require("./firebase");
 const authRoutes = require("./auth");
 const authenticate = require("./middleware");
 const tournamentRoutes = require("./tournaments");
+const {
+  addClient,
+  removeClient
+} = require("./events");
 
 
 const app = express();
@@ -29,28 +33,49 @@ app.use("/tournaments", tournamentRoutes);
 app.get("/", (req, res) => {
   res.send("Backend Running");
 });
-app.get("/events", authenticate, (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
+app.get("/events/:tournamentId", authenticate, (req, res) => {
+  
+  const tournamentId = req.params.tournamentId;
+  
+  
+  res.setHeader(
+    "Content-Type",
+    "text/event-stream"
+  );
+  
+  res.setHeader(
+    "Cache-Control",
+    "no-cache"
+  );
+  
+  res.setHeader(
+    "Connection",
+    "keep-alive"
+  );
+  
   
   res.flushHeaders();
   
-  const uid = req.user.uid;
   
-  clients.set(uid, res);
+  addClient(tournamentId, res);
   
-  res.write(`event: connected\n`);
+  
   res.write(
     `data: ${JSON.stringify({
-      success: true,
-      uid
+      connected:true
     })}\n\n`
   );
   
+  
   req.on("close", () => {
-    clients.delete(uid);
+    
+    removeClient(
+      tournamentId,
+      res
+    );
+    
   });
+  
 });
 
 app.post("/db/write", async (req, res) => {
