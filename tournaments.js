@@ -920,39 +920,47 @@ router.get("/:id/match-submissions", authenticate, async (req, res) => {
     const snapshot = await db.ref(`tournaments/${id}`).once("value");
     
     if (!snapshot.exists()) {
-      return res.status(404).json({
-        success: false,
-        message: "Tournament not found."
-      });
+      return res.status(404).json({ success: false, message: "Tournament not found." });
     }
     
     const tournament = snapshot.val();
     
     const isAdmin = tournament.adminUid === req.user.uid;
-    
     const player = tournament.players?.[req.user.uid];
     
     if (!isAdmin && (!player || player.status !== "accepted")) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied."
-      });
+      return res.status(403).json({ success: false, message: "Access denied." });
     }
+    
+    const players = tournament.players || {};
+    
+    const submissions = Object.values(tournament.matchSubmissions || {}).map(s => {
+      const submitter = players[s.submittedBy] || {};
+      
+      return {
+        id: s.id,
+        matchId: s.matchId,
+        submittedBy: submitter.name || submitter.username || "Unknown Player",
+        homeGoals: s.homeGoals,
+        awayGoals: s.awayGoals,
+        screenshot: s.screenshot,
+        status: s.status,
+        createdAt: s.createdAt,
+        reviewedAt: s.reviewedAt,
+        rejectionReason: s.rejectionReason
+      }
+    });
     
     res.json({
       success: true,
-      submissions: Object.values(
-        tournament.matchSubmissions || {}
-      )
+      submissions
     });
     
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    res.status(500).json({ success: false, message: err.message });
   }
 });
+
 router.post("/:id/rebuild-table", authenticate, async (req, res) => {
   try {
     const { id } = req.params;
