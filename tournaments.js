@@ -952,6 +952,49 @@ router.get("/:id/match-submissions", authenticate, async (req, res) => {
     });
   }
 });
-
+router.post("/:id/rebuild-table", authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const snapshot = await db
+      .ref(`tournaments/${id}`)
+      .once("value");
+    
+    if (!snapshot.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "Tournament not found."
+      });
+    }
+    
+    const tournament = snapshot.val();
+    
+    if (tournament.adminUid !== req.user.uid) {
+      return res.status(403).json({
+        success: false,
+        message: "Only admin can rebuild table."
+      });
+    }
+    
+    rebuildTableFromMatches(tournament);
+    
+    await db.ref(`tournaments/${id}`).update({
+      table: tournament.table,
+      prevRanks: tournament.prevRanks || {},
+      updatedAt: Date.now()
+    });
+    
+    res.json({
+      success: true,
+      tournament
+    });
+    
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
 
 module.exports = router;
