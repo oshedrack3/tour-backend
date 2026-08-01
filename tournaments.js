@@ -876,34 +876,28 @@ router.post("/:id/match-submission/:submissionId/review", authenticate, async (r
       match.played = true;
       match.playedAt = Date.now();
       
-     
       rebuildTableFromMatches(tournament);
-      
     }
     
     tournament.updatedAt = Date.now();
     
     await db.ref(`tournaments/${id}`).update({
-  matches: tournament.matches,
-  table: tournament.table,
-  prevRanks: tournament.prevRanks || {},
-  records: tournament.records || {},
-  matchSubmissions: tournament.matchSubmissions,
-  updatedAt: tournament.updatedAt
-});
-
-res.json({
-  success: true,
-  submission,
-  matches: tournament.matches,
-  table: tournament.table,
-  prevRanks: tournament.prevRanks || {},
-  records: tournament.records || {},
-  matchSubmissions: tournament.matchSubmissions
-});    
+      matches: tournament.matches,
+      table: tournament.table,
+      prevRanks: tournament.prevRanks || {},
+      records: tournament.records || {},
+      matchSubmissions: tournament.matchSubmissions,
+      updatedAt: tournament.updatedAt
+    });
+    
     res.json({
       success: true,
-      submission
+      submission,
+      matches: tournament.matches,
+      table: tournament.table,
+      prevRanks: tournament.prevRanks || {},
+      records: tournament.records || {},
+      matchSubmissions: tournament.matchSubmissions
     });
     
   } catch (err) {
@@ -917,77 +911,7 @@ res.json({
 });
 
 
- authenticate, async (req, res) => {
-  try {
-    const { id, submissionId } = req.params;
-    const { action, rejectionReason = "" } = req.body;
-    
-    if (!["approved", "rejected"].includes(action)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid action."
-      });
-    }
-    
-    const snapshot = await db.ref(`tournaments/${id}`).once("value");
-    
-    if (!snapshot.exists()) {
-      return res.status(404).json({
-        success: false,
-        message: "Tournament not found."
-      });
-    }
-    
-    const tournament = snapshot.val();
-    
-    if (tournament.adminUid !== req.user.uid) {
-      return res.status(403).json({
-        success: false,
-        message: "Only the tournament admin can review submissions."
-      });
-    }
-    
-    const submissions = tournament.matchSubmissions || {};
-    const submission = submissions[submissionId];
-    
-    if (!submission) {
-      return res.status(404).json({
-        success: false,
-        message: "Submission not found."
-      });
-    }
-    
-    if (submission.status !== "pending") {
-      return res.status(400).json({
-        success: false,
-        message: "This submission has already been reviewed."
-      });
-    }
-    
-    submission.status = action;
-    submission.reviewedAt = Date.now();
-    submission.reviewedBy = req.user.uid;
-    
-    if (action === "rejected") {
-      submission.rejectionReason = rejectionReason;
-    }
-    
-    await db.ref(
-      `tournaments/${id}/matchSubmissions/${submissionId}`
-    ).set(submission);
-    
-    res.json({
-      success: true,
-      submission
-    });
-    
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
-  }
-});
+
 router.get("/:id/match-submissions", authenticate, async (req, res) => {
   try {
     const { id } = req.params;
