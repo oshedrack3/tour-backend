@@ -647,6 +647,7 @@ router.get("/:id", authenticate, async (req, res) => {
     });
   }
 });
+
 function rebuildTableFromMatches(tournament) {
   
   if (!tournament) return;
@@ -997,4 +998,94 @@ router.post("/:id/rebuild-table", authenticate, async (req, res) => {
   }
 });
 
+router.post("/:id/match-submission", authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      matchId,
+      homeGoals,
+      awayGoals,
+      screenshot
+    } = req.body;
+    
+    const snapshot = await db.ref(`tournaments/${id}`).once("value");
+    
+    if (!snapshot.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "Tournament not found."
+      });
+    }
+    
+    const tournament = snapshot.val();
+    
+    const player = tournament.players?.[req.user.uid];
+    
+    if (
+      !player ||
+      player.status !== "accepted"
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Only accepted players can submit results."
+      });
+    }
+    
+    const match = (tournament.matches || []).find(
+      m => String(m.id) === String(matchId)
+    );
+    
+    if (!match) {
+      return res.status(404).json({
+        success: false,
+        message: "Match not found."
+      });
+    }
+    
+    const submissionId = uuid();
+    
+    tournament.matchSubmissions =
+      tournament.matchSubmissions || {};
+    
+    tournament.matchSubmissions[submissionId] = {
+      id: submissionId,
+      
+      matchId,
+      
+      submittedBy: req.user.uid,
+      username: req.user.username,
+      
+      homeGoals: Number(homeGoals),
+      awayGoals: Number(awayGoals),
+      
+      screenshot: screenshot || null,
+      
+      status: "pending",
+      
+      createdAt: Date.now()
+    };
+    
+    
+    await db.ref(
+      `tournaments/${id}/matchSubmissions`
+    ).set(
+      tournament.matchSubmissions
+    );
+    
+    
+    res.json({
+      success: true,
+      submissionId
+    });
+    
+    
+  } catch (err) {
+    
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+    
+  }
+});
 module.exports = router;
