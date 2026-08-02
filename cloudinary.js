@@ -5,12 +5,22 @@ cloudinary.config({
   secure: true
 });
 
+function sanitizePublicId(id) {
+  return id
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-_\/]/g, "") 
+    .slice(0, 200);
+}
+
 async function uploadBase64Image(base64, folder, publicId) {
   if (!base64) return null;
   
+  const safePublicId = sanitizePublicId(`${folder}/${publicId}`);
+  
   const result = await cloudinary.uploader.upload(base64, {
-    folder,
-    public_id: publicId,
+    public_id: safePublicId,
     overwrite: true,
     resource_type: "image"
   });
@@ -22,4 +32,3 @@ module.exports = {
   cloudinary,
   uploadBase64Image
 };
-
