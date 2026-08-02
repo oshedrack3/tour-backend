@@ -3,6 +3,7 @@ const { v4: uuid } = require("uuid");
 const db = require("./firebase");
 const authenticate = require("./middleware");
 const { uploadBase64Image } = require("./cloudinary");
+const { createNotification } = require("./notificationService");
 const {
   addClient,
   removeClient,
@@ -507,7 +508,13 @@ router.post("/:id/invite", authenticate, async (req, res) => {
           sendTournamentUpdate(id, {
   type: "TOURNAMENT_UPDATED"
 });
-        
+      await createNotification({
+  userId: invitedUid,
+  type: "invitation",
+  title: "Tournament Invitation",
+  message: `${req.user.username} invited you to join ${tournament.name}.`,
+  tournamentId: id
+});  
         return res.json({
           success: true,
           message: "Invitation sent again successfully."
@@ -531,7 +538,15 @@ router.post("/:id/invite", authenticate, async (req, res) => {
     await db
       .ref(`tournaments/${id}/players`)
       .set(tournament.players);
-    
+      
+    await createNotification({
+  userId: invitedUid,
+  type: "invitation",
+  title: "Tournament Invitation",
+  message: `${req.user.username} invited you to join ${tournament.name}.`,
+  tournamentId: id
+});
+
     return res.json({
       success: true,
       message: "Invitation sent successfully."
@@ -601,7 +616,21 @@ router.post("/:id/respond", authenticate, async (req, res) => {
     await db
       .ref(`tournaments/${id}/players`)
       .set(tournament.players);
-    
+    sendTournamentUpdate(id, {
+  type: "TOURNAMENT_UPDATED"
+});
+    await createNotification({
+  userId: tournament.adminUid,
+  type: "invitation_response",
+  title: "Invitation Response",
+  message: `${req.user.username} ${
+    action === "accept"
+      ? "accepted"
+      : "declined"
+  } your tournament invitation.`,
+  tournamentId: id
+});
+
     res.json({
       success: true,
       status: player.status
@@ -903,7 +932,22 @@ router.post("/:id/match-submission/:submissionId/review", authenticate, async (r
     sendTournamentUpdate(id, {
   type: "TOURNAMENT_UPDATED"
 });
-    
+    await createNotification({
+  userId: submission.submittedBy,
+  type: action === "approved" ?
+    "submission_approved" :
+    "submission_rejected",
+  
+  title: action === "approved" ?
+    "Submission Approved" :
+    "Submission Rejected",
+  
+  message: action === "approved" ?
+    "Your match result has been approved." :
+    `Your submission was rejected. Reason: ${rejectionReason}`,
+  
+  tournamentId: id
+});
     res.json({
       success: true,
       submission,
@@ -1136,8 +1180,17 @@ router.post("/:id/match-submission", authenticate, async (req, res) => {
     await db
       .ref(`tournaments/${id}/updatedAt`)
       .set(Date.now());
+      
     sendTournamentUpdate(id, {
   type: "TOURNAMENT_UPDATED"
+});
+
+await createNotification({
+  userId: tournament.adminUid,
+  type: "match_submission",
+  title: "New Match Submission",
+  message: `${req.user.username} submitted a match result.`,
+  tournamentId: id
 });
     res.json({
       success: true,

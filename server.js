@@ -5,6 +5,7 @@ const db = require("./firebase");
 const authRoutes = require("./auth");
 const authenticate = require("./middleware");
 const tournamentRoutes = require("./tournaments");
+const notificationRoutes = require("./notificationRoutes");
 const {
   addClient,
   removeClient
@@ -13,13 +14,6 @@ const {
 
 const app = express();
 
-const clients = new Map();
-
-setInterval(() => {
-  for (const res of clients.values()) {
-    res.write(": ping\n\n");
-  }
-}, 25000);
 
 app.use(cors());
 app.use(express.json({
@@ -29,7 +23,7 @@ app.use(express.json({
 
 app.use("/auth", authRoutes);
 app.use("/tournaments", tournamentRoutes);
-
+app.use("/notifications", notificationRoutes);
 app.get("/", (req, res) => {
   res.send("Backend Running");
 });
@@ -155,8 +149,6 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-module.exports = {
-  clients
-};
+
 
 // end
