@@ -56,8 +56,11 @@ router.post("/create", authenticate, async (req, res) => {
       startDate,
       endDate,
       matchDays,
-      tournamentImage
+      tournamentImage,
+      competitionId,
+      season
     } = req.body;
+    
     
     if (!name || !format) {
       return res.status(400).json({
@@ -66,8 +69,27 @@ router.post("/create", authenticate, async (req, res) => {
       });
     }
     
+    
+    if (!competitionId) {
+      return res.status(400).json({
+        success: false,
+        message: "Competition is required."
+      });
+    }
+    
+    
+    if (!season) {
+      return res.status(400).json({
+        success: false,
+        message: "Season is required."
+      });
+    }
+    
+    
     const id = uuid();
+    
     let imageUrl = null;
+    
     
     if (tournamentImage) {
       imageUrl = await uploadBase64Image(
@@ -77,10 +99,19 @@ router.post("/create", authenticate, async (req, res) => {
       );
     }
     
+    
     const tournament = {
       id,
+      
+      competitionId,
+      
       name,
+      season,
       format,
+      
+      seasonStatus: "upcoming",
+      
+      champion: null,
       
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -95,7 +126,10 @@ router.post("/create", authenticate, async (req, res) => {
       
       players: {},
       matchSubmissions: {},
+      
       teams: {},
+      teamLogos: {},
+      
       matches: [],
       table: [],
       
@@ -104,8 +138,6 @@ router.post("/create", authenticate, async (req, res) => {
       qualifiedTeams: [],
       knockoutMatches: [],
       
-      teamLogos: {},
-      
       settings: {
         knockoutSize: 0,
         teamsPerGroup: 0,
@@ -113,18 +145,25 @@ router.post("/create", authenticate, async (req, res) => {
       }
     };
     
-    await db.ref(`tournaments/${id}`).set(tournament);
+    
+    await db
+      .ref(`tournaments/${id}`)
+      .set(tournament);
+    
     
     res.json({
       success: true,
       tournament
     });
     
+    
   } catch (err) {
+    
     res.status(500).json({
       success: false,
       message: err.message
     });
+    
   }
 });
 
@@ -367,7 +406,7 @@ router.post("/:id/team-logo", authenticate, async (req, res) => {
     });
     
   } catch (err) {
-    res.status(500).json({
+    res.status(400).json({
       success: false,
       message: err.message
     });
