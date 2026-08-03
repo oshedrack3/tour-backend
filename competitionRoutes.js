@@ -53,6 +53,8 @@ router.post("/create", authenticate, async (req, res) => {
       name: name.trim(),
       
       logo: logoUrl,
+      tournamentCount: 0,
+      activeSeasons: 0,
       
       adminUid: user.uid,
       
@@ -88,25 +90,63 @@ router.get("/my", authenticate, async (req, res) => {
   try {
     const user = req.user;
     
-    
-    const snapshot = await db
+    const competitionsSnapshot = await db
       .ref("competitions")
       .once("value");
     
+    const competitions = competitionsSnapshot.val() || {};
     
-    const competitions = snapshot.val() || {};
+    const tournamentsSnapshot = await db
+      .ref("tournaments")
+      .once("value");
     
+    const tournaments = tournamentsSnapshot.val() || {};
     
-    const result = Object.values(competitions)
-      .filter(c => c.adminUid === user.uid);
+    const result = [];
     
-    
+    for (const competition of Object.values(competitions)) {
+      if (competition.adminUid !== user.uid) continue;
+      
+      let updatedCompetition = competition;
+      
+      if (
+        typeof competition.tournamentCount !== "number" ||
+        typeof competition.activeSeasons !== "number"
+      ) {
+        const competitionTournaments = Object.values(tournaments)
+          .filter(tournament =>
+            tournament.competitionId === competition.id
+          );
+        
+        const tournamentCount = competitionTournaments.length;
+        
+        const activeSeasons = competitionTournaments.filter(tournament => {
+          if (!tournament.endDate) return false;
+          
+          return new Date(tournament.endDate) >= new Date();
+        }).length;
+        
+        updatedCompetition = {
+          ...competition,
+          tournamentCount,
+          activeSeasons
+        };
+        
+        await db
+          .ref(`competitions/${competition.id}`)
+          .update({
+            tournamentCount,
+            activeSeasons
+          });
+      }
+      
+      result.push(updatedCompetition);
+    }
     
     res.json({
       success: true,
       competitions: result
     });
-    
     
   } catch (err) {
     
