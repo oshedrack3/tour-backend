@@ -48,20 +48,24 @@ router.post("/create", authenticate, async (req, res) => {
     
     
     const competition = {
-      id,
-      
-      name: name.trim(),
-      
-      logo: logoUrl,
-      tournamentCount: 0,
-      activeSeasons: 0,
-      
-      adminUid: user.uid,
-      
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
-    
+  id,
+  
+  name: name.trim(),
+  
+  logo: logoUrl,
+  
+  tournamentCount: 0,
+  
+  activeSeasons: 0,
+  
+  visibility: "public",
+  
+  adminUid: user.uid,
+  
+  createdAt: Date.now(),
+  
+  updatedAt: Date.now()
+};    
     
     await db
       .ref(`competitions/${id}`)
@@ -158,7 +162,30 @@ router.get("/my", authenticate, async (req, res) => {
   }
 });
 
-
+router.get("/public", authenticate, async (req, res) => {
+  try {
+    const competitionsSnapshot = await db
+      .ref("competitions")
+      .once("value");
+    
+    const competitions = competitionsSnapshot.val() || {};
+    
+    const result = Object.values(competitions).filter(
+      competition => competition.visibility === "public"
+    );
+    
+    res.json({
+      success: true,
+      competitions: result
+    });
+    
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
 
 router.get("/:id", authenticate, async (req, res) => {
   try {
@@ -183,13 +210,18 @@ router.get("/:id", authenticate, async (req, res) => {
     
     
     
-    if (competition.adminUid !== req.user.uid) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied."
-      });
-    }
-    
+    const isOwner = competition.adminUid === req.user.uid;
+
+if (
+  !isOwner &&
+  competition.visibility !== "public"
+) {
+  return res.status(403).json({
+    success: false,
+    message: "Access denied."
+  });
+}
+
     
     res.json({
       success: true,

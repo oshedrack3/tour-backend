@@ -19,7 +19,6 @@ function getBase64Size(base64) {
   const data = base64.split(",")[1] || "";
   return Buffer.byteLength(data, "base64");
 }
-
 async function uploadBase64Image(base64, folder, publicId) {
   if (!base64) return null;
   
@@ -37,10 +36,22 @@ async function uploadBase64Image(base64, folder, publicId) {
     resource_type: "image"
   });
   
-  return result.secure_url;
+  return {
+    url: result.secure_url,
+    publicId: result.public_id
+  };
+}
+
+async function deleteCloudinaryImage(publicId) {
+  if (!publicId) return;
+  
+  await cloudinary.uploader.destroy(publicId, {
+    resource_type: "image"
+  });
 }
 
 module.exports = {
   cloudinary,
-  uploadBase64Image
+  uploadBase64Image,
+  deleteCloudinaryImage
 };

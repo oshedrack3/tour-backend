@@ -5,8 +5,10 @@ const db = require("./firebase");
 const authRoutes = require("./auth");
 const authenticate = require("./middleware");
 const tournamentRoutes = require("./tournaments");
+const userManagementRoutes = require("./userManagement");
 const competitionRoutes = require("./competitionRoutes");
 const notificationRoutes = require("./notificationRoutes");
+
 const {
   addClient,
   removeClient
@@ -24,6 +26,7 @@ app.use(express.json({
 
 app.use("/auth", authRoutes);
 app.use("/tournaments", tournamentRoutes);
+app.use("/users", userManagementRoutes);
 app.use("/competitions", competitionRoutes);
 app.use("/notifications", notificationRoutes);
 app.get("/", (req, res) => {

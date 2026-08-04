@@ -2,7 +2,11 @@ const express = require("express");
 const { v4: uuid } = require("uuid");
 const db = require("./firebase");
 const authenticate = require("./middleware");
-const { uploadBase64Image } = require("./cloudinary");
+const {
+  uploadBase64Image,
+  deleteCloudinaryImage
+} = require("./cloudinary");
+
 const { createNotification } = require("./notificationService");
 const {
   addClient,
@@ -88,11 +92,11 @@ router.post("/create", authenticate, async (req, res) => {
     
     const id = uuid();
     
-    let imageUrl = null;
+    let image = null;
     
     
     if (tournamentImage) {
-      imageUrl = await uploadBase64Image(
+      image = await uploadBase64Image(
         tournamentImage,
         "tournaments",
         id
@@ -122,7 +126,7 @@ router.post("/create", authenticate, async (req, res) => {
       endDate,
       matchDays: matchDays || [],
       
-      tournamentImage: imageUrl,
+      tournamentImage: image,
       
       players: {},
       matchSubmissions: {},
@@ -360,14 +364,14 @@ router.post("/:id/team-logo", authenticate, async (req, res) => {
   try {
     const user = req.user;
     const id = req.params.id;
-    const { logo, teamName } = req.body;
+    const { logo, teamName, teamId } = req.body;
     
-    if (!logo || !teamName) {
-      return res.status(400).json({
-        success: false,
-        message: "Logo and team name are required."
-      });
-    }
+    if (!logo || !teamName || !teamId) {
+  return res.status(400).json({
+    success: false,
+    message: "Logo, team name and team ID are required."
+  });
+}
     
     const snapshot = await db.ref(`tournaments/${id}`).once("value");
     
@@ -393,16 +397,23 @@ router.post("/:id/team-logo", authenticate, async (req, res) => {
         message: "Access denied."
       });
     }
-    
-    const imageUrl = await uploadBase64Image(
-      logo,
-      "team-logos",
-      `${id}_${teamName}`
-    );
-    
+   
+   const oldLogo = tournament.teamLogos?.[teamId];
+
+if (oldLogo?.publicId) {
+  await deleteCloudinaryImage(
+    oldLogo.publicId
+  );
+}
+
+    const image = await uploadBase64Image(
+  logo,
+  "team-logos",
+  `${id}_${teamId}`
+);    
     res.json({
       success: true,
-      imageUrl
+      image
     });
     
   } catch (err) {
@@ -436,6 +447,30 @@ router.delete("/:id", authenticate, async (req, res) => {
       });
     }
     
+    if (tournament.tournamentImage?.publicId) {
+      await deleteCloudinaryImage(
+        tournament.tournamentImage.publicId
+      );
+    }
+    
+    for (const logo of Object.values(tournament.teamLogos || {})) {
+      if (logo?.publicId) {
+        await deleteCloudinaryImage(
+          logo.publicId
+        );
+      }
+    }
+    
+    for (const submission of Object.values(
+        tournament.matchSubmissions || {}
+      )) {
+      if (submission.screenshotPublicId) {
+        await deleteCloudinaryImage(
+          submission.screenshotPublicId
+        );
+      }
+    }
+    
     await db.ref(`tournaments/${id}`).remove();
     
     res.json({
@@ -450,7 +485,6 @@ router.delete("/:id", authenticate, async (req, res) => {
     });
   }
 });
-
 router.post("/:id/invite", authenticate, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1194,24 +1228,39 @@ router.post("/:id/match-submission", authenticate, async (req, res) => {
     
     const submissionId = uuid();
     
-    tournament.matchSubmissions[submissionId] = {
-      id: submissionId,
-      
-      matchId,
-      
-      submittedBy: req.user.uid,
-      username: req.user.username,
-      
-      homeGoals: Number(homeGoals),
-      awayGoals: Number(awayGoals),
-      
-      screenshot: screenshot || null,
-      
-      status: "pending",
-      
-      createdAt: Date.now()
-    };
-    
+   let screenshotUrl = null;
+let screenshotPublicId = null;
+
+if (screenshot) {
+  const uploadedImage = await uploadBase64Image(
+    screenshot,
+    "match-screenshots",
+    `${id}_${submissionId}`
+  );
+  
+  screenshotUrl = uploadedImage.url;
+  screenshotPublicId = uploadedImage.publicId;
+}
+
+tournament.matchSubmissions[submissionId] = {
+  id: submissionId,
+  
+  matchId,
+  
+  submittedBy: req.user.uid,
+  username: req.user.username,
+  
+  homeGoals: Number(homeGoals),
+  awayGoals: Number(awayGoals),
+  
+  screenshot: screenshotUrl,
+  screenshotPublicId,
+  
+  status: "pending",
+  
+  createdAt: Date.now()
+};
+
     await db
       .ref(`tournaments/${id}/matchSubmissions`)
       .set(tournament.matchSubmissions);
@@ -1219,30 +1268,30 @@ router.post("/:id/match-submission", authenticate, async (req, res) => {
     await db
       .ref(`tournaments/${id}/updatedAt`)
       .set(Date.now());
-      
+    
     sendTournamentUpdate(id, {
-  type: "TOURNAMENT_UPDATED"
-});
-
-await createNotification({
-  userId: tournament.adminUid,
-  type: "match_submission",
-  title: "New Match Submission",
-  message: `${req.user.username} submitted a match result.`,
-  tournamentId: id
-});
+      type: "TOURNAMENT_UPDATED"
+    });
+    
+    await createNotification({
+      userId: tournament.adminUid,
+      type: "match_submission",
+      title: "New Match Submission",
+      message: `${req.user.username} submitted a match result.`,
+      tournamentId: id
+    });
+    
     res.json({
       success: true,
-      submissionId
+      submissionId,
+      screenshot: screenshotUrl
     });
-   
-  } catch (err) {
     
+  } catch (err) {
     res.status(500).json({
       success: false,
       message: err.message
     });
-    
   }
 });
 
@@ -1291,5 +1340,116 @@ router.get("/:id/events", authenticate, async (req, res) => {
   
 });
 
+router.patch("/:id/team/:teamId", authenticate, async (req, res) => {
+  try {
+    const user = req.user;
+    const { id, teamId } = req.params;
+    const { name, logo } = req.body;
+    
+    const snapshot = await db.ref(`tournaments/${id}`).once("value");
+    
+    if (!snapshot.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "Tournament not found."
+      });
+    }
+    
+    const tournament = snapshot.val();
+    
+    const team = tournament.teams?.[teamId];
+    
+    if (!team) {
+      return res.status(404).json({
+        success: false,
+        message: "Team not found."
+      });
+    }
+    
+    const isAdmin = tournament.adminUid === user.uid;
+    
+    const isOwner =
+      team.ownerUid === user.uid;
+    
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied."
+      });
+    }
+    
+    const updates = {};
+    
+    let newLogo = team.logo;
+    
+    if (logo) {
+      
+      const oldLogo = tournament.teamLogos?.[team.name];
+      
+      if (oldLogo?.publicId) {
+        await deleteCloudinaryImage(
+          oldLogo.publicId
+        );
+      }
+      
+      const uploaded = await uploadBase64Image(
+        logo,
+        "team-logos",
+        `${id}_${teamId}_${name}`
+      );
+      
+      newLogo = uploaded.url;
+      
+      updates[`teamLogos/${name}`] = uploaded;
+    }
+    
+    if (name && name !== team.name) {
+      
+      const duplicate = Object.values(tournament.teams)
+        .some(t =>
+          t.id !== teamId &&
+          t.name.toLowerCase() === name.toLowerCase()
+        );
+      
+      if (duplicate) {
+        return res.status(400).json({
+          success: false,
+          message: "Team name already exists."
+        });
+      }
+      
+      const oldLogoData =
+        tournament.teamLogos?.[team.name];
+      
+      if (oldLogoData) {
+        updates[`teamLogos/${name}`] = oldLogoData;
+        updates[`teamLogos/${team.name}`] = null;
+      }
+    }
+    
+    updates[`teams/${teamId}`] = {
+      ...team,
+      name: name || team.name,
+      logo: newLogo,
+      updatedAt: Date.now()
+    };
+    
+    await db.ref(`tournaments/${id}`).update(updates);
+    
+    sendTournamentUpdate(id, {
+      type: "TOURNAMENT_UPDATED"
+    });
+    
+    res.json({
+      success: true
+    });
+    
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
 
 module.exports = router;
