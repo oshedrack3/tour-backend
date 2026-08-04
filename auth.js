@@ -92,7 +92,7 @@ router.post("/register", async (req, res) => {
   
 });
 
-module.exports = router;
+
 
 router.post("/login", async (req, res) => {
   try {
@@ -115,18 +115,20 @@ router.post("/login", async (req, res) => {
     );
     
     if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid credentials."
-      });
-    }
+  return res.status(404).json({
+    success: false,
+    title: "Account Not Found",
+    message: "No account exists with these login details."
+  });
+}    
     
     const validPassword = await bcrypt.compare(password, user.password);
     
     if (!validPassword) {
       return res.status(401).json({
         success: false,
-        message: "Invalid credentials."
+        title: "Invalid Password",
+  message: "The Password is incorrect, Please check and try again."
       });
     }
     
@@ -137,21 +139,21 @@ router.post("/login", async (req, res) => {
     delete user.password;
     
     const token = uuid();
-
-await db.ref(`sessions/${token}`).set({
-  uid: user.uid,
-  createdAt: Date.now(),
-  expiresAt: Date.now() + (30 * 24 * 60 * 60 * 1000),
-  active: true
-});
-
-delete user.password;
-
-res.json({
-  success: true,
-  token,
-  user
-});
+    
+    await db.ref(`sessions/${token}`).set({
+      uid: user.uid,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + (30 * 24 * 60 * 60 * 1000),
+      active: true
+    });
+    
+    delete user.password;
+    
+    res.json({
+      success: true,
+      token,
+      user
+    });
     
   } catch (err) {
     
@@ -277,3 +279,5 @@ router.post("/verify", async (req, res) => {
   
 });
 
+
+module.exports = router;
