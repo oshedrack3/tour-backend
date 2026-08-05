@@ -1041,6 +1041,30 @@ router.post("/:id/match-submission/:submissionId/review", authenticate, async (r
   }
 });
 
+router.get("/public", authenticate, async (req, res) => {
+  try {
+    const snapshot = await db.ref("tournaments").once("value");
+    const tournaments = snapshot.val() || {};
+
+    const publicTournaments = Object.values(tournaments).filter(t => {
+      // Returns true if explicitly public OR if no public/private field is set
+      const isExplicitPublic = t.accessType === "public" || t.isPublic === true;
+      const hasNoStatus = t.accessType === undefined && t.isPublic === undefined;
+
+      return isExplicitPublic || hasNoStatus;
+    });
+
+    res.json({
+      success: true,
+      tournaments: publicTournaments
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
 
 
 router.get("/:id/match-submissions", authenticate, async (req, res) => {
@@ -1346,7 +1370,9 @@ router.patch("/:id/team/:teamId", authenticate, async (req, res) => {
     const { id, teamId } = req.params;
     const { name, logo } = req.body;
     
-    const snapshot = await db.ref(`tournaments/${id}`).once("value");
+    const snapshot = await db
+      .ref(`tournaments/${id}`)
+      .once("value");
     
     if (!snapshot.exists()) {
       return res.status(404).json({
@@ -1368,8 +1394,7 @@ router.patch("/:id/team/:teamId", authenticate, async (req, res) => {
     
     const isAdmin = tournament.adminUid === user.uid;
     
-    const isOwner =
-      team.ownerUid === user.uid;
+    const isOwner = team.ownerUid === user.uid;
     
     if (!isAdmin && !isOwner) {
       return res.status(403).json({
@@ -1381,6 +1406,9 @@ router.patch("/:id/team/:teamId", authenticate, async (req, res) => {
     const updates = {};
     
     let newLogo = team.logo;
+    
+    const newTeamName = name || team.name;
+    
     
     if (logo) {
       
@@ -1395,17 +1423,18 @@ router.patch("/:id/team/:teamId", authenticate, async (req, res) => {
       const uploaded = await uploadBase64Image(
         logo,
         "team-logos",
-        `${id}_${teamId}_${name}`
+        `${id}_${teamId}_${newTeamName}`
       );
       
       newLogo = uploaded.url;
       
-      updates[`teamLogos/${name}`] = uploaded;
+      updates[`teamLogos/${newTeamName}`] = uploaded;
     }
+    
     
     if (name && name !== team.name) {
       
-      const duplicate = Object.values(tournament.teams)
+      const duplicate = Object.values(tournament.teams || {})
         .some(t =>
           t.id !== teamId &&
           t.name.toLowerCase() === name.toLowerCase()
@@ -1418,6 +1447,7 @@ router.patch("/:id/team/:teamId", authenticate, async (req, res) => {
         });
       }
       
+      
       const oldLogoData =
         tournament.teamLogos?.[team.name];
       
@@ -1427,23 +1457,171 @@ router.patch("/:id/team/:teamId", authenticate, async (req, res) => {
       }
     }
     
+    
     updates[`teams/${teamId}`] = {
       ...team,
-      name: name || team.name,
+      name: newTeamName,
       logo: newLogo,
       updatedAt: Date.now()
     };
     
-    await db.ref(`tournaments/${id}`).update(updates);
+    
+    await db
+      .ref(`tournaments/${id}`)
+      .update(updates);
+    
     
     sendTournamentUpdate(id, {
       type: "TOURNAMENT_UPDATED"
     });
     
+    
     res.json({
       success: true
     });
     
+    
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+router.delete("/:id/fixtures", authenticate, async (req, res) => {
+  try {
+    
+    const { id } = req.params;
+    
+    const snapshot = await db.ref(`tournaments/${id}`).once("value");
+    
+    if (!snapshot.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "Tournament not found."
+      });
+    }
+    
+    
+    const tournament = snapshot.val();
+    
+    
+    if (tournament.adminUid !== req.user.uid) {
+      return res.status(403).json({
+        success: false,
+        message: "Only admin can delete fixtures."
+      });
+    }
+    
+    
+    // Delete screenshots
+    for (const submission of Object.values(
+        tournament.matchSubmissions || {}
+      )) {
+      
+      if (submission.screenshotPublicId) {
+        await deleteCloudinaryImage(
+          submission.screenshotPublicId
+        );
+      }
+      
+    }
+    
+    
+    await db.ref(`tournaments/${id}`).update({
+      
+      matches: [],
+      
+      table: [],
+      
+      prevRanks: {},
+      
+      records: {},
+      
+      matchSubmissions: {},
+      
+      updatedAt: Date.now()
+      
+    });
+    
+    
+    sendTournamentUpdate(id, {
+      type: "TOURNAMENT_UPDATED"
+    });
+    
+    
+    res.json({
+      success: true,
+      message: "Fixtures deleted successfully."
+    });
+    
+    
+  } catch (err) {
+    
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+    
+  }
+});
+router.post("/:id/join", authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = req.user;
+    
+    const snapshot = await db.ref(`tournaments/${id}`).once("value");
+    
+    if (!snapshot.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "Tournament not found."
+      });
+    }
+    
+    const tournament = snapshot.val();
+    
+    // Block only if explicitly private
+    if (tournament.isPublic === false) {
+      return res.status(403).json({
+        success: false,
+        message: "This tournament is private."
+      });
+    }
+    
+    const existingPlayer = tournament.players?.[user.uid];
+    
+    if (existingPlayer) {
+      return res.status(400).json({
+        success: false,
+        message: "You have already joined or been invited to this tournament."
+      });
+    }
+    
+    const playerData = {
+      uid: user.uid,
+      username: user.username,
+      status: "accepted",
+      joinedAt: Date.now(),
+      hasNewInvitation: false
+    };
+    
+    await db.ref(`tournaments/${id}/players/${user.uid}`).set(playerData);
+    
+    await createNotification({
+      userId: tournament.adminUid,
+      type: "player_joined",
+      title: "New Player Joined",
+      message: `${user.username} joined ${tournament.name}.`,
+      tournamentId: id
+    });
+    
+    sendTournamentUpdate(id, { type: "TOURNAMENT_UPDATED" });
+    
+    res.json({
+      success: true,
+      message: "Successfully joined the tournament!"
+    });
   } catch (err) {
     res.status(500).json({
       success: false,
