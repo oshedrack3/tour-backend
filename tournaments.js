@@ -41,6 +41,9 @@ function canUpdate(role, key) {
   const root = key.split("/")[0];
   return PERMISSIONS[role]?.includes(root);
 }
+function hasPlayedMatches(tournament) {
+  return (tournament.matches || []).some(m => m.played === true);
+}
 
 router.get("/public", authenticate, async (req, res) => {
   try {
@@ -304,9 +307,15 @@ router.patch("/:id", authenticate, async (req, res) => {
     
     if (updates) {
       updates.updatedAt = Date.now();
-      
+        if (Object.keys(updates).some(k => k.startsWith("teams/"))) {
+    rebuildTableFromMatches(tournament);
+    updates.table = tournament.table;
+    updates.prevRanks = tournament.prevRanks || {};
+  }
+
       await db.ref(`tournaments/${id}`).update(updates);
     } else {
+      
       await db.ref(`tournaments/${id}/${path}`).set(value);
       await db.ref(`tournaments/${id}/updatedAt`).set(Date.now());
     }
@@ -326,6 +335,13 @@ router.patch("/:id", authenticate, async (req, res) => {
 });
 
 function validateTeamUpdate(tournament, user, updates) {
+    if (hasPlayedMatches(tournament)) {
+    return { 
+      success: false, 
+      message: "Registration is closed!  Season have already started." 
+    };
+  }
+
   for (const key of Object.keys(updates)) {
     if (!key.startsWith("teams/")) continue;
     
