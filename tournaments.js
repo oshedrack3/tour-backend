@@ -42,6 +42,31 @@ function canUpdate(role, key) {
   return PERMISSIONS[role]?.includes(root);
 }
 
+router.get("/public", authenticate, async (req, res) => {
+  try {
+    const snapshot = await db.ref("tournaments").once("value");
+    const tournaments = snapshot.val() || {};
+
+    const publicTournaments = Object.values(tournaments).filter(t => {
+      // Returns true if explicitly public OR if no public/private field is set
+      const isExplicitPublic = t.accessType === "public" || t.isPublic === true;
+      const hasNoStatus = t.accessType === undefined && t.isPublic === undefined;
+
+      return isExplicitPublic || hasNoStatus;
+    });
+
+    res.json({
+      success: true,
+      tournaments: publicTournaments
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
 
 router.post("/create", authenticate, async (req, res) => {
   try {
@@ -1038,31 +1063,6 @@ router.post("/:id/match-submission/:submissionId/review", authenticate, async (r
       message: err.message
     });
     
-  }
-});
-
-router.get("/public", authenticate, async (req, res) => {
-  try {
-    const snapshot = await db.ref("tournaments").once("value");
-    const tournaments = snapshot.val() || {};
-
-    const publicTournaments = Object.values(tournaments).filter(t => {
-      // Returns true if explicitly public OR if no public/private field is set
-      const isExplicitPublic = t.accessType === "public" || t.isPublic === true;
-      const hasNoStatus = t.accessType === undefined && t.isPublic === undefined;
-
-      return isExplicitPublic || hasNoStatus;
-    });
-
-    res.json({
-      success: true,
-      tournaments: publicTournaments
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
   }
 });
 
