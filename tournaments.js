@@ -405,7 +405,17 @@ router.patch("/:id", authenticate, async (req, res) => {
       endDate,
       matchDays,
       tournamentImage,
-      season
+      season,
+      settings,
+      groups,
+      groupMatches,
+      groupTables,
+      qualifiedTeams,
+      groupStageComplete,
+      cupRound,
+      knockoutMatches,
+      champion,
+      championName
     } = req.body;
     
     const snapshot = await db
@@ -431,7 +441,7 @@ router.patch("/:id", authenticate, async (req, res) => {
     const updates = {};
     
     if (name !== undefined) {
-      if (!name.trim()) {
+      if (typeof name !== "string" || !name.trim()) {
         return res.status(400).json({
           success: false,
           message: "Tournament name is required."
@@ -453,7 +463,7 @@ router.patch("/:id", authenticate, async (req, res) => {
     }
     
     if (season !== undefined) {
-      if (!season.trim()) {
+      if (typeof season !== "string" || !season.trim()) {
         return res.status(400).json({
           success: false,
           message: "Season is required."
@@ -477,20 +487,62 @@ router.patch("/:id", authenticate, async (req, res) => {
         [];
     }
     
-    if (tournamentImage) {
-      const newImage = await uploadBase64Image(
-        tournamentImage,
-        "tournaments",
-        id
-      );
-      
-      if (tournament.tournamentImage?.publicId) {
-        await deleteCloudinaryImage(
-          tournament.tournamentImage.publicId
+    if (tournamentImage !== undefined) {
+      if (tournamentImage) {
+        const newImage = await uploadBase64Image(
+          tournamentImage,
+          "tournaments",
+          id
         );
+        
+        if (tournament.tournamentImage?.publicId) {
+          await deleteCloudinaryImage(
+            tournament.tournamentImage.publicId
+          );
+        }
+        
+        updates.tournamentImage = newImage;
       }
-      
-      updates.tournamentImage = newImage;
+    }
+    
+    if (settings !== undefined) {
+      updates.settings = settings;
+    }
+    
+    if (groups !== undefined) {
+      updates.groups = groups;
+    }
+    
+    if (groupMatches !== undefined) {
+      updates.groupMatches = groupMatches;
+    }
+    
+    if (groupTables !== undefined) {
+      updates.groupTables = groupTables;
+    }
+    
+    if (qualifiedTeams !== undefined) {
+      updates.qualifiedTeams = qualifiedTeams;
+    }
+    
+    if (groupStageComplete !== undefined) {
+      updates.groupStageComplete = groupStageComplete;
+    }
+    
+    if (cupRound !== undefined) {
+      updates.cupRound = cupRound;
+    }
+    
+    if (knockoutMatches !== undefined) {
+      updates.knockoutMatches = knockoutMatches;
+    }
+    
+    if (champion !== undefined) {
+      updates.champion = champion;
+    }
+    
+    if (championName !== undefined) {
+      updates.championName = championName;
     }
     
     updates.updatedAt = Date.now();
