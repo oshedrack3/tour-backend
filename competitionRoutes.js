@@ -2,8 +2,10 @@ const express = require("express");
 const { v4: uuid } = require("uuid");
 const db = require("./firebase");
 const authenticate = require("./middleware");
-const { uploadBase64Image } = require("./cloudinary");
-
+const {
+  uploadBase64Image,
+  deleteCloudinaryImage
+} = require("./cloudinary");
 const router = express.Router();
 
 
@@ -294,5 +296,153 @@ router.delete("/:id", authenticate, async (req, res) => {
   }
 });
 
+router.patch("/:id", authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = req.user;
+    
+    if (user.role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only admins can edit competitions."
+      });
+    }
+    
+    const competitionRef = db.ref(`competitions/${id}`);
+    const snapshot = await competitionRef.once("value");
+    
+    if (!snapshot.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "Competition not found."
+      });
+    }
+    
+    const competition = snapshot.val();
+    
+    if (competition.adminUid !== user.uid) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied."
+      });
+    }
+    
+    const { name, logo, visibility } = req.body;
+    const updates = {};
+    
+    if (name !== undefined) {
+      if (typeof name !== "string" || !name.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Competition name cannot be empty."
+        });
+      }
+      
+      updates.name = name.trim();
+    }
+    
+    if (visibility !== undefined) {
+      if (!["public", "private"].includes(visibility)) {
+        return res.status(400).json({
+          success: false,
+          message: "Visibility must be either public or private."
+        });
+      }
+      
+      updates.visibility = visibility;
+    }
+    
+    if (logo !== undefined) {
+      if (logo === null || logo === "") {
+        if (competition.logo?.publicId) {
+          try {
+            await deleteCloudinaryImage(
+              competition.logo.publicId
+            );
+          } catch (deleteError) {
+            console.error(
+              "Failed to delete old competition logo:",
+              deleteError
+            );
+          }
+        }
+        
+        updates.logo = null;
+      } else {
+        if (
+          typeof logo !== "string" ||
+          !logo.startsWith("data:image/")
+        ) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid competition logo."
+          });
+        }
+        
+        const newLogo = await uploadBase64Image(
+          logo,
+          "competitions",
+          id
+        );
+        
+        if (!newLogo) {
+          return res.status(500).json({
+            success: false,
+            message: "Failed to upload new competition logo."
+          });
+        }
+        
+        if (competition.logo?.publicId) {
+          try {
+            await deleteCloudinaryImage(
+              competition.logo.publicId
+            );
+          } catch (deleteError) {
+            console.error(
+              "Failed to delete old competition logo:",
+              deleteError
+            );
+          }
+        }
+        
+        updates.logo = newLogo;
+      }
+    }
+    
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No competition changes provided."
+      });
+    }
+    
+    updates.updatedAt = Date.now();
+    
+    await competitionRef.update(updates);
+    
+    const updatedSnapshot =
+      await competitionRef.once("value");
+    
+    const updatedCompetition =
+      updatedSnapshot.val();
+    
+    return res.json({
+      success: true,
+      message: "Competition updated successfully.",
+      competition: updatedCompetition
+    });
+    
+  } catch (err) {
+    console.error(
+      "Competition update error:",
+      err
+    );
+    
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
 
 module.exports = router;
