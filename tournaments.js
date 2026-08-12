@@ -198,6 +198,160 @@ router.post("/create", authenticate, async (req, res) => {
     
   }
 });
+router.patch("/:id/details", authenticate, async (req, res) => {
+  try {
+    const user = req.user;
+    const { id } = req.params;
+
+    const {
+      name,
+      format,
+      season,
+      seasonStatus,
+      startDate,
+      endDate,
+      matchDays,
+      tournamentImage
+    } = req.body;
+
+    const snapshot = await db
+      .ref(`tournaments/${id}`)
+      .once("value");
+
+    if (!snapshot.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "Tournament not found."
+      });
+    }
+
+    const tournament = snapshot.val();
+
+    if (tournament.adminUid !== user.uid) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the tournament admin can edit this tournament."
+      });
+    }
+
+    const updates = {};
+
+    if (name !== undefined) {
+      if (typeof name !== "string" || !name.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Tournament name is required."
+        });
+      }
+
+      updates.name = name.trim();
+    }
+
+    if (format !== undefined) {
+      if (!["league", "cup"].includes(format)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid tournament format."
+        });
+      }
+
+      updates.format = format;
+    }
+
+    if (season !== undefined) {
+      if (typeof season !== "string" || !season.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Season is required."
+        });
+      }
+
+      updates.season = season.trim();
+    }
+
+    if (seasonStatus !== undefined) {
+      if (
+        !["upcoming", "active", "completed"].includes(seasonStatus)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid season status."
+        });
+      }
+
+      updates.seasonStatus = seasonStatus;
+    }
+
+    if (startDate !== undefined) {
+      updates.startDate = startDate || null;
+    }
+
+    if (endDate !== undefined) {
+      updates.endDate = endDate || null;
+    }
+
+    if (matchDays !== undefined) {
+      if (!Array.isArray(matchDays)) {
+        return res.status(400).json({
+          success: false,
+          message: "Match days must be an array."
+        });
+      }
+
+      updates.matchDays = matchDays;
+    }
+
+    if (tournamentImage) {
+      const newImage = await uploadBase64Image(
+        tournamentImage,
+        "tournaments",
+        id
+      );
+
+      if (tournament.tournamentImage?.publicId) {
+        await deleteCloudinaryImage(
+          tournament.tournamentImage.publicId
+        );
+      }
+
+      updates.tournamentImage = newImage;
+    }
+
+    updates.updatedAt = Date.now();
+
+    await db
+      .ref(`tournaments/${id}`)
+      .update(updates);
+
+    const updatedSnapshot = await db
+      .ref(`tournaments/${id}`)
+      .once("value");
+
+    const updatedTournament = updatedSnapshot.val();
+
+    sendTournamentUpdate(id, {
+      type: "TOURNAMENT_UPDATED"
+    });
+
+    res.json({
+      success: true,
+      tournament: updatedTournament
+    });
+
+  } catch (err) {
+    console.error(
+      "Tournament details update error:",
+      err
+    );
+
+    res.status(500).json({
+      success: false,
+      message:
+        err.message ||
+        "Failed to update tournament details."
+    });
+  }
+});
 
 router.get("/my", authenticate, async (req, res) => {
   try {
@@ -243,16 +397,20 @@ router.patch("/:id", authenticate, async (req, res) => {
   try {
     const user = req.user;
     const id = req.params.id;
-    const { path, value, updates } = req.body;
     
-    if (!path && !updates) {
-      return res.status(400).json({
-        success: false,
-        message: "Update data is required."
-      });
-    }
+    const {
+      name,
+      format,
+      startDate,
+      endDate,
+      matchDays,
+      tournamentImage,
+      season
+    } = req.body;
     
-    const snapshot = await db.ref(`tournaments/${id}`).once("value");
+    const snapshot = await db
+      .ref(`tournaments/${id}`)
+      .once("value");
     
     if (!snapshot.exists()) {
       return res.status(404).json({
@@ -263,73 +421,105 @@ router.patch("/:id", authenticate, async (req, res) => {
     
     const tournament = snapshot.val();
     
-    const isAdmin = tournament.adminUid === user.uid;
-    const role = isAdmin ? "admin" : "player";
-    
-    if (!isAdmin) {
-      const player = tournament.players?.[user.uid];
-      
-      if (!player || player.status !== "accepted") {
-        return res.status(403).json({
-          success: false,
-          message: "Access denied."
-        });
-      }
-      
-      if (!updates) {
-        return res.status(403).json({
-          success: false,
-          message: "Access denied."
-        });
-      }
-      
-      const allowed = Object.keys(updates).every(key =>
-        canUpdate(role, key)
-      );
-      
-      if (!allowed) {
-        return res.status(403).json({
-          success: false,
-          message: "Access denied."
-        });
-      }
-      
-      const validation = validateTeamUpdate(
-        tournament,
-        user,
-        updates
-      );
-      
-      if (!validation.success) {
-        return res.status(403).json(validation);
-      }
+    if (tournament.adminUid !== user.uid) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the tournament admin can edit this tournament."
+      });
     }
     
-    if (updates) {
-      updates.updatedAt = Date.now();
-        if (Object.keys(updates).some(k => k.startsWith("teams/"))) {
-    rebuildTableFromMatches(tournament);
-    updates.table = tournament.table;
-    updates.prevRanks = tournament.prevRanks || {};
-  }
-
-      await db.ref(`tournaments/${id}`).update(updates);
-    } else {
+    const updates = {};
+    
+    if (name !== undefined) {
+      if (!name.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Tournament name is required."
+        });
+      }
       
-      await db.ref(`tournaments/${id}/${path}`).set(value);
-      await db.ref(`tournaments/${id}/updatedAt`).set(Date.now());
+      updates.name = name.trim();
     }
-   sendTournamentUpdate(id, {
-  type: "TOURNAMENT_UPDATED"
-}); 
+    
+    if (format !== undefined) {
+      if (!format) {
+        return res.status(400).json({
+          success: false,
+          message: "Tournament format is required."
+        });
+      }
+      
+      updates.format = format;
+    }
+    
+    if (season !== undefined) {
+      if (!season.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Season is required."
+        });
+      }
+      
+      updates.season = season.trim();
+    }
+    
+    if (startDate !== undefined) {
+      updates.startDate = startDate;
+    }
+    
+    if (endDate !== undefined) {
+      updates.endDate = endDate;
+    }
+    
+    if (matchDays !== undefined) {
+      updates.matchDays = Array.isArray(matchDays) ?
+        matchDays :
+        [];
+    }
+    
+    if (tournamentImage) {
+      const newImage = await uploadBase64Image(
+        tournamentImage,
+        "tournaments",
+        id
+      );
+      
+      if (tournament.tournamentImage?.publicId) {
+        await deleteCloudinaryImage(
+          tournament.tournamentImage.publicId
+        );
+      }
+      
+      updates.tournamentImage = newImage;
+    }
+    
+    updates.updatedAt = Date.now();
+    
+    await db
+      .ref(`tournaments/${id}`)
+      .update(updates);
+    
+    sendTournamentUpdate(id, {
+      type: "TOURNAMENT_UPDATED"
+    });
+    
+    const updatedSnapshot = await db
+      .ref(`tournaments/${id}`)
+      .once("value");
+    
+    const updatedTournament = updatedSnapshot.val();
+    
     res.json({
-      success: true
+      success: true,
+      tournament: updatedTournament
     });
     
   } catch (err) {
+    console.error("Tournament update error:", err);
+    
     res.status(500).json({
       success: false,
-      message: err.message
+      message: err.message || "Failed to update tournament."
     });
   }
 });
