@@ -1110,6 +1110,112 @@ function rebuildTableFromMatches(tournament) {
   
 }
 
+function processKnockoutUpdate(match, tournament) {
+  if (
+    !match ||
+    !tournament?.knockoutMatches?.length
+  ) {
+    return;
+  }
+  
+  if (!match.played) {
+    return;
+  }
+  
+  const homeGoals =
+    Number(match.homeGoals);
+  
+  const awayGoals =
+    Number(match.awayGoals);
+  
+  if (
+    !Number.isFinite(homeGoals) ||
+    !Number.isFinite(awayGoals)
+  ) {
+    return;
+  }
+  
+  if (homeGoals === awayGoals) {
+    return;
+  }
+  
+  const winner =
+    homeGoals > awayGoals ?
+    match.home :
+    match.away;
+  
+  const winnerName =
+    typeof winner === "string" ?
+    winner :
+    winner?.name;
+  
+  if (!winnerName) {
+    return;
+  }
+  
+  match.winner = winnerName;
+  
+  const finalRound =
+    Math.max(
+      ...tournament.knockoutMatches.map(
+        m =>
+        Number(m.roundIndex) || 0
+      )
+    );
+  
+  if (
+    Number(match.roundIndex) ===
+    finalRound
+  ) {
+    tournament.champion =
+      winnerName;
+    
+    tournament.championName =
+      winnerName;
+    
+    return;
+  }
+  
+  const nextRound =
+    Number(match.roundIndex) + 1;
+  
+  const nextSlot =
+    Math.floor(
+      Number(match.slot) / 2
+    );
+  
+  const nextMatch =
+    tournament.knockoutMatches.find(
+      m =>
+      Number(m.roundIndex) ===
+      nextRound &&
+      Number(m.slot) ===
+      nextSlot
+    );
+  
+  if (!nextMatch) {
+    throw new Error(
+      `Next knockout match not found for ${match.id}`
+    );
+  }
+  
+  const winnerGoesHome =
+    Number(match.slot) % 2 === 0;
+  
+  if (winnerGoesHome) {
+    nextMatch.home =
+      winnerName;
+  } else {
+    nextMatch.away =
+      winnerName;
+  }
+  
+  nextMatch.homeGoals = null;
+  nextMatch.awayGoals = null;
+  nextMatch.played = false;
+  nextMatch.playedAt = null;
+  nextMatch.winner = null;
+}
 
 router.post("/:id/match-submission/:submissionId/review", authenticate, async (req, res) => {
   try {
@@ -1239,23 +1345,12 @@ router.post("/:id/match-submission/:submissionId/review", authenticate, async (r
         );
       }
 
-      if (matchType === "knockout") {
-        const winner =
-          match.homeGoals >
-          match.awayGoals
-            ? match.home
-            : match.awayGoals >
-              match.homeGoals
-              ? match.away
-              : null;
-
-        if (winner) {
-          match.winner =
-            typeof winner === "object"
-              ? winner.name
-              : winner;
-        }
-      }
+  if (matchType === "knockout") {
+  processKnockoutUpdate(
+    match,
+    tournament
+  );
+}
     }
 
     tournament.updatedAt =
