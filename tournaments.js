@@ -1113,131 +1113,236 @@ function rebuildTableFromMatches(tournament) {
 
 router.post("/:id/match-submission/:submissionId/review", authenticate, async (req, res) => {
   try {
-    
     const { id, submissionId } = req.params;
     const { action, rejectionReason = "" } = req.body;
-    
+
     if (!["approved", "rejected"].includes(action)) {
       return res.status(400).json({
         success: false,
         message: "Invalid action."
       });
     }
-    
-    const snapshot = await db.ref(`tournaments/${id}`).once("value");
-    
+
+    const snapshot = await db
+      .ref(`tournaments/${id}`)
+      .once("value");
+
     if (!snapshot.exists()) {
       return res.status(404).json({
         success: false,
         message: "Tournament not found."
       });
     }
-    
+
     const tournament = snapshot.val();
-    
+
     if (tournament.adminUid !== req.user.uid) {
       return res.status(403).json({
         success: false,
-        message: "Only the tournament admin can review submissions."
+        message:
+          "Only the tournament admin can review submissions."
       });
     }
-    
+
     tournament.matchSubmissions ||= {};
-    
-    const submission = tournament.matchSubmissions[submissionId];
-    
+
+    const submission =
+      tournament.matchSubmissions[submissionId];
+
     if (!submission) {
       return res.status(404).json({
         success: false,
         message: "Submission not found."
       });
     }
-    
+
     if (submission.status !== "pending") {
       return res.status(400).json({
         success: false,
         message: "Submission already reviewed."
       });
     }
-    
+
     submission.status = action;
     submission.reviewedAt = Date.now();
     submission.reviewedBy = req.user.uid;
-    
+
     if (action === "rejected") {
-      
-      submission.rejectionReason = rejectionReason;
-      
+      submission.rejectionReason =
+        rejectionReason;
     } else {
-      
-      const match = (tournament.matches || []).find(
-        m => String(m.id) === String(submission.matchId)
-      );
-      
+      const matchCollections = [
+        {
+          type: "league",
+          matches:
+            tournament.matches || []
+        },
+        {
+          type: "group",
+          matches:
+            tournament.groupMatches || []
+        },
+        {
+          type: "knockout",
+          matches:
+            tournament.knockoutMatches || []
+        }
+      ];
+
+      let match = null;
+      let matchType = null;
+
+      for (
+        const collection
+        of matchCollections
+      ) {
+        const found =
+          collection.matches.find(
+            m =>
+              String(m.id) ===
+              String(submission.matchId)
+          );
+
+        if (found) {
+          match = found;
+          matchType =
+            collection.type;
+          break;
+        }
+      }
+
       if (!match) {
         return res.status(404).json({
           success: false,
           message: "Match not found."
         });
       }
-      
-      match.homeGoals = Number(submission.homeGoals);
-      match.awayGoals = Number(submission.awayGoals);
+
+      match.homeGoals =
+        Number(submission.homeGoals);
+
+      match.awayGoals =
+        Number(submission.awayGoals);
+
       match.played = true;
       match.playedAt = Date.now();
-      
-      rebuildTableFromMatches(tournament);
+
+      if (matchType === "league") {
+        rebuildTableFromMatches(
+          tournament
+        );
+      }
+
+      if (matchType === "group") {
+        generateGroupTables(
+          tournament
+        );
+      }
+
+      if (matchType === "knockout") {
+        const winner =
+          match.homeGoals >
+          match.awayGoals
+            ? match.home
+            : match.awayGoals >
+              match.homeGoals
+              ? match.away
+              : null;
+
+        if (winner) {
+          match.winner =
+            typeof winner === "object"
+              ? winner.name
+              : winner;
+        }
+      }
     }
-    
-    tournament.updatedAt = Date.now();
-    
-    await db.ref(`tournaments/${id}`).update({
-      matches: tournament.matches,
-      table: tournament.table,
-      prevRanks: tournament.prevRanks || {},
-      records: tournament.records || {},
-      matchSubmissions: tournament.matchSubmissions,
-      updatedAt: tournament.updatedAt
-    });
+
+    tournament.updatedAt =
+      Date.now();
+
+    await db
+      .ref(`tournaments/${id}`)
+      .update({
+        matches:
+          tournament.matches || [],
+
+        groupMatches:
+          tournament.groupMatches || [],
+
+        groupTables:
+          tournament.groupTables || {},
+
+        knockoutMatches:
+          tournament.knockoutMatches || [],
+
+        table:
+          tournament.table || [],
+
+        prevRanks:
+          tournament.prevRanks || {},
+
+        records:
+          tournament.records || {},
+
+        matchSubmissions:
+          tournament.matchSubmissions,
+
+        updatedAt:
+          tournament.updatedAt
+      });
+
     sendTournamentUpdate(id, {
-  type: "TOURNAMENT_UPDATED"
-});
+      type:
+        "TOURNAMENT_UPDATED"
+    });
+
     await createNotification({
-  userId: submission.submittedBy,
-  type: action === "approved" ?
-    "submission_approved" :
-    "submission_rejected",
-  
-  title: action === "approved" ?
-    "Submission Approved" :
-    "Submission Rejected",
-  
-  message: action === "approved" ?
-    "Your match result has been approved." :
-    `Your submission was rejected. Reason: ${rejectionReason}`,
-  
-  tournamentId: id
-});
+      userId:
+        submission.submittedBy,
+
+      type:
+        action === "approved"
+          ? "submission_approved"
+          : "submission_rejected",
+
+      title:
+        action === "approved"
+          ? "Submission Approved"
+          : "Submission Rejected",
+
+      message:
+        action === "approved"
+          ? "Your match result has been approved."
+          : `Your submission was rejected. Reason: ${rejectionReason}`,
+
+      tournamentId: id
+    });
+
     res.json({
       success: true,
       submission,
-      matches: tournament.matches,
-      table: tournament.table,
-      prevRanks: tournament.prevRanks || {},
-      records: tournament.records || {},
-      matchSubmissions: tournament.matchSubmissions
+      matches:
+        tournament.matches || [],
+      groupMatches:
+        tournament.groupMatches || [],
+      groupTables:
+        tournament.groupTables || {},
+      knockoutMatches:
+        tournament.knockoutMatches || [],
+      table:
+        tournament.table || [],
+      matchSubmissions:
+        tournament.matchSubmissions
     });
-    
+
   } catch (err) {
-    
     res.status(500).json({
       success: false,
       message: err.message
     });
-    
   }
 });
-
 
 router.get("/:id/match-submissions", authenticate, async (req, res) => {
   try {
