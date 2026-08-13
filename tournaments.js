@@ -41,6 +41,7 @@ function canUpdate(role, key) {
   const root = key.split("/")[0];
   return PERMISSIONS[role]?.includes(root);
 }
+
 function hasPlayedMatches(tournament) {
   return (tournament.matches || []).some(m => m.played === true);
 }
@@ -49,15 +50,15 @@ router.get("/public", authenticate, async (req, res) => {
   try {
     const snapshot = await db.ref("tournaments").once("value");
     const tournaments = snapshot.val() || {};
-
+    
     const publicTournaments = Object.values(tournaments).filter(t => {
       // Returns true if explicitly public OR if no public/private field is set
       const isExplicitPublic = t.accessType === "public" || t.isPublic === true;
       const hasNoStatus = t.accessType === undefined && t.isPublic === undefined;
-
+      
       return isExplicitPublic || hasNoStatus;
     });
-
+    
     res.json({
       success: true,
       tournaments: publicTournaments
@@ -203,7 +204,7 @@ router.patch("/:id/details", authenticate, async (req, res) => {
   try {
     const user = req.user;
     const { id } = req.params;
-
+    
     const {
       name,
       format,
@@ -214,29 +215,29 @@ router.patch("/:id/details", authenticate, async (req, res) => {
       matchDays,
       tournamentImage
     } = req.body;
-
+    
     const snapshot = await db
       .ref(`tournaments/${id}`)
       .once("value");
-
+    
     if (!snapshot.exists()) {
       return res.status(404).json({
         success: false,
         message: "Tournament not found."
       });
     }
-
+    
     const tournament = snapshot.val();
-
+    
     if (tournament.adminUid !== user.uid) {
       return res.status(403).json({
         success: false,
         message: "Only the tournament admin can edit this tournament."
       });
     }
-
+    
     const updates = {};
-
+    
     if (name !== undefined) {
       if (typeof name !== "string" || !name.trim()) {
         return res.status(400).json({
@@ -244,10 +245,10 @@ router.patch("/:id/details", authenticate, async (req, res) => {
           message: "Tournament name is required."
         });
       }
-
+      
       updates.name = name.trim();
     }
-
+    
     if (format !== undefined) {
       if (!["league", "cup"].includes(format)) {
         return res.status(400).json({
@@ -255,10 +256,10 @@ router.patch("/:id/details", authenticate, async (req, res) => {
           message: "Invalid tournament format."
         });
       }
-
+      
       updates.format = format;
     }
-
+    
     if (season !== undefined) {
       if (typeof season !== "string" || !season.trim()) {
         return res.status(400).json({
@@ -266,10 +267,10 @@ router.patch("/:id/details", authenticate, async (req, res) => {
           message: "Season is required."
         });
       }
-
+      
       updates.season = season.trim();
     }
-
+    
     if (seasonStatus !== undefined) {
       if (
         !["upcoming", "active", "completed"].includes(seasonStatus)
@@ -279,18 +280,18 @@ router.patch("/:id/details", authenticate, async (req, res) => {
           message: "Invalid season status."
         });
       }
-
+      
       updates.seasonStatus = seasonStatus;
     }
-
+    
     if (startDate !== undefined) {
       updates.startDate = startDate || null;
     }
-
+    
     if (endDate !== undefined) {
       updates.endDate = endDate || null;
     }
-
+    
     if (matchDays !== undefined) {
       if (!Array.isArray(matchDays)) {
         return res.status(400).json({
@@ -298,57 +299,56 @@ router.patch("/:id/details", authenticate, async (req, res) => {
           message: "Match days must be an array."
         });
       }
-
+      
       updates.matchDays = matchDays;
     }
-
+    
     if (tournamentImage) {
       const newImage = await uploadBase64Image(
         tournamentImage,
         "tournaments",
         id
       );
-
+      
       if (tournament.tournamentImage?.publicId) {
         await deleteCloudinaryImage(
           tournament.tournamentImage.publicId
         );
       }
-
+      
       updates.tournamentImage = newImage;
     }
-
+    
     updates.updatedAt = Date.now();
-
+    
     await db
       .ref(`tournaments/${id}`)
       .update(updates);
-
+    
     const updatedSnapshot = await db
       .ref(`tournaments/${id}`)
       .once("value");
-
+    
     const updatedTournament = updatedSnapshot.val();
-
+    
     sendTournamentUpdate(id, {
       type: "TOURNAMENT_UPDATED"
     });
-
+    
     res.json({
       success: true,
       tournament: updatedTournament
     });
-
+    
   } catch (err) {
     console.error(
       "Tournament details update error:",
       err
     );
-
+    
     res.status(500).json({
       success: false,
-      message:
-        err.message ||
+      message: err.message ||
         "Failed to update tournament details."
     });
   }
@@ -491,13 +491,13 @@ router.patch("/:id", authenticate, async (req, res) => {
 });
 
 function validateTeamUpdate(tournament, user, updates) {
-    if (hasPlayedMatches(tournament)) {
-    return { 
-      success: false, 
-      message: "Registration is closed!  Season have already started." 
+  if (hasPlayedMatches(tournament)) {
+    return {
+      success: false,
+      message: "Registration is closed!  Season have already started."
     };
   }
-
+  
   for (const key of Object.keys(updates)) {
     if (!key.startsWith("teams/")) continue;
     
@@ -564,11 +564,11 @@ router.post("/:id/team-logo", authenticate, async (req, res) => {
     const { logo, teamName, teamId } = req.body;
     
     if (!logo || !teamName || !teamId) {
-  return res.status(400).json({
-    success: false,
-    message: "Logo, team name and team ID are required."
-  });
-}
+      return res.status(400).json({
+        success: false,
+        message: "Logo, team name and team ID are required."
+      });
+    }
     
     const snapshot = await db.ref(`tournaments/${id}`).once("value");
     
@@ -594,20 +594,20 @@ router.post("/:id/team-logo", authenticate, async (req, res) => {
         message: "Access denied."
       });
     }
-   
-   const oldLogo = tournament.teamLogos?.[teamId];
-
-if (oldLogo?.publicId) {
-  await deleteCloudinaryImage(
-    oldLogo.publicId
-  );
-}
-
+    
+    const oldLogo = tournament.teamLogos?.[teamId];
+    
+    if (oldLogo?.publicId) {
+      await deleteCloudinaryImage(
+        oldLogo.publicId
+      );
+    }
+    
     const image = await uploadBase64Image(
-  logo,
-  "team-logos",
-  `${id}_${teamId}`
-);    
+      logo,
+      "team-logos",
+      `${id}_${teamId}`
+    );
     res.json({
       success: true,
       image
@@ -775,16 +775,16 @@ router.post("/:id/invite", authenticate, async (req, res) => {
         await db
           .ref(`tournaments/${id}/players`)
           .set(tournament.players);
-          sendTournamentUpdate(id, {
-  type: "TOURNAMENT_UPDATED"
-});
-      await createNotification({
-  userId: invitedUid,
-  type: "invitation",
-  title: "Tournament Invitation",
-  message: `${req.user.username} invited you to join ${tournament.name}.`,
-  tournamentId: id
-});  
+        sendTournamentUpdate(id, {
+          type: "TOURNAMENT_UPDATED"
+        });
+        await createNotification({
+          userId: invitedUid,
+          type: "invitation",
+          title: "Tournament Invitation",
+          message: `${req.user.username} invited you to join ${tournament.name}.`,
+          tournamentId: id
+        });
         return res.json({
           success: true,
           message: "Invitation sent again successfully."
@@ -808,15 +808,15 @@ router.post("/:id/invite", authenticate, async (req, res) => {
     await db
       .ref(`tournaments/${id}/players`)
       .set(tournament.players);
-      
+    
     await createNotification({
-  userId: invitedUid,
-  type: "invitation",
-  title: "Tournament Invitation",
-  message: `${req.user.username} invited you to join ${tournament.name}.`,
-  tournamentId: id
-});
-
+      userId: invitedUid,
+      type: "invitation",
+      title: "Tournament Invitation",
+      message: `${req.user.username} invited you to join ${tournament.name}.`,
+      tournamentId: id
+    });
+    
     return res.json({
       success: true,
       message: "Invitation sent successfully."
@@ -887,20 +887,20 @@ router.post("/:id/respond", authenticate, async (req, res) => {
       .ref(`tournaments/${id}/players`)
       .set(tournament.players);
     sendTournamentUpdate(id, {
-  type: "TOURNAMENT_UPDATED"
-});
+      type: "TOURNAMENT_UPDATED"
+    });
     await createNotification({
-  userId: tournament.adminUid,
-  type: "invitation_response",
-  title: "Invitation Response",
-  message: `${req.user.username} ${
+      userId: tournament.adminUid,
+      type: "invitation_response",
+      title: "Invitation Response",
+      message: `${req.user.username} ${
     action === "accept"
       ? "accepted"
       : "declined"
   } your tournament invitation.`,
-  tournamentId: id
-});
-
+      tournamentId: id
+    });
+    
     res.json({
       success: true,
       status: player.status
@@ -1217,98 +1217,313 @@ function processKnockoutUpdate(match, tournament) {
   nextMatch.winner = null;
 }
 
+
+function generateGroupTables(tournament) {
+  tournament.groupTables = {};
+  
+  if (!tournament?.groups?.length) {
+    return {};
+  }
+  
+  tournament.groups.forEach(group => {
+    tournament.groupTables[group.name] =
+      generateSingleGroupTable(
+        tournament,
+        group
+      );
+  });
+  
+  return tournament.groupTables;
+}
+
+function generateSingleGroupTable(
+  tournament,
+  group
+) {
+  const table =
+    createInitialGroupTable(group);
+  
+  const matches =
+    getPlayedGroupMatches(
+      tournament,
+      group
+    );
+  
+  matches.forEach(match => {
+    applyMatchToGroupTable(
+      table,
+      match
+    );
+  });
+  
+  return sortGroupTable(table);
+}
+
+function createInitialGroupTable(group) {
+  const table = {};
+  
+  group.teams.forEach(team => {
+    const teamName =
+      typeof team === "string" ?
+      team :
+      team?.name;
+    
+    if (
+      !teamName ||
+      teamName === "BYE"
+    ) {
+      return;
+    }
+    
+    table[teamName] = {
+      name: teamName,
+      p: 0,
+      w: 0,
+      d: 0,
+      l: 0,
+      gf: 0,
+      ga: 0,
+      gd: 0,
+      pts: 0,
+      pos: 0
+    };
+  });
+  
+  return table;
+}
+
+function getPlayedGroupMatches(
+  tournament,
+  group
+) {
+  return (
+    tournament.groupMatches || []
+  ).filter(
+    match =>
+    match.group === group.name &&
+    match.played
+  );
+}
+
+function applyMatchToGroupTable(
+  table,
+  match
+) {
+  const homeName =
+    typeof match.home === "string" ?
+    match.home :
+    match.home?.name;
+  
+  const awayName =
+    typeof match.away === "string" ?
+    match.away :
+    match.away?.name;
+  
+  const home =
+    table[homeName];
+  
+  const away =
+    table[awayName];
+  
+  if (!home || !away) {
+    return;
+  }
+  
+  const homeGoals =
+    Number(match.homeGoals) || 0;
+  
+  const awayGoals =
+    Number(match.awayGoals) || 0;
+  
+  updateTeamStats(
+    home,
+    homeGoals,
+    awayGoals
+  );
+  
+  updateTeamStats(
+    away,
+    awayGoals,
+    homeGoals
+  );
+  
+  updateMatchResult(
+    home,
+    away,
+    homeGoals,
+    awayGoals
+  );
+}
+
+function updateTeamStats(
+  team,
+  goalsFor,
+  goalsAgainst
+) {
+  team.p++;
+  
+  team.gf += goalsFor;
+  team.ga += goalsAgainst;
+  
+  team.gd =
+    team.gf - team.ga;
+}
+
+function updateMatchResult(
+  home,
+  away,
+  homeGoals,
+  awayGoals
+) {
+  if (homeGoals > awayGoals) {
+    home.w++;
+    home.pts += 3;
+    away.l++;
+    return;
+  }
+  
+  if (awayGoals > homeGoals) {
+    away.w++;
+    away.pts += 3;
+    home.l++;
+    return;
+  }
+  
+  home.d++;
+  away.d++;
+  
+  home.pts++;
+  away.pts++;
+}
+
+function sortGroupTable(table) {
+  const sorted =
+    Object.values(table).sort(
+      (a, b) => {
+        
+        if (b.pts !== a.pts) {
+          return b.pts - a.pts;
+        }
+        
+        if (b.gd !== a.gd) {
+          return b.gd - a.gd;
+        }
+        
+        if (b.gf !== a.gf) {
+          return b.gf - a.gf;
+        }
+        
+        return a.name.localeCompare(
+          b.name
+        );
+      }
+    );
+  
+  assignTablePositions(
+    sorted
+  );
+  
+  return sorted;
+}
+
+function assignTablePositions(table) {
+  table.forEach(
+    (team, index) => {
+      team.pos = index + 1;
+    }
+  );
+}
+
+
+
+
+
 router.post("/:id/match-submission/:submissionId/review", authenticate, async (req, res) => {
   try {
     const { id, submissionId } = req.params;
     const { action, rejectionReason = "" } = req.body;
-
+    
     if (!["approved", "rejected"].includes(action)) {
       return res.status(400).json({
         success: false,
         message: "Invalid action."
       });
     }
-
+    
     const snapshot = await db
       .ref(`tournaments/${id}`)
       .once("value");
-
+    
     if (!snapshot.exists()) {
       return res.status(404).json({
         success: false,
         message: "Tournament not found."
       });
     }
-
+    
     const tournament = snapshot.val();
-
+    
     if (tournament.adminUid !== req.user.uid) {
       return res.status(403).json({
         success: false,
-        message:
-          "Only the tournament admin can review submissions."
+        message: "Only the tournament admin can review submissions."
       });
     }
-
+    
     tournament.matchSubmissions ||= {};
-
+    
     const submission =
       tournament.matchSubmissions[submissionId];
-
+    
     if (!submission) {
       return res.status(404).json({
         success: false,
         message: "Submission not found."
       });
     }
-
+    
     if (submission.status !== "pending") {
       return res.status(400).json({
         success: false,
         message: "Submission already reviewed."
       });
     }
-
+    
     submission.status = action;
     submission.reviewedAt = Date.now();
     submission.reviewedBy = req.user.uid;
-
+    
     if (action === "rejected") {
       submission.rejectionReason =
         rejectionReason;
     } else {
       const matchCollections = [
-        {
-          type: "league",
-          matches:
-            tournament.matches || []
-        },
-        {
-          type: "group",
-          matches:
-            tournament.groupMatches || []
-        },
-        {
-          type: "knockout",
-          matches:
-            tournament.knockoutMatches || []
-        }
-      ];
-
+      {
+        type: "league",
+        matches: tournament.matches || []
+      },
+      {
+        type: "group",
+        matches: tournament.groupMatches || []
+      },
+      {
+        type: "knockout",
+        matches: tournament.knockoutMatches || []
+      }];
+      
       let match = null;
       let matchType = null;
-
+      
       for (
-        const collection
-        of matchCollections
+        const collection of matchCollections
       ) {
         const found =
           collection.matches.find(
             m =>
-              String(m.id) ===
-              String(submission.matchId)
+            String(m.id) ===
+            String(submission.matchId)
           );
-
+        
         if (found) {
           match = found;
           matchType =
@@ -1316,121 +1531,101 @@ router.post("/:id/match-submission/:submissionId/review", authenticate, async (r
           break;
         }
       }
-
+      
       if (!match) {
         return res.status(404).json({
           success: false,
           message: "Match not found."
         });
       }
-
+      
       match.homeGoals =
         Number(submission.homeGoals);
-
+      
       match.awayGoals =
         Number(submission.awayGoals);
-
+      
       match.played = true;
       match.playedAt = Date.now();
-
+      
       if (matchType === "league") {
         rebuildTableFromMatches(
           tournament
         );
       }
-
+      
       if (matchType === "group") {
         generateGroupTables(
           tournament
         );
       }
-
-  if (matchType === "knockout") {
-  processKnockoutUpdate(
-    match,
-    tournament
-  );
-}
+      
+      if (matchType === "knockout") {
+        processKnockoutUpdate(
+          match,
+          tournament
+        );
+      }
     }
-
+    
     tournament.updatedAt =
       Date.now();
-
+    
     await db
       .ref(`tournaments/${id}`)
       .update({
-        matches:
-          tournament.matches || [],
-
-        groupMatches:
-          tournament.groupMatches || [],
-
-        groupTables:
-          tournament.groupTables || {},
-
-        knockoutMatches:
-          tournament.knockoutMatches || [],
-
-        table:
-          tournament.table || [],
-
-        prevRanks:
-          tournament.prevRanks || {},
-
-        records:
-          tournament.records || {},
-
-        matchSubmissions:
-          tournament.matchSubmissions,
-
-        updatedAt:
-          tournament.updatedAt
+        matches: tournament.matches || [],
+        
+        groupMatches: tournament.groupMatches || [],
+        
+        groupTables: tournament.groupTables || {},
+        
+        knockoutMatches: tournament.knockoutMatches || [],
+        
+        table: tournament.table || [],
+        
+        prevRanks: tournament.prevRanks || {},
+        
+        records: tournament.records || {},
+        
+        matchSubmissions: tournament.matchSubmissions,
+        
+        updatedAt: tournament.updatedAt
       });
-
+    
     sendTournamentUpdate(id, {
-      type:
-        "TOURNAMENT_UPDATED"
+      type: "TOURNAMENT_UPDATED"
     });
-
+    
     await createNotification({
-      userId:
-        submission.submittedBy,
-
-      type:
-        action === "approved"
-          ? "submission_approved"
-          : "submission_rejected",
-
-      title:
-        action === "approved"
-          ? "Submission Approved"
-          : "Submission Rejected",
-
-      message:
-        action === "approved"
-          ? "Your match result has been approved."
-          : `Your submission was rejected. Reason: ${rejectionReason}`,
-
+      userId: submission.submittedBy,
+      
+      type: action === "approved" ?
+        "submission_approved" :
+        "submission_rejected",
+      
+      title: action === "approved" ?
+        "Submission Approved" :
+        "Submission Rejected",
+      
+      message: action === "approved" ?
+        "Your match result has been approved." :
+        `Your submission was rejected. Reason: ${rejectionReason}`,
+      
       tournamentId: id
     });
-
+    
     res.json({
       success: true,
       submission,
-      matches:
-        tournament.matches || [],
-      groupMatches:
-        tournament.groupMatches || [],
-      groupTables:
-        tournament.groupTables || {},
-      knockoutMatches:
-        tournament.knockoutMatches || [],
-      table:
-        tournament.table || [],
-      matchSubmissions:
-        tournament.matchSubmissions
+      matches: tournament.matches || [],
+      groupMatches: tournament.groupMatches || [],
+      groupTables: tournament.groupTables || {},
+      knockoutMatches: tournament.knockoutMatches || [],
+      table: tournament.table || [],
+      matchSubmissions: tournament.matchSubmissions
     });
-
+    
   } catch (err) {
     res.status(500).json({
       success: false,
@@ -1519,8 +1714,8 @@ router.post("/:id/rebuild-table", authenticate, async (req, res) => {
       updatedAt: Date.now()
     });
     sendTournamentUpdate(id, {
-  type: "TOURNAMENT_UPDATED"
-});
+      type: "TOURNAMENT_UPDATED"
+    });
     res.json({
       success: true,
       tournament
@@ -1537,89 +1732,82 @@ router.post("/:id/rebuild-table", authenticate, async (req, res) => {
 router.post("/:id/match-submission", authenticate, async (req, res) => {
   try {
     const { id } = req.params;
-
+    
     const {
       matchId,
       homeGoals,
       awayGoals,
       screenshot
     } = req.body;
-
+    
     const snapshot = await db
       .ref(`tournaments/${id}`)
       .once("value");
-
+    
     if (!snapshot.exists()) {
       return res.status(404).json({
         success: false,
         message: "Tournament not found."
       });
     }
-
+    
     const tournament = snapshot.val();
-
+    
     const player =
       tournament.players?.[req.user.uid];
-
+    
     if (
       !player ||
       player.status !== "accepted"
     ) {
       return res.status(403).json({
         success: false,
-        message:
-          "Only accepted players can submit results."
+        message: "Only accepted players can submit results."
       });
     }
-
+    
     const playerTeam =
       Object.values(
         tournament.teams || {}
       ).find(
         team =>
-          team.ownerUid === req.user.uid
+        team.ownerUid === req.user.uid
       );
-
+    
     if (!playerTeam) {
       return res.status(403).json({
         success: false,
-        message:
-          "You have not registered a team."
+        message: "You have not registered a team."
       });
     }
-
+    
     const matchCollections = [
-      {
-        type: "league",
-        matches:
-          tournament.matches || []
-      },
-      {
-        type: "group",
-        matches:
-          tournament.groupMatches || []
-      },
-      {
-        type: "knockout",
-        matches:
-          tournament.knockoutMatches || []
-      }
-    ];
-
+    {
+      type: "league",
+      matches: tournament.matches || []
+    },
+    {
+      type: "group",
+      matches: tournament.groupMatches || []
+    },
+    {
+      type: "knockout",
+      matches: tournament.knockoutMatches || []
+    }];
+    
     let match = null;
     let matchType = null;
-
+    
     for (
-      const collection
-      of matchCollections
+      const collection of matchCollections
     ) {
       const found =
         collection.matches.find(
           m =>
-            String(m.id) ===
-            String(matchId)
+          String(m.id) ===
+          String(matchId)
         );
-
+      
       if (found) {
         match = found;
         matchType =
@@ -1627,84 +1815,80 @@ router.post("/:id/match-submission", authenticate, async (req, res) => {
         break;
       }
     }
-
+    
     if (!match) {
       return res.status(404).json({
         success: false,
         message: "Match not found."
       });
     }
-
+    
     const getTeamName = team => {
       if (!team) return null;
-
+      
       if (
         typeof team === "string"
       ) {
         return team;
       }
-
+      
       return team.name || null;
     };
-
+    
     const homeTeamName =
       getTeamName(match.home);
-
+    
     const awayTeamName =
       getTeamName(match.away);
-
+    
     if (
       homeTeamName !==
-        playerTeam.name &&
+      playerTeam.name &&
       awayTeamName !==
-        playerTeam.name
+      playerTeam.name
     ) {
       return res.status(403).json({
         success: false,
-        message:
-          "You can only submit results for your own team's matches."
+        message: "You can only submit results for your own team's matches."
       });
     }
-
+    
     if (match.played) {
       return res.status(400).json({
         success: false,
-        message:
-          "This match has already been played."
+        message: "This match has already been played."
       });
     }
-
+    
     tournament.matchSubmissions =
-      tournament.matchSubmissions ||
-      {};
-
+      tournament.matchSubmissions || {};
+    
     const existingSubmission =
       Object.values(
         tournament.matchSubmissions
       ).find(
         submission =>
-          String(
-            submission.matchId
-          ) === String(matchId) &&
-          submission.status ===
-            "pending"
+        String(
+          submission.matchId
+        ) === String(matchId) &&
+        submission.status ===
+        "pending"
       );
-
+    
     if (existingSubmission) {
       return res.status(400).json({
         success: false,
-        message:
-          "A submission for this match is already awaiting review."
+        message: "A submission for this match is already awaiting review."
       });
     }
-
+    
     const submissionId =
       uuid();
-
+    
     let screenshotUrl = null;
     let screenshotPublicId =
       null;
-
+    
     if (screenshot) {
       const uploadedImage =
         await uploadBase64Image(
@@ -1712,43 +1896,38 @@ router.post("/:id/match-submission", authenticate, async (req, res) => {
           "match-screenshots",
           `${id}_${submissionId}`
         );
-
+      
       screenshotUrl =
         uploadedImage.url;
-
+      
       screenshotPublicId =
         uploadedImage.publicId;
     }
-
+    
     tournament.matchSubmissions[
       submissionId
     ] = {
       id: submissionId,
-
+      
       matchId,
-
-      submittedBy:
-        req.user.uid,
-
-      username:
-        req.user.username,
-
-      homeGoals:
-        Number(homeGoals),
-
-      awayGoals:
-        Number(awayGoals),
-
-      screenshot:
-        screenshotUrl,
-
+      
+      submittedBy: req.user.uid,
+      
+      username: req.user.username,
+      
+      homeGoals: Number(homeGoals),
+      
+      awayGoals: Number(awayGoals),
+      
+      screenshot: screenshotUrl,
+      
       screenshotPublicId,
-
+      
       status: "pending",
-
+      
       createdAt: Date.now()
     };
-
+    
     await db
       .ref(
         `tournaments/${id}/matchSubmissions`
@@ -1756,42 +1935,36 @@ router.post("/:id/match-submission", authenticate, async (req, res) => {
       .set(
         tournament.matchSubmissions
       );
-
+    
     await db
       .ref(
         `tournaments/${id}/updatedAt`
       )
       .set(Date.now());
-
+    
     sendTournamentUpdate(id, {
-      type:
-        "TOURNAMENT_UPDATED"
+      type: "TOURNAMENT_UPDATED"
     });
-
+    
     await createNotification({
-      userId:
-        tournament.adminUid,
-
-      type:
-        "match_submission",
-
-      title:
-        "New Match Submission",
-
-      message:
-        `${req.user.username} submitted a match result.`,
-
+      userId: tournament.adminUid,
+      
+      type: "match_submission",
+      
+      title: "New Match Submission",
+      
+      message: `${req.user.username} submitted a match result.`,
+      
       tournamentId: id
     });
-
+    
     res.json({
       success: true,
       submissionId,
-      screenshot:
-        screenshotUrl,
+      screenshot: screenshotUrl,
       matchType
     });
-
+    
   } catch (err) {
     res.status(500).json({
       success: false,
