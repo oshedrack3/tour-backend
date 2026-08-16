@@ -338,19 +338,6 @@ router.patch("/:id", authenticate, async (req, res) => {
           });
         }
         
-        if (competition.logo?.publicId) {
-          try {
-            await deleteCloudinaryImage(
-              competition.logo.publicId
-            );
-          } catch (deleteError) {
-            console.error(
-              "Failed to delete old competition logo:",
-              deleteError
-            );
-          }
-        }
-        
         updates.logo = newLogo;
       }
     }
@@ -390,6 +377,7 @@ router.patch("/:id", authenticate, async (req, res) => {
     });
   }
 });
+
 
 router.delete("/:id", authenticate, async (req, res) => {
   try {
