@@ -16,7 +16,93 @@ const {
 
 
 const app = express();
+async function initializeHallOfFame() {
+  const snapshot = await db
+    .ref("hallOfFame")
+    .once("value");
 
+  if (snapshot.exists()) {
+    return;
+  }
+
+  await db.ref("hallOfFame").set({
+    categories: [
+      {
+        id: "league-winners",
+        title: "League Winners",
+        icon: "🥇",
+        winners: [
+          { name: "Adetiger", wins: 2 },
+          { name: "Sancho", wins: 6 },
+          { name: "Emmy", wins: 1 },
+          { name: "PEiN", wins: 1 }
+        ]
+      },
+      {
+        id: "champions-league-winners",
+        title: "Champions League Winners",
+        icon: "🏆",
+        winners: [
+          { name: "Slime", wins: 2 },
+          { name: "Kenny", wins: 1 },
+          { name: "Emmy", wins: 1 },
+          { name: "PEiN", wins: 1 },
+          { name: "All4Wincy", wins: 1 },
+          { name: "Sancho", wins: 1 }
+        ]
+      },
+      {
+        id: "europa-league-winners",
+        title: "Europa League Winners",
+        icon: "🏆",
+        winners: [
+          { name: "Puzzle", wins: 1 },
+          { name: "Evidonia", wins: 1 },
+          { name: "George", wins: 1 },
+          { name: "Muh’d", wins: 1 }
+        ]
+      },
+      {
+        id: "super-cup-winners",
+        title: "Super Cup Winners",
+        icon: "🏆",
+        winners: [
+          { name: "Slime", wins: 1 },
+          { name: "Evidonia", wins: 1 },
+          { name: "Emmy", wins: 1 },
+          { name: "George", wins: 1 }
+        ]
+      },
+      {
+        id: "league-cup-winners",
+        title: "League Cup Winners",
+        icon: "🏆",
+        winners: [
+          { name: "ChristoCentric", wins: 1 },
+          { name: "Emmy", wins: 1 }
+        ]
+      },
+      {
+        id: "communi-shield-winners",
+        title: "Communi Shield Winners",
+        icon: "🏆",
+        winners: [
+          { name: "PEiN", wins: 1 }
+        ]
+      },
+      {
+        id: "player-of-the-season",
+        title: "Player Of The Season",
+        icon: "🏆",
+        winners: [
+          { name: "PEiN", wins: 1 }
+        ]
+      }
+    ]
+  });
+}
+
+initializeHallOfFame().catch(console.error);
 
 app.use(cors());
 app.use(express.json({

@@ -71,7 +71,87 @@ router.get("/public", authenticate, async (req, res) => {
   }
 });
 
-
+router.get("/hall-of-fame", authenticate, async (req, res) => {
+  try {
+    const snapshot = await db
+      .ref("hallOfFame")
+      .once("value");
+    
+    const hallOfFame = snapshot.val() || {
+      categories: []
+    };
+    
+    res.json({
+      hallOfFame
+    });
+    
+  } catch (error) {
+    console.error("Failed to load Hall of Fame:", error);
+    
+    res.status(500).json({
+      message: "Failed to load Hall of Fame"
+    });
+  }
+});
+router.patch("/hall-of-fame", authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({
+        message: "Only administrators can update the Hall of Fame"
+      });
+    }
+    
+    const { categories } = req.body;
+    
+    if (!Array.isArray(categories)) {
+      return res.status(400).json({
+        message: "Invalid Hall of Fame categories"
+      });
+    }
+    
+    for (const category of categories) {
+      if (
+        !category.id ||
+        !category.title ||
+        !Array.isArray(category.winners)
+      ) {
+        return res.status(400).json({
+          message: "Invalid Hall of Fame category"
+        });
+      }
+      
+      for (const winner of category.winners) {
+        if (
+          !winner.name ||
+          typeof winner.wins !== "number" ||
+          winner.wins < 0
+        ) {
+          return res.status(400).json({
+            message: "Invalid Hall of Fame winner"
+          });
+        }
+      }
+    }
+    
+    await db.ref("hallOfFame").set({
+      categories
+    });
+    
+    res.json({
+      success: true,
+      hallOfFame: {
+        categories
+      }
+    });
+    
+  } catch (error) {
+    console.error("Failed to update Hall of Fame:", error);
+    
+    res.status(500).json({
+      message: "Failed to update Hall of Fame"
+    });
+  }
+});
 router.post("/create", authenticate, async (req, res) => {
   try {
     const user = req.user;
@@ -2283,5 +2363,6 @@ router.post("/:id/join", authenticate, async (req, res) => {
     });
   }
 });
+
 
 module.exports = router;
