@@ -252,10 +252,15 @@ router.post("/create", authenticate, async (req, res) => {
       knockoutMatches: [],
       
       settings: {
-        knockoutSize: 0,
-        teamsPerGroup: 0,
-        qualifiersPerGroup: 0
-      }
+  knockoutSize: 0,
+  teamsPerGroup: 0,
+  qualifiersPerGroup: 0,
+  submissionDeadline: {
+    fromRound: null,
+    toRound: null,
+    deadline: null,
+    enabled: false
+  }
     };
     
     
@@ -1515,7 +1520,62 @@ function assignTablePositions(table) {
 }
 
 
-
+function checkMatchSubmissionDeadline(tournament, match) {
+  const deadline =
+    tournament.settings?.submissionDeadline || null;
+  
+  if (!deadline) {
+    return {
+      allowed: true
+    };
+  }
+  
+  const fromRound = Number(deadline.fromRound);
+  const toRound = Number(deadline.toRound);
+  const matchRound = Number(
+    match.round ?? match.roundIndex
+  );
+  
+  if (
+    !Number.isFinite(fromRound) ||
+    !Number.isFinite(toRound) ||
+    !Number.isFinite(matchRound)
+  ) {
+    return {
+      allowed: false,
+      message: "This match does not have a valid round."
+    };
+  }
+  
+  if (matchRound < fromRound) {
+    return {
+      allowed: false,
+      message: "This round has not started."
+    };
+  }
+  
+  if (matchRound > toRound) {
+    return {
+      allowed: false,
+      message: "This round has not started."
+    };
+  }
+  
+  if (
+    deadline.enabled === true &&
+    deadline.deadline &&
+    Date.now() > Number(deadline.deadline)
+  ) {
+    return {
+      allowed: false,
+      message: "This round deadline has passed."
+    };
+  }
+  
+  return {
+    allowed: true
+  };
+}
 
 
 router.post("/:id/match-submission/:submissionId/review", authenticate, async (req, res) => {
@@ -1903,6 +1963,19 @@ router.post("/:id/match-submission", authenticate, async (req, res) => {
       });
     }
     
+    const deadlineCheck =
+  checkMatchSubmissionDeadline(
+    tournament,
+    match
+  );
+
+if (!deadlineCheck.allowed) {
+  return res.status(400).json({
+    success: false,
+    message: deadlineCheck.message
+  });
+}
+    
     const getTeamName = team => {
       if (!team) return null;
       
@@ -2053,6 +2126,112 @@ router.post("/:id/match-submission", authenticate, async (req, res) => {
   }
 });
 
+router.patch("/:id/submission-deadline", authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const {
+      fromRound,
+      toRound,
+      deadline,
+      enabled
+    } = req.body;
+
+    const snapshot = await db
+      .ref(`tournaments/${id}`)
+      .once("value");
+
+    if (!snapshot.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "Tournament not found."
+      });
+    }
+
+    const tournament = snapshot.val();
+
+    if (tournament.adminUid !== req.user.uid) {
+      return res.status(403).json({
+        success: false,
+        message: "Only the tournament admin can set submission deadlines."
+      });
+    }
+
+    const from = Number(fromRound);
+    const to = Number(toRound);
+    const time = Number(deadline);
+
+    if (
+      !Number.isInteger(from) ||
+      !Number.isInteger(to) ||
+      from < 1 ||
+      to < from
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid round range."
+      });
+    }
+
+    if (
+      !Number.isFinite(time) ||
+      time <= Date.now()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Deadline must be a valid future date or time."
+      });
+    }
+
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({
+        success: false,
+        message: "Enabled must be true or false."
+      });
+    }
+
+    const submissionDeadline = {
+      fromRound: from,
+      toRound: to,
+      deadline: time,
+      enabled
+    };
+
+    await db
+      .ref(
+        `tournaments/${id}/settings/submissionDeadline`
+      )
+      .set(submissionDeadline);
+
+    await db
+      .ref(
+        `tournaments/${id}/updatedAt`
+      )
+      .set(Date.now());
+
+    sendTournamentUpdate(id, {
+      type: "TOURNAMENT_UPDATED"
+    });
+
+    res.json({
+      success: true,
+      submissionDeadline
+    });
+
+  } catch (err) {
+    console.error(
+      "Submission deadline update error:",
+      err
+    );
+
+    res.status(500).json({
+      success: false,
+      message:
+        err.message ||
+        "Failed to update submission deadline."
+    });
+  }
+});
 
 router.get("/:id/events", authenticate, async (req, res) => {
   
