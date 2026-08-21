@@ -1,12 +1,13 @@
 const express = require("express");
 const router = express.Router();
 const webpush = require("./push");
+const db = require("./firebase");
+const authenticate = require("./middleware");
 
-let subscriptions = [];
-
-router.post("/subscribe", (req, res) => {
+router.post("/subscribe", authenticate, async (req, res) => {
   try {
     const subscription = req.body;
+    const uid = req.user.uid;
     
     if (
       !subscription ||
@@ -21,18 +22,15 @@ router.post("/subscribe", (req, res) => {
       });
     }
     
-    const exists = subscriptions.some(
-      sub => sub.endpoint === subscription.endpoint
-    );
-    
-    if (!exists) {
-      subscriptions.push(subscription);
-    }
+    await db
+      .ref(`pushSubscriptions/${uid}`)
+      .set(subscription);
     
     res.json({
       success: true,
       message: "Push subscription saved."
     });
+    
   } catch (error) {
     console.error("Push subscription error:", error);
     
@@ -43,24 +41,39 @@ router.post("/subscribe", (req, res) => {
   }
 });
 
-router.post("/test", async (req, res) => {
+router.post("/test", authenticate, async (req, res) => {
   try {
+    const uid = req.user.uid;
+    
+    const snapshot = await db
+      .ref(`pushSubscriptions/${uid}`)
+      .once("value");
+    
+    const subscription = snapshot.val();
+    
+    if (!subscription) {
+      return res.status(404).json({
+        success: false,
+        message: "No push subscription found for this user."
+      });
+    }
+    
     const payload = JSON.stringify({
       title: "Test Notification",
-      body: "Web push is working!"
+      body: "Web push is working!",
+      url: "/"
     });
     
-    const results = await Promise.allSettled(
-      subscriptions.map(subscription =>
-        webpush.sendNotification(subscription, payload)
-      )
+    await webpush.sendNotification(
+      subscription,
+      payload
     );
     
     res.json({
       success: true,
-      sent: results.filter(r => r.status === "fulfilled").length,
-      failed: results.filter(r => r.status === "rejected").length
+      message: "Test notification sent."
     });
+    
   } catch (error) {
     console.error("Push test error:", error);
     
