@@ -7,7 +7,131 @@ const authenticate = require("./middleware");
 const {
   sendNoticeEvent
 } = require("./noticeService");
+const {
+  uploadBase64Image,
+  deleteCloudinaryImage
+} = require("./cloudinary");
 
+router.post("/", authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only admins can create notices."
+      });
+    }
+
+    const {
+      title,
+      content,
+      category,
+      images,
+      published,
+      expiresAt
+    } = req.body;
+
+    if (!title || !title.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Notice title is required."
+      });
+    }
+
+    if (!content || !content.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Notice content is required."
+      });
+    }
+
+    if (
+      expiresAt !== null &&
+      expiresAt !== undefined &&
+      (
+        !Number.isFinite(Number(expiresAt)) ||
+        Number(expiresAt) <= Date.now()
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Expiry date must be in the future."
+      });
+    }
+
+    if (images !== undefined && !Array.isArray(images)) {
+      return res.status(400).json({
+        success: false,
+        message: "Images must be an array."
+      });
+    }
+
+    const noticeRef = db.ref("notices").push();
+    const now = Date.now();
+
+    const uploadedImages = [];
+
+    if (Array.isArray(images)) {
+      for (let i = 0; i < images.length; i++) {
+        const image = images[i];
+
+        if (!image) continue;
+
+        const uploaded = await uploadBase64Image(
+          image,
+          "notice-images",
+          `${noticeRef.key}_${i + 1}`
+        );
+
+        uploadedImages.push({
+          url: uploaded.url,
+          publicId: uploaded.publicId
+        });
+      }
+    }
+
+    const notice = {
+      id: noticeRef.key,
+      title: title.trim(),
+      content: content.trim(),
+      category: category || "general",
+
+      images: uploadedImages,
+
+      published: published !== false,
+
+      expiresAt:
+        expiresAt === null ||
+        expiresAt === undefined
+          ? null
+          : Number(expiresAt),
+
+      createdAt: now,
+      updatedAt: now,
+      createdBy: req.user.uid
+    };
+
+    await noticeRef.set(notice);
+
+    if (notice.published) {
+      sendNoticeEvent({
+        type: "created",
+        notice
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Notice created successfully.",
+      notice
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message || "Failed to create notice."
+    });
+  }
+});
 router.get("/", authenticate, async (req, res) => {
   try {
     const snapshot = await db
