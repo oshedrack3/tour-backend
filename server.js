@@ -4,6 +4,7 @@ const cors = require("cors");
 const db = require("./firebase");
 const authRoutes = require("./auth");
 const authenticate = require("./middleware");
+const pushRoutes = require("./pushRoutes");
 const tournamentRoutes = require("./tournaments");
 const userManagementRoutes = require("./userManagement");
 const competitionRoutes = require("./competitionRoutes");
@@ -121,6 +122,8 @@ app.use("/users", userManagementRoutes);
 app.use("/competitions", competitionRoutes);
 app.use("/notices", noticeRoutes);
 app.use("/notifications", notificationRoutes);
+app.use("/api/push", pushRoutes);
+
 app.get("/", (req, res) => {
   res.send("Backend Running");
 });
