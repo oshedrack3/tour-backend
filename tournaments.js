@@ -261,6 +261,7 @@ router.post("/create", authenticate, async (req, res) => {
     deadline: null,
     enabled: false
   }
+      }
     };
     
     
