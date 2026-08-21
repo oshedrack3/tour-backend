@@ -8,6 +8,11 @@ const tournamentRoutes = require("./tournaments");
 const userManagementRoutes = require("./userManagement");
 const competitionRoutes = require("./competitionRoutes");
 const notificationRoutes = require("./notificationRoutes");
+const noticeRoutes = require("./noticeRoutes");
+const {
+  addNoticeClient,
+  removeNoticeClient
+} = require("./noticeService");
 
 const {
   addClient,
@@ -114,6 +119,7 @@ app.use("/auth", authRoutes);
 app.use("/tournaments", tournamentRoutes);
 app.use("/users", userManagementRoutes);
 app.use("/competitions", competitionRoutes);
+app.use("/notices", noticeRoutes);
 app.use("/notifications", notificationRoutes);
 app.get("/", (req, res) => {
   res.send("Backend Running");
@@ -233,9 +239,40 @@ app.delete("/db/delete", async (req, res) => {
     });
   }
 });
+app.get("/notices/events", authenticate, (req, res) => {
+  res.setHeader(
+    "Content-Type",
+    "text/event-stream"
+  );
+  
+  res.setHeader(
+    "Cache-Control",
+    "no-cache"
+  );
+  
+  res.setHeader(
+    "Connection",
+    "keep-alive"
+  );
+  
+  res.flushHeaders();
+  
+  addNoticeClient(res);
+  
+  res.write(
+    `event: connected\n` +
+    `data: ${JSON.stringify({
+      connected: true
+    })}\n\n`
+  );
+  
+  req.on("close", () => {
+    removeNoticeClient(res);
+  });
+});
+
 
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
