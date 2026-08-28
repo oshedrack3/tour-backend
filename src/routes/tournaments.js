@@ -4,7 +4,8 @@ import {
   getTournamentsByPlayer,
   createTournament,
   getTeamsByTournament,
-  createMatchesBatch
+  createMatchesBatch,
+  getMatches
 } from "../storage.js";
 
 import {
@@ -53,7 +54,6 @@ export async function handleTournamentRequest(
       user
     );
   }
-  
   if (
   request.method === "GET" &&
   /^\/tournaments\/[^/]+\/matches$/.test(pathname)
@@ -66,7 +66,6 @@ export async function handleTournamentRequest(
     user
   );
 }
-  
   
   if (
     request.method === "GET" &&
@@ -667,6 +666,7 @@ async function getTournamentMatchesRoute(
   user
 ) {
   try {
+    // Verify the user can access this tournament
     const tournament = await getTournament(
       env.DB,
       tournamentId,
@@ -682,85 +682,11 @@ async function getTournamentMatchesRoute(
       });
     }
 
-    const result = await env.DB
-      .prepare(`
-        SELECT
-          m.id,
-          m.tournament_id,
-          m.home_team_id,
-          m.away_team_id,
-          m.home_score,
-          m.away_score,
-          m.played,
-          m.played_at,
-          m.match_type,
-          m.group_id,
-          m.round,
-          m.round_index,
-          m.slot,
-          m.winner_team_id,
-          m.scheduled_at,
-          m.created_at,
-          m.updated_at,
-
-          ht.name AS home_name,
-          ht.logo AS home_logo,
-
-          at.name AS away_name,
-          at.logo AS away_logo
-
-        FROM matches m
-
-        LEFT JOIN teams ht
-          ON ht.id = m.home_team_id
-
-        LEFT JOIN teams at
-          ON at.id = m.away_team_id
-
-        WHERE m.tournament_id = ?
-
-        ORDER BY
-          CAST(m.round_index AS INTEGER) ASC,
-          m.created_at ASC
-      `)
-      .bind(tournamentId)
-      .all();
-
-    const matches = (result.results || []).map(match => ({
-      id: match.id,
-
-      tournament_id: match.tournament_id,
-
-      home_team_id: match.home_team_id,
-      away_team_id: match.away_team_id,
-
-      home: match.home_name || "",
-      away: match.away_name || "",
-
-      homeLogo: match.home_logo || null,
-      awayLogo: match.away_logo || null,
-
-      homeGoals: match.home_score,
-      awayGoals: match.away_score,
-
-      played: Boolean(match.played),
-
-      playedAt: match.played_at,
-      scheduledAt: match.scheduled_at,
-
-      match_type: match.match_type,
-
-      group_id: match.group_id,
-
-      round: match.round,
-      round_index: match.round_index,
-      slot: match.slot,
-
-      winner_team_id: match.winner_team_id,
-
-      created_at: match.created_at,
-      updated_at: match.updated_at
-    }));
+    // Fetch matches from D1
+    const matches = await getMatches(
+      env.DB,
+      tournamentId
+    );
 
     return Response.json({
       success: true,
@@ -777,7 +703,7 @@ async function getTournamentMatchesRoute(
       success: false,
       message:
         error.message ||
-        "Failed to load tournament matches."
+        "Failed to load fixtures."
     }, {
       status: 500
     });
