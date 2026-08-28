@@ -17,7 +17,7 @@ export async function handleTournamentRequest(
   const url = new URL(request.url);
   const pathname =
     url.pathname.replace(/\/+$/, "") || "/";
-
+  
   if (
     request.method === "POST" &&
     pathname === "/tournaments/create"
@@ -28,7 +28,7 @@ export async function handleTournamentRequest(
       user
     );
   }
-
+  
   if (
     request.method === "GET" &&
     pathname === "/tournaments/my"
@@ -38,13 +38,26 @@ export async function handleTournamentRequest(
       user
     );
   }
-
+  
+  if (
+    request.method === "GET" &&
+    /^\/tournaments\/[^/]+\/table$/.test(pathname)
+  ) {
+    const id = pathname.split("/")[2];
+    
+    return await getTournamentTableRoute(
+      env,
+      id,
+      user
+    );
+  }
+  
   if (
     request.method === "GET" &&
     pathname.startsWith("/tournaments/")
   ) {
     const id = pathname.split("/")[2];
-
+    
     if (id) {
       return await getTournamentRoute(
         env,
@@ -53,9 +66,11 @@ export async function handleTournamentRequest(
       );
     }
   }
-
+  
   return null;
 }
+
+
 async function createTournamentRoute(
   request,
   env,
@@ -365,4 +380,135 @@ function parseTournament(tournament) {
   }
 
   return tournament;
+}
+
+
+export async function rebuildTable(db, tournamentId) {
+  const [teamsResult, matchesResult] = await Promise.all([
+    db
+    .prepare(`
+        SELECT
+          id,
+          name
+        FROM teams
+        WHERE tournament_id = ?
+      `)
+    .bind(tournamentId)
+    .all(),
+    db
+    .prepare(`
+        SELECT
+          home_team_id,
+          away_team_id,
+          home_score,
+          away_score
+        FROM matches
+        WHERE tournament_id = ?
+          AND match_type = 'league'
+          AND played = 1
+      `)
+    .bind(tournamentId)
+    .all()
+  ]);
+  const table = {};
+  for (const team of teamsResult.results || []) {
+    table[team.id] = {
+      id: team.id,
+      name: team.name,
+      played: 0,
+      wins: 0,
+      draws: 0,
+      losses: 0,
+      gf: 0,
+      ga: 0,
+      gd: 0,
+      pts: 0
+    };
+  }
+  for (const match of matchesResult.results || []) {
+    const home = table[match.home_team_id];
+    const away = table[match.away_team_id];
+    if (!home || !away) continue;
+    const homeScore = Number(match.home_score);
+    const awayScore = Number(match.away_score);
+    if (
+      !Number.isFinite(homeScore) ||
+      !Number.isFinite(awayScore)
+    ) {
+      continue;
+    }
+    home.played++;
+    away.played++;
+    home.gf += homeScore;
+    home.ga += awayScore;
+    away.gf += awayScore;
+    away.ga += homeScore;
+    if (homeScore > awayScore) {
+      home.wins++;
+      home.pts += 3;
+      away.losses++;
+    } else if (awayScore > homeScore) {
+      away.wins++;
+      away.pts += 3;
+      home.losses++;
+    } else {
+      home.draws++;
+      away.draws++;
+      home.pts++;
+      away.pts++;
+    }
+  }
+  for (const team of Object.values(table)) {
+    team.gd = team.gf - team.ga;
+  }
+  const sortedTable =
+    Object.values(table).sort((a, b) => {
+      if (b.pts !== a.pts) {
+        return b.pts - a.pts;
+      }
+      if (b.gd !== a.gd) {
+        return b.gd - a.gd;
+      }
+      if (b.gf !== a.gf) {
+        return b.gf - a.gf;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  sortedTable.forEach((team, index) => {
+    team.pos = index + 1;
+  });
+  return sortedTable;
+}
+async function getTournamentTableRoute(
+  env,
+  tournamentId,
+  user
+) {
+  const table =
+    await rebuildTable(
+      env.DB,
+      tournamentId
+    );
+  return Response.json({
+    success: true,
+    table
+  });
+}
+
+
+async function getTournamentTableRoute(
+  env,
+  tournamentId,
+  user
+) {
+  const table =
+    await rebuildTable(
+      env.DB,
+      tournamentId
+    );
+  
+  return Response.json({
+    success: true,
+    table
+  });
 }
