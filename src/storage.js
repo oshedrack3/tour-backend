@@ -791,7 +791,7 @@ export async function getTeamsByTournament(db, tournamentId) {
       SELECT
         id,
         name,
-        logo_url
+        logo
       FROM teams
       WHERE tournament_id = ?
       ORDER BY created_at ASC

@@ -399,13 +399,12 @@ export async function rebuildTable(db, tournamentId) {
         SELECT
           id,
           name,
-          logo_url
+          logo
         FROM teams
         WHERE tournament_id = ?
       `)
     .bind(tournamentId)
     .all(),
-    
     db
     .prepare(`
         SELECT
@@ -421,14 +420,12 @@ export async function rebuildTable(db, tournamentId) {
     .bind(tournamentId)
     .all()
   ]);
-  
   const table = {};
-  
   for (const team of teamsResult.results || []) {
     table[team.id] = {
       id: team.id,
       name: team.name,
-      logo: team.logo_url || null,
+      logo: team.logo || null,
       played: 0,
       wins: 0,
       draws: 0,
@@ -439,32 +436,24 @@ export async function rebuildTable(db, tournamentId) {
       pts: 0
     };
   }
-  
   for (const match of matchesResult.results || []) {
     const home = table[match.home_team_id];
     const away = table[match.away_team_id];
-    
     if (!home || !away) continue;
-    
     const homeScore = Number(match.home_score);
     const awayScore = Number(match.away_score);
-    
     if (
       !Number.isFinite(homeScore) ||
       !Number.isFinite(awayScore)
     ) {
       continue;
     }
-    
     home.played++;
     away.played++;
-    
     home.gf += homeScore;
     home.ga += awayScore;
-    
     away.gf += awayScore;
     away.ga += homeScore;
-    
     if (homeScore > awayScore) {
       home.wins++;
       home.pts += 3;
@@ -480,35 +469,27 @@ export async function rebuildTable(db, tournamentId) {
       away.pts++;
     }
   }
-  
   for (const team of Object.values(table)) {
     team.gd = team.gf - team.ga;
   }
-  
   const sortedTable =
     Object.values(table).sort((a, b) => {
       if (b.pts !== a.pts) {
         return b.pts - a.pts;
       }
-      
       if (b.gd !== a.gd) {
         return b.gd - a.gd;
       }
-      
       if (b.gf !== a.gf) {
         return b.gf - a.gf;
       }
-      
       return a.name.localeCompare(b.name);
     });
-  
   sortedTable.forEach((team, index) => {
     team.pos = index + 1;
   });
-  
   return sortedTable;
 }
-
 async function getTournamentTableRoute(
   env,
   tournamentId,
@@ -576,15 +557,11 @@ async function generateFixturesRoute(
       });
     }
     let teamList = teams.map(team => ({
-      id: team.id,
-      name: team.name,
-      logo_url: team.logo_url || null
+      id: team.id
     }));
     if (teamList.length % 2 !== 0) {
       teamList.push({
-        id: "__BYE__",
-        name: "__BYE__",
-        logo_url: null
+        id: "__BYE__"
       });
     }
     const numTeams = teamList.length;
