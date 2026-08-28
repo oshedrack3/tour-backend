@@ -2,47 +2,30 @@ import { v4 as uuid } from "uuid";
 
 export async function handleAuthRequest(request, env) {
   const url = new URL(request.url);
-  const pathname =
-    url.pathname.replace(/\/+$/, "") || "/";
+  const pathname = url.pathname.replace(/\/+$/, "") || "/";
 
-  if (
-    request.method === "POST" &&
-    pathname === "/auth/register"
-  ) {
+  if (request.method === "POST" && pathname === "/auth/register") {
     return await register(request, env);
   }
 
-  if (
-    request.method === "POST" &&
-    pathname === "/auth/login"
-  ) {
+  if (request.method === "POST" && pathname === "/auth/login") {
     return await login(request, env);
   }
 
-  if (
-    request.method === "POST" &&
-    pathname === "/auth/logout"
-  ) {
+  if (request.method === "POST" && pathname === "/auth/logout") {
     return await logout(request, env);
   }
 
-  if (
-    request.method === "POST" &&
-    pathname === "/auth/verify"
-  ) {
+  if (request.method === "POST" && pathname === "/auth/verify") {
     return await verify(request, env);
   }
 
   return Response.json(
     {
       success: false,
-      message: "Auth route not found.",
-      method: request.method,
-      pathname
+      message: "Auth route not found."
     },
-    {
-      status: 404
-    }
+    { status: 404 }
   );
 }
 
@@ -50,48 +33,28 @@ async function register(request, env) {
   try {
     const body = await request.json();
 
-    const username =
-      String(body.username || "").trim();
+    const username = String(body.username || "").trim();
+    const email = String(body.email || "").trim().toLowerCase();
+    const password = String(body.password || "");
+    const role = String(body.role || "").trim();
 
-    const email =
-      String(body.email || "")
-        .trim()
-        .toLowerCase();
-
-    const password =
-      String(body.password || "");
-
-    const role =
-      String(body.role || "").trim();
-
-    if (
-      !username ||
-      !email ||
-      !password ||
-      !role
-    ) {
+    if (!username || !email || !password || !role) {
       return Response.json(
         {
           success: false,
           message: "Missing required fields."
         },
-        {
-          status: 400
-        }
+        { status: 400 }
       );
     }
 
-    if (
-      !["admin", "player"].includes(role)
-    ) {
+    if (!["admin", "player"].includes(role)) {
       return Response.json(
         {
           success: false,
           message: "Invalid role."
         },
-        {
-          status: 400
-        }
+        { status: 400 }
       );
     }
 
@@ -99,25 +62,21 @@ async function register(request, env) {
       return Response.json(
         {
           success: false,
-          message:
-            "Password must be at least 6 characters."
+          message: "Password must be at least 6 characters."
         },
-        {
-          status: 400
-        }
+        { status: 400 }
       );
     }
 
-    const existingUsername =
-      await env.DB
-        .prepare(`
-          SELECT id
-          FROM users
-          WHERE LOWER(username) = ?
-          LIMIT 1
-        `)
-        .bind(username)
-        .first();
+    const existingUsername = await env.DB
+      .prepare(`
+        SELECT id
+        FROM users
+        WHERE LOWER(username) = ?
+        LIMIT 1
+      `)
+      .bind(username)
+      .first();
 
     if (existingUsername) {
       return Response.json(
@@ -125,22 +84,19 @@ async function register(request, env) {
           success: false,
           message: "Username already exists."
         },
-        {
-          status: 409
-        }
+        { status: 409 }
       );
     }
 
-    const existingEmail =
-      await env.DB
-        .prepare(`
-          SELECT id
-          FROM users
-          WHERE LOWER(email) = ?
-          LIMIT 1
-        `)
-        .bind(email)
-        .first();
+    const existingEmail = await env.DB
+      .prepare(`
+        SELECT id
+        FROM users
+        WHERE LOWER(email) = ?
+        LIMIT 1
+      `)
+      .bind(email)
+      .first();
 
     if (existingEmail) {
       return Response.json(
@@ -148,17 +104,14 @@ async function register(request, env) {
           success: false,
           message: "Email already exists."
         },
-        {
-          status: 409
-        }
+        { status: 409 }
       );
     }
 
     const id = uuid();
     const now = Date.now();
 
-    const passwordData =
-      await hashPassword(password);
+    const passwordHash = await hashPassword(password);
 
     await env.DB
       .prepare(`
@@ -167,21 +120,19 @@ async function register(request, env) {
           username,
           email,
           password_hash,
-          password_salt,
           role,
           created_at,
           updated_at,
           last_login,
           status
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .bind(
         id,
         username,
         email,
-        passwordData.hash,
-        passwordData.salt,
+        passwordHash,
         role,
         now,
         now,
@@ -206,26 +157,17 @@ async function register(request, env) {
         success: true,
         user
       },
-      {
-        status: 201
-      }
+      { status: 201 }
     );
   } catch (error) {
-    console.error(
-      "Registration error:",
-      error
-    );
+    console.error("Registration error:", error);
 
     return Response.json(
       {
         success: false,
-        message:
-          error.message ||
-          "Registration failed."
+        message: error.message || "Registration failed."
       },
-      {
-        status: 500
-      }
+      { status: 500 }
     );
   }
 }
@@ -234,63 +176,50 @@ async function login(request, env) {
   try {
     const body = await request.json();
 
-    const loginValue =
-      String(body.login || "")
-        .trim()
-        .toLowerCase();
+    const loginValue = String(body.login || "")
+      .trim()
+      .toLowerCase();
 
-    const password =
-      String(body.password || "");
+    const password = String(body.password || "");
 
     if (!loginValue || !password) {
       return Response.json(
         {
           success: false,
-          message:
-            "Login and password are required."
+          message: "Login and password are required."
         },
-        {
-          status: 400
-        }
+        { status: 400 }
       );
     }
 
-    const user =
-      await env.DB
-        .prepare(`
-          SELECT
-            id,
-            username,
-            email,
-            password_hash,
-            password_salt,
-            role,
-            created_at,
-            updated_at,
-            last_login,
-            status
-          FROM users
-          WHERE LOWER(username) = ?
-             OR LOWER(email) = ?
-          LIMIT 1
-        `)
-        .bind(
-          loginValue,
-          loginValue
-        )
-        .first();
+    const user = await env.DB
+      .prepare(`
+        SELECT
+          id,
+          username,
+          email,
+          password_hash,
+          role,
+          created_at,
+          updated_at,
+          last_login,
+          status
+        FROM users
+        WHERE LOWER(username) = ?
+           OR LOWER(email) = ?
+        LIMIT 1
+      `)
+      .bind(loginValue, loginValue)
+      .first();
 
     if (!user) {
       return Response.json(
         {
           success: false,
           title: "Account Not Found",
-          message:
-            "No account exists with these login details."
+          message: "No account exists with these login details."
         },
-        {
-          status: 404
-        }
+        { status: 404 }
       );
     }
 
@@ -298,21 +227,16 @@ async function login(request, env) {
       return Response.json(
         {
           success: false,
-          message:
-            "This account is not active."
+          message: "This account is not active."
         },
-        {
-          status: 403
-        }
+        { status: 403 }
       );
     }
 
-    const validPassword =
-      await verifyPassword(
-        password,
-        user.password_hash,
-        user.password_salt
-      );
+    const validPassword = await verifyPassword(
+      password,
+      user.password_hash
+    );
 
     if (!validPassword) {
       return Response.json(
@@ -322,9 +246,7 @@ async function login(request, env) {
           message:
             "The Password is incorrect, Please check and try again."
         },
-        {
-          status: 401
-        }
+        { status: 401 }
       );
     }
 
@@ -338,11 +260,7 @@ async function login(request, env) {
           updated_at = ?
         WHERE id = ?
       `)
-      .bind(
-        now,
-        now,
-        user.id
-      )
+      .bind(now, now, user.id)
       .run();
 
     await env.DB
@@ -356,8 +274,7 @@ async function login(request, env) {
     const token = uuid();
 
     const expiresAt =
-      now +
-      (30 * 24 * 60 * 60 * 1000);
+      now + 30 * 24 * 60 * 60 * 1000;
 
     await env.DB
       .prepare(`
@@ -396,21 +313,14 @@ async function login(request, env) {
       user: safeUser
     });
   } catch (error) {
-    console.error(
-      "Login error:",
-      error
-    );
+    console.error("Login error:", error);
 
     return Response.json(
       {
         success: false,
-        message:
-          error.message ||
-          "Login failed."
+        message: error.message || "Login failed."
       },
-      {
-        status: 500
-      }
+      { status: 500 }
     );
   }
 }
@@ -419,8 +329,7 @@ async function logout(request, env) {
   try {
     const body = await request.json();
 
-    const token =
-      String(body.token || "").trim();
+    const token = String(body.token || "").trim();
 
     if (!token) {
       return Response.json(
@@ -428,20 +337,17 @@ async function logout(request, env) {
           success: false,
           message: "Token is required."
         },
-        {
-          status: 400
-        }
+        { status: 400 }
       );
     }
 
-    const result =
-      await env.DB
-        .prepare(`
-          DELETE FROM sessions
-          WHERE token = ?
-        `)
-        .bind(token)
-        .run();
+    const result = await env.DB
+      .prepare(`
+        DELETE FROM sessions
+        WHERE token = ?
+      `)
+      .bind(token)
+      .run();
 
     if (!result.meta.changes) {
       return Response.json(
@@ -449,33 +355,23 @@ async function logout(request, env) {
           success: false,
           message: "Session not found."
         },
-        {
-          status: 404
-        }
+        { status: 404 }
       );
     }
 
     return Response.json({
       success: true,
-      message:
-        "Logged out successfully."
+      message: "Logged out successfully."
     });
   } catch (error) {
-    console.error(
-      "Logout error:",
-      error
-    );
+    console.error("Logout error:", error);
 
     return Response.json(
       {
         success: false,
-        message:
-          error.message ||
-          "Logout failed."
+        message: error.message || "Logout failed."
       },
-      {
-        status: 500
-      }
+      { status: 500 }
     );
   }
 }
@@ -484,8 +380,7 @@ async function verify(request, env) {
   try {
     const body = await request.json();
 
-    const token =
-      String(body.token || "").trim();
+    const token = String(body.token || "").trim();
 
     if (!token) {
       return Response.json(
@@ -493,37 +388,34 @@ async function verify(request, env) {
           success: false,
           message: "Token is required."
         },
-        {
-          status: 400
-        }
+        { status: 400 }
       );
     }
 
-    const session =
-      await env.DB
-        .prepare(`
-          SELECT
-            s.token,
-            s.user_id,
-            s.created_at AS session_created_at,
-            s.expires_at,
-            s.active,
-            u.id AS user_id_from_users,
-            u.username,
-            u.email,
-            u.role,
-            u.created_at AS user_created_at,
-            u.updated_at AS user_updated_at,
-            u.last_login,
-            u.status
-          FROM sessions s
-          INNER JOIN users u
-            ON u.id = s.user_id
-          WHERE s.token = ?
-          LIMIT 1
-        `)
-        .bind(token)
-        .first();
+    const session = await env.DB
+      .prepare(`
+        SELECT
+          s.token,
+          s.user_id,
+          s.created_at AS session_created_at,
+          s.expires_at,
+          s.active,
+          u.id AS user_id_from_users,
+          u.username,
+          u.email,
+          u.role,
+          u.created_at AS user_created_at,
+          u.updated_at AS user_updated_at,
+          u.last_login,
+          u.status
+        FROM sessions s
+        INNER JOIN users u
+          ON u.id = s.user_id
+        WHERE s.token = ?
+        LIMIT 1
+      `)
+      .bind(token)
+      .first();
 
     if (!session) {
       return Response.json(
@@ -531,9 +423,7 @@ async function verify(request, env) {
           success: false,
           message: "Invalid session."
         },
-        {
-          status: 401
-        }
+        { status: 401 }
       );
     }
 
@@ -543,16 +433,11 @@ async function verify(request, env) {
           success: false,
           message: "Session inactive."
         },
-        {
-          status: 401
-        }
+        { status: 401 }
       );
     }
 
-    if (
-      Date.now() >
-      Number(session.expires_at)
-    ) {
+    if (Date.now() > Number(session.expires_at)) {
       await env.DB
         .prepare(`
           DELETE FROM sessions
@@ -566,9 +451,7 @@ async function verify(request, env) {
           success: false,
           message: "Session expired."
         },
-        {
-          status: 401
-        }
+        { status: 401 }
       );
     }
 
@@ -576,12 +459,9 @@ async function verify(request, env) {
       return Response.json(
         {
           success: false,
-          message:
-            "User account is not active."
+          message: "User account is not active."
         },
-        {
-          status: 403
-        }
+        { status: 403 }
       );
     }
 
@@ -601,138 +481,111 @@ async function verify(request, env) {
       user
     });
   } catch (error) {
-    console.error(
-      "Session verification error:",
-      error
-    );
+    console.error("Session verification error:", error);
 
     return Response.json(
       {
         success: false,
         message:
-          error.message ||
-          "Session verification failed."
+          error.message || "Session verification failed."
       },
-      {
-        status: 500
-      }
+      { status: 500 }
     );
   }
 }
 
 async function hashPassword(password) {
-  const encoder =
-    new TextEncoder();
+  const encoder = new TextEncoder();
 
-  const salt =
-    crypto.getRandomValues(
-      new Uint8Array(16)
-    );
+  const salt = crypto.getRandomValues(
+    new Uint8Array(16)
+  );
 
-  const keyMaterial =
-    await crypto.subtle.importKey(
-      "raw",
-      encoder.encode(password),
-      "PBKDF2",
-      false,
-      ["deriveBits"]
-    );
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
 
-  const derivedBits =
-    await crypto.subtle.deriveBits(
-      {
-        name: "PBKDF2",
-        salt,
-        iterations: 100000,
-        hash: "SHA-256"
-      },
-      keyMaterial,
-      256
-    );
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: 100000,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    256
+  );
 
-  return {
-    salt:
-      arrayBufferToBase64(salt),
-    hash:
-      arrayBufferToBase64(
-        derivedBits
-      )
-  };
+  const saltBase64 = arrayBufferToBase64(salt);
+  const hashBase64 = arrayBufferToBase64(derivedBits);
+
+  return `${saltBase64}.${hashBase64}`;
 }
 
-async function verifyPassword(
-  password,
-  storedHash,
-  storedSalt
-) {
-  const encoder =
-    new TextEncoder();
+async function verifyPassword(password, storedPassword) {
+  if (!storedPassword || !storedPassword.includes(".")) {
+    return false;
+  }
 
-  const salt =
-    base64ToUint8Array(
-      storedSalt
-    );
+  const [saltBase64, storedHash] =
+    storedPassword.split(".");
 
-  const keyMaterial =
-    await crypto.subtle.importKey(
-      "raw",
-      encoder.encode(password),
-      "PBKDF2",
-      false,
-      ["deriveBits"]
-    );
+  if (!saltBase64 || !storedHash) {
+    return false;
+  }
 
-  const derivedBits =
-    await crypto.subtle.deriveBits(
-      {
-        name: "PBKDF2",
-        salt,
-        iterations: 100000,
-        hash: "SHA-256"
-      },
-      keyMaterial,
-      256
-    );
+  const encoder = new TextEncoder();
+
+  const salt = base64ToUint8Array(saltBase64);
+
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+
+  const derivedBits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations: 100000,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    256
+  );
 
   const calculatedHash =
-    arrayBufferToBase64(
-      derivedBits
-    );
+    arrayBufferToBase64(derivedBits);
 
   return calculatedHash === storedHash;
 }
 
 function arrayBufferToBase64(buffer) {
-  const bytes =
-    new Uint8Array(buffer);
+  const bytes = new Uint8Array(buffer);
 
   let binary = "";
 
   for (const byte of bytes) {
-    binary += String.fromCharCode(
-      byte
-    );
+    binary += String.fromCharCode(byte);
   }
 
   return btoa(binary);
 }
 
 function base64ToUint8Array(base64) {
-  const binary =
-    atob(base64);
+  const binary = atob(base64);
 
-  const bytes =
-    new Uint8Array(
-      binary.length
-    );
+  const bytes = new Uint8Array(binary.length);
 
-  for (
-    let i = 0;
-    i < binary.length;
-    i++
-  ) {
-    bytes[i] =
-      binary.charCodeAt(i);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
   }
 
   return bytes;
