@@ -494,21 +494,3 @@ async function getTournamentTableRoute(
     table
   });
 }
-
-
-async function getTournamentTableRoute(
-  env,
-  tournamentId,
-  user
-) {
-  const table =
-    await rebuildTable(
-      env.DB,
-      tournamentId
-    );
-  
-  return Response.json({
-    success: true,
-    table
-  });
-}
