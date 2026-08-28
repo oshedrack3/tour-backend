@@ -63,55 +63,60 @@ async function createTournamentRoute(
 ) {
   try {
     const body = await request.json();
-    const id =
-      String(body.id || "").trim();
+
     const competition_id =
       String(body.competition_id || "").trim();
+
     const name =
       String(body.name || "").trim();
+
     const season =
       String(body.season || "").trim();
+
     const format =
       String(body.format || "").trim();
+
     const season_status =
       String(
         body.season_status ||
         body.status ||
         "upcoming"
       ).trim();
+
     const champion =
       body.champion || null;
+
     const champion_name =
       body.champion_name || null;
+
     const start_date =
       body.start_date || null;
+
     const end_date =
       body.end_date || null;
+
     const match_days =
       body.match_days ?? "[]";
+
     const access_type =
       body.access_type || null;
+
     const is_public =
       body.is_public === undefined
         ? null
         : body.is_public
           ? 1
           : 0;
+
     const settings =
       body.settings || {};
+
     const tournamentImage =
       body.tournament_image ||
       body.tournamentImage ||
       body.image ||
       null;
-    if (!id) {
-      return Response.json({
-        success: false,
-        message: "Tournament ID is required."
-      }, {
-        status: 400
-      });
-    }
+
     if (!competition_id) {
       return Response.json({
         success: false,
@@ -120,6 +125,7 @@ async function createTournamentRoute(
         status: 400
       });
     }
+
     if (!name) {
       return Response.json({
         success: false,
@@ -128,6 +134,7 @@ async function createTournamentRoute(
         status: 400
       });
     }
+
     if (!season) {
       return Response.json({
         success: false,
@@ -136,6 +143,7 @@ async function createTournamentRoute(
         status: 400
       });
     }
+
     if (!format) {
       return Response.json({
         success: false,
@@ -144,29 +152,63 @@ async function createTournamentRoute(
         status: 400
       });
     }
-    const existing =
-      await getTournament(
-        env.DB,
-        id
-      );
-    if (existing) {
+
+    const id = crypto.randomUUID();
+
+    const competition =
+      await env.DB
+        .prepare(`
+          SELECT id, owner_id
+          FROM competitions
+          WHERE id = ?
+        `)
+        .bind(competition_id)
+        .first();
+
+    if (!competition) {
       return Response.json({
         success: false,
-        message: "Tournament already exists."
+        message: "Competition not found."
       }, {
-        status: 409
+        status: 404
       });
     }
+
+    if (competition.owner_id !== user.id) {
+      return Response.json({
+        success: false,
+        message: "Access denied."
+      }, {
+        status: 403
+      });
+    }
+
     let tournamentImageData = null;
+
     if (tournamentImage) {
-  tournamentImageData =
-  await uploadBase64Image(
-    tournamentImage,
-    "tournaments",
-    id,
-    env
-  );    }
+      if (
+        typeof tournamentImage !== "string" ||
+        !tournamentImage.startsWith("data:image/")
+      ) {
+        return Response.json({
+          success: false,
+          message: "Invalid tournament image."
+        }, {
+          status: 400
+        });
+      }
+
+      tournamentImageData =
+        await uploadBase64Image(
+          tournamentImage,
+          "tournaments",
+          id,
+          env
+        );
+    }
+
     const now = Date.now();
+
     const tournament =
       await createTournament(
         env.DB,
@@ -198,16 +240,34 @@ async function createTournamentRoute(
           updated_at: now
         }
       );
+
+    await env.DB
+      .prepare(`
+        UPDATE competitions
+        SET tournament_count = tournament_count + 1,
+            updated_at = ?
+        WHERE id = ?
+      `)
+      .bind(
+        now,
+        competition_id
+      )
+      .run();
+
     return Response.json({
       success: true,
       tournament:
         parseTournament(tournament)
+    }, {
+      status: 201
     });
+
   } catch (error) {
     console.error(
       "Create tournament error:",
       error
     );
+
     return Response.json({
       success: false,
       message:
