@@ -2,41 +2,74 @@ import { handleAuthRequest } from "./auth.js";
 import { authenticate } from "./middleware.js";
 import { handleTeamRequest } from "./teams.js";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Access-Control-Max-Age": "86400"
+};
+
+function json(data, options = {}) {
+  return Response.json(data, {
+    ...options,
+    headers: {
+      ...corsHeaders,
+      ...(options.headers || {})
+    }
+  });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     
     try {
+      // CORS preflight
+      if (request.method === "OPTIONS") {
+        return new Response(null, {
+          status: 204,
+          headers: corsHeaders
+        });
+      }
+      
+      // Root
       if (url.pathname === "/") {
-        return Response.json({
+        return json({
           success: true,
           message: "Champions backend running"
         });
       }
       
+      // Database test
       if (url.pathname === "/test-db") {
         const result = await env.DB
           .prepare("SELECT 1 AS connected")
           .first();
         
-        return Response.json({
+        return json({
           success: true,
           database: result
         });
       }
       
+      // Authentication routes
       if (url.pathname.startsWith("/auth/")) {
-        return await handleAuthRequest(
+        const response = await handleAuthRequest(
           request,
           env
         );
+        
+        return addCors(response);
       }
       
-      const auth =
-        await authenticate(request, env);
+      // Authentication required for everything below
+      const auth = await authenticate(
+        request,
+        env
+      );
       
       if (!auth.success) {
-        return Response.json({
+        return json({
           success: false,
           message: auth.message
         }, {
@@ -46,6 +79,7 @@ export default {
       
       const user = auth.user;
       
+      // Team routes
       const teamResponse =
         await handleTeamRequest(
           request,
@@ -54,10 +88,10 @@ export default {
         );
       
       if (teamResponse) {
-        return teamResponse;
+        return addCors(teamResponse);
       }
       
-      return Response.json({
+      return json({
         success: false,
         error: "Route not found"
       }, {
@@ -65,12 +99,28 @@ export default {
       });
       
     } catch (error) {
-      return Response.json({
+      console.error("Worker error:", error);
+      
+      return json({
         success: false,
-        error: error.message
+        error: error.message || "Internal server error"
       }, {
         status: 500
       });
     }
   }
 };
+
+function addCors(response) {
+  const headers = new Headers(response.headers);
+  
+  for (const [key, value] of Object.entries(corsHeaders)) {
+    headers.set(key, value);
+  }
+  
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
+}
