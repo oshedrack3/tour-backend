@@ -1,0 +1,8 @@
+name = "champions"
+main = "src/index.js"
+compatibility_date = "2026-08-28"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "champions"
+database_id = "bfea8a70-341a-44f2-92e4-7697a17cc592"
