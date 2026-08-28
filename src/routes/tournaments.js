@@ -530,6 +530,7 @@ async function generateFixturesRoute(
       tournamentId,
       user.id
     );
+
     if (!tournament) {
       return Response.json({
         success: false,
@@ -538,6 +539,7 @@ async function generateFixturesRoute(
         status: 404
       });
     }
+
     if (user.role !== "admin") {
       return Response.json({
         success: false,
@@ -546,8 +548,13 @@ async function generateFixturesRoute(
         status: 403
       });
     }
-    const body = await request.json().catch(() => ({}));
-    const rounds = Number(body.rounds || 1);
+
+    const body =
+      await request.json().catch(() => ({}));
+
+    const rounds =
+      Number(body.rounds || 1);
+
     if (rounds !== 1 && rounds !== 2) {
       return Response.json({
         success: false,
@@ -556,10 +563,13 @@ async function generateFixturesRoute(
         status: 400
       });
     }
-    const teams = await getTeamsByTournament(
-      env.DB,
-      tournamentId
-    );
+
+    const teams =
+      await getTeamsByTournament(
+        env.DB,
+        tournamentId
+      );
+
     if (teams.length < 2) {
       return Response.json({
         success: false,
@@ -568,87 +578,145 @@ async function generateFixturesRoute(
         status: 400
       });
     }
+
     let teamList = teams.map(team => ({
       id: team.id
     }));
+
     if (teamList.length % 2 !== 0) {
       teamList.push({
         id: "__BYE__"
       });
     }
-    const numTeams = teamList.length;
-    const numRounds = numTeams - 1;
-    const halfSize = numTeams / 2;
+
+    const numTeams =
+      teamList.length;
+
+    const numRounds =
+      numTeams - 1;
+
+    const halfSize =
+      numTeams / 2;
+
     let fixtures = [];
-    for (let round = 0; round < numRounds; round++) {
-      for (let i = 0; i < halfSize; i++) {
-        const home = teamList[i];
-        const away = teamList[numTeams - 1 - i];
+
+    for (
+      let round = 0;
+      round < numRounds;
+      round++
+    ) {
+      for (
+        let i = 0;
+        i < halfSize;
+        i++
+      ) {
+        const home =
+          teamList[i];
+
+        const away =
+          teamList[
+            numTeams - 1 - i
+          ];
+
         if (
-          home.id !== "__BYE__" &&
-          away.id !== "__BYE__"
+          home.id === "__BYE__" ||
+          away.id === "__BYE__"
         ) {
-          fixtures.push({
-            id: crypto.randomUUID(),
-            tournament_id: tournamentId,
-            home_team_id: home.id,
-            away_team_id: away.id,
-            home_score: null,
-            away_score: null,
-            played: 0,
-            played_at: null,
-            match_type: "league",
-            group_id: null,
-            round: String(round + 1),
-            round_index: round + 1,
-            slot: null,
-            winner_team_id: null,
-            scheduled_at: null,
-            created_at: Date.now(),
-            updated_at: null
-          });
+          continue;
         }
+
+        const roundNumber =
+          round + 1;
+
+        fixtures.push({
+          id: crypto.randomUUID(),
+          tournament_id: tournamentId,
+          home_team_id: home.id,
+          away_team_id: away.id,
+          home_score: null,
+          away_score: null,
+          played: 0,
+          played_at: null,
+          match_type: "league",
+          group_id: null,
+          round: String(roundNumber),
+          round_index: roundNumber,
+          slot: null,
+          winner_team_id: null,
+          scheduled_at: null,
+          created_at: Date.now(),
+          updated_at: null
+        });
       }
-      const fixed = teamList[0];
-      const rest = teamList.slice(1);
-      rest.unshift(rest.pop());
+
+      const fixed =
+        teamList[0];
+
+      const rest =
+        teamList.slice(1);
+
+      rest.unshift(
+        rest.pop()
+      );
+
       teamList = [
         fixed,
         ...rest
       ];
     }
+
     if (rounds === 2) {
-      const firstLegs = [...fixtures];
-      const returnLegs = firstLegs.map(match => ({
-        ...match,
-        id: crypto.randomUUID(),
-        home_team_id: match.away_team_id,
-        away_team_id: match.home_team_id,
-        round: String(
-          Number(match.round) + numRounds
-        ),
-        round_index:
-          Number(match.round_index) + numRounds,
-        created_at: Date.now()
-      }));
+      const firstLegs =
+        [...fixtures];
+
+      const returnLegs =
+        firstLegs.map(match => {
+          const firstRound =
+            Number(match.round);
+
+          const secondRound =
+            firstRound + numRounds;
+
+          return {
+            ...match,
+            id: crypto.randomUUID(),
+            home_team_id:
+              match.away_team_id,
+            away_team_id:
+              match.home_team_id,
+            round:
+              String(secondRound),
+            round_index:
+              secondRound,
+            created_at:
+              Date.now(),
+            updated_at:
+              null
+          };
+        });
+
       fixtures = [
         ...fixtures,
         ...returnLegs
       ];
     }
+
     await createMatchesBatch(
       env.DB,
       fixtures
     );
+
     return Response.json({
       success: true,
       matches: fixtures
     });
+
   } catch (error) {
     console.error(
       "Generate fixtures error:",
       error
     );
+
     return Response.json({
       success: false,
       message:
