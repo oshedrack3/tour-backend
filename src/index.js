@@ -90,6 +90,17 @@ if (competitionResponse) {
   return addCors(competitionResponse);
 }
 
+const teamResponse =
+  await handleTeamRequest(
+    request,
+    env,
+    user
+  );
+
+if (teamResponse) {
+  return addCors(teamResponse);
+}
+
 const tournamentResponse =
   await handleTournamentRequest(
     request,
@@ -100,17 +111,6 @@ const tournamentResponse =
 if (tournamentResponse) {
   return addCors(tournamentResponse);
 }
-
-const teamResponse =
-  await handleTeamRequest(
-    request,
-    env,
-    user
-  );
-
-if (teamResponse) {
-  return addCors(teamResponse);
-}  
 
 return json(
         {
