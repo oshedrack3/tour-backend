@@ -29,13 +29,52 @@ export async function getCompetitionsByOwner(db, ownerId) {
   return result.results || [];
 }
 export async function getTournament(db, tournamentId, userId) {
+  if (userId) {
+    return await db
+      .prepare(`
+        SELECT t.*
+        FROM tournaments t
+        WHERE t.id = ?
+        AND (
+          t.admin_uid = ?
+          OR EXISTS (
+            SELECT 1
+            FROM tournament_players tp
+            WHERE tp.tournament_id = t.id
+            AND tp.user_id = ?
+          )
+        )
+      `)
+      .bind(
+        tournamentId,
+        userId,
+        userId
+      )
+      .first();
+  }
+  
+  return await db
+    .prepare(`
+      SELECT *
+      FROM tournaments
+      WHERE id = ?
+    `)
+    .bind(tournamentId)
+    .first();
+}
+
+export async function getTournamentForUser(
+  db,
+  id,
+  userId
+) {
   return await db
     .prepare(`
       SELECT t.*
       FROM tournaments t
       WHERE t.id = ?
       AND (
-        t.owner_id = ?
+        t.admin_uid = ?
         OR EXISTS (
           SELECT 1
           FROM tournament_players tp
@@ -44,41 +83,35 @@ export async function getTournament(db, tournamentId, userId) {
         )
       )
     `)
-    .bind(tournamentId, userId, userId)
+    .bind(
+      id,
+      userId,
+      userId
+    )
     .first();
 }
-export async function getTournamentForUser(db, id, userId) {
-  return await db
-    .prepare(`
-      SELECT t.*
-      FROM tournaments t
-      WHERE t.id = ?
-      AND (
-        t.owner_id = ?
-        OR EXISTS (
-          SELECT 1
-          FROM tournament_players tp
-          WHERE tp.tournament_id = t.id
-          AND tp.user_id = ?
-        )
-      )
-    `)
-    .bind(id, userId, userId)
-    .first();
-}
-export async function getTournamentsByOwner(db, ownerId) {
+
+export async function getTournamentsByOwner(
+  db,
+  adminUid
+) {
   const result = await db
     .prepare(`
       SELECT *
       FROM tournaments
-      WHERE owner_id = ?
+      WHERE admin_uid = ?
       ORDER BY created_at DESC
     `)
-    .bind(ownerId)
+    .bind(adminUid)
     .all();
+  
   return result.results || [];
 }
-export async function getTournamentsByPlayer(db, userId) {
+
+export async function getTournamentsByPlayer(
+  db,
+  userId
+) {
   const result = await db
     .prepare(`
       SELECT t.*
@@ -90,75 +123,195 @@ export async function getTournamentsByPlayer(db, userId) {
     `)
     .bind(userId)
     .all();
+  
   return result.results || [];
 }
-export async function createTournament(db, tournament) {
+
+export async function createTournament(
+  db,
+  tournament
+) {
   await db
     .prepare(`
       INSERT INTO tournaments (
         id,
         competition_id,
-        owner_id,
+        admin_uid,
         name,
         season,
         format,
-        status,
+        season_status,
+        champion,
+        champion_name,
+        start_date,
+        end_date,
+        match_days,
+        tournament_image,
         settings,
+        access_type,
+        is_public,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?
+      )
     `)
     .bind(
       tournament.id,
-      tournament.competition_id || null,
-      tournament.owner_id,
+      tournament.competition_id,
+      tournament.admin_uid,
       tournament.name,
-      tournament.season || null,
-      tournament.format || null,
-      tournament.status || "upcoming",
-      tournament.settings
-        ? JSON.stringify(tournament.settings)
-        : null,
+      tournament.season,
+      tournament.format,
+      tournament.season_status || "upcoming",
+      tournament.champion || null,
+      tournament.champion_name || null,
+      tournament.start_date || null,
+      tournament.end_date || null,
+      tournament.match_days || "[]",
+      tournament.tournament_image || null,
+      tournament.settings || "{}",
+      tournament.access_type || null,
+      tournament.is_public ?? null,
       tournament.created_at,
       tournament.updated_at || null
     )
     .run();
-  return await getTournament(db, tournament.id);
+  
+  return await getTournament(
+    db,
+    tournament.id,
+    tournament.admin_uid
+  );
 }
-export async function updateTournament(db, id, updates) {
+
+export async function updateTournament(
+  db,
+  id,
+  updates,
+  userId
+) {
+  const existing =
+    await getTournament(
+      db,
+      id,
+      userId
+    );
+  
+  if (!existing) {
+    return null;
+  }
+  
   const fields = [];
   const values = [];
+  
   if (updates.name !== undefined) {
     fields.push("name = ?");
     values.push(updates.name);
   }
-  if (updates.competition_id !== undefined) {
+  
+  if (
+    updates.competition_id !== undefined
+  ) {
     fields.push("competition_id = ?");
     values.push(updates.competition_id);
   }
+  
   if (updates.season !== undefined) {
     fields.push("season = ?");
     values.push(updates.season);
   }
+  
   if (updates.format !== undefined) {
     fields.push("format = ?");
     values.push(updates.format);
   }
-  if (updates.status !== undefined) {
-    fields.push("status = ?");
-    values.push(updates.status);
+  
+  if (
+    updates.season_status !== undefined
+  ) {
+    fields.push("season_status = ?");
+    values.push(updates.season_status);
   }
+  
+  if (updates.champion !== undefined) {
+    fields.push("champion = ?");
+    values.push(updates.champion);
+  }
+  
+  if (
+    updates.champion_name !== undefined
+  ) {
+    fields.push("champion_name = ?");
+    values.push(updates.champion_name);
+  }
+  
+  if (updates.start_date !== undefined) {
+    fields.push("start_date = ?");
+    values.push(updates.start_date);
+  }
+  
+  if (updates.end_date !== undefined) {
+    fields.push("end_date = ?");
+    values.push(updates.end_date);
+  }
+  
+  if (updates.match_days !== undefined) {
+    fields.push("match_days = ?");
+    values.push(
+      typeof updates.match_days === "string" ?
+      updates.match_days :
+      JSON.stringify(
+        updates.match_days
+      )
+    );
+  }
+  
+  if (
+    updates.tournament_image !== undefined
+  ) {
+    fields.push("tournament_image = ?");
+    values.push(
+      updates.tournament_image
+    );
+  }
+  
   if (updates.settings !== undefined) {
     fields.push("settings = ?");
-    values.push(JSON.stringify(updates.settings));
+    values.push(
+      typeof updates.settings === "string" ?
+      updates.settings :
+      JSON.stringify(
+        updates.settings
+      )
+    );
   }
+  
+  if (
+    updates.access_type !== undefined
+  ) {
+    fields.push("access_type = ?");
+    values.push(updates.access_type);
+  }
+  
+  if (updates.is_public !== undefined) {
+    fields.push("is_public = ?");
+    values.push(
+      updates.is_public ? 1 : 0
+    );
+  }
+  
   if (!fields.length) {
-    return await getTournament(db, id);
+    return existing;
   }
+  
   fields.push("updated_at = ?");
   values.push(Date.now());
+  
   values.push(id);
+  
   await db
     .prepare(`
       UPDATE tournaments
@@ -167,8 +320,14 @@ export async function updateTournament(db, id, updates) {
     `)
     .bind(...values)
     .run();
-  return await getTournament(db, id);
+  
+  return await getTournament(
+    db,
+    id,
+    userId
+  );
 }
+
 export async function deleteTournament(db, id) {
   await db
     .prepare("DELETE FROM matches WHERE tournament_id = ?")
@@ -192,6 +351,7 @@ export async function deleteTournament(db, id) {
     .run();
   return true;
 }
+
 export async function getTeam(db, id, userId) {
   return await db
     .prepare(`
