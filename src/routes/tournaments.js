@@ -518,6 +518,20 @@ async function getTournamentTableRoute(
   });
 }
 
+async function deleteTournamentLeagueMatches(
+  db,
+  tournamentId
+) {
+  await db
+    .prepare(`
+      DELETE FROM matches
+      WHERE tournament_id = ?
+      AND match_type = 'league'
+    `)
+    .bind(tournamentId)
+    .run();
+}
+
 async function generateFixturesRoute(
   request,
   env,
@@ -525,16 +539,18 @@ async function generateFixturesRoute(
   user
 ) {
   try {
-    const tournament = await getTournament(
-      env.DB,
-      tournamentId,
-      user.id
-    );
+    const tournament =
+      await getTournament(
+        env.DB,
+        tournamentId,
+        user.id
+      );
 
     if (!tournament) {
       return Response.json({
         success: false,
-        message: "Tournament not found or access denied."
+        message:
+          "Tournament not found or access denied."
       }, {
         status: 404
       });
@@ -550,15 +566,21 @@ async function generateFixturesRoute(
     }
 
     const body =
-      await request.json().catch(() => ({}));
+      await request
+        .json()
+        .catch(() => ({}));
 
     const rounds =
       Number(body.rounds || 1);
 
-    if (rounds !== 1 && rounds !== 2) {
+    if (
+      rounds !== 1 &&
+      rounds !== 2
+    ) {
       return Response.json({
         success: false,
-        message: "Rounds must be 1 or 2."
+        message:
+          "Rounds must be 1 or 2."
       }, {
         status: 400
       });
@@ -573,17 +595,26 @@ async function generateFixturesRoute(
     if (teams.length < 2) {
       return Response.json({
         success: false,
-        message: "Add at least 2 teams first."
+        message:
+          "Add at least 2 teams first."
       }, {
         status: 400
       });
     }
 
-    let teamList = teams.map(team => ({
-      id: team.id
-    }));
+    await deleteTournamentLeagueMatches(
+      env.DB,
+      tournamentId
+    );
 
-    if (teamList.length % 2 !== 0) {
+    let teamList =
+      teams.map(team => ({
+        id: team.id
+      }));
+
+    if (
+      teamList.length % 2 !== 0
+    ) {
       teamList.push({
         id: "__BYE__"
       });
@@ -629,23 +660,39 @@ async function generateFixturesRoute(
           round + 1;
 
         fixtures.push({
-          id: crypto.randomUUID(),
-          tournament_id: tournamentId,
-          home_team_id: home.id,
-          away_team_id: away.id,
-          home_score: null,
-          away_score: null,
+          id:
+            crypto.randomUUID(),
+          tournament_id:
+            tournamentId,
+          home_team_id:
+            home.id,
+          away_team_id:
+            away.id,
+          home_score:
+            null,
+          away_score:
+            null,
           played: 0,
-          played_at: null,
-          match_type: "league",
-          group_id: null,
-          round: String(roundNumber),
-          round_index: roundNumber,
-          slot: null,
-          winner_team_id: null,
-          scheduled_at: null,
-          created_at: Date.now(),
-          updated_at: null
+          played_at:
+            null,
+          match_type:
+            "league",
+          group_id:
+            null,
+          round:
+            String(roundNumber),
+          round_index:
+            roundNumber,
+          slot:
+            null,
+          winner_team_id:
+            null,
+          scheduled_at:
+            null,
+          created_at:
+            Date.now(),
+          updated_at:
+            null
         });
       }
 
@@ -670,30 +717,38 @@ async function generateFixturesRoute(
         [...fixtures];
 
       const returnLegs =
-        firstLegs.map(match => {
-          const firstRound =
-            Number(match.round);
+        firstLegs.map(
+          match => {
+            const firstRound =
+              Number(
+                match.round
+              );
 
-          const secondRound =
-            firstRound + numRounds;
+            const secondRound =
+              firstRound +
+              numRounds;
 
-          return {
-            ...match,
-            id: crypto.randomUUID(),
-            home_team_id:
-              match.away_team_id,
-            away_team_id:
-              match.home_team_id,
-            round:
-              String(secondRound),
-            round_index:
-              secondRound,
-            created_at:
-              Date.now(),
-            updated_at:
-              null
-          };
-        });
+            return {
+              ...match,
+              id:
+                crypto.randomUUID(),
+              home_team_id:
+                match.away_team_id,
+              away_team_id:
+                match.home_team_id,
+              round:
+                String(
+                  secondRound
+                ),
+              round_index:
+                secondRound,
+              created_at:
+                Date.now(),
+              updated_at:
+                null
+            };
+          }
+        );
 
       fixtures = [
         ...fixtures,
@@ -727,7 +782,6 @@ async function generateFixturesRoute(
     });
   }
 }
-
 async function getTournamentMatchesRoute(
   env,
   tournamentId,
