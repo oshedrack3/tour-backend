@@ -54,6 +54,19 @@ export async function handleTournamentRequest(
     );
   }
   
+  if (
+  request.method === "GET" &&
+  /^\/tournaments\/[^/]+\/matches$/.test(pathname)
+) {
+  const id = pathname.split("/")[2];
+  
+  return await getTournamentMatchesRoute(
+    env,
+    id,
+    user
+  );
+}
+  
   
   if (
     request.method === "GET" &&
@@ -642,6 +655,129 @@ async function generateFixturesRoute(
       message:
         error.message ||
         "Failed to generate fixtures."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function getTournamentMatchesRoute(
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament = await getTournament(
+      env.DB,
+      tournamentId,
+      user.id
+    );
+
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found or access denied."
+      }, {
+        status: 404
+      });
+    }
+
+    const result = await env.DB
+      .prepare(`
+        SELECT
+          m.id,
+          m.tournament_id,
+          m.home_team_id,
+          m.away_team_id,
+          m.home_score,
+          m.away_score,
+          m.played,
+          m.played_at,
+          m.match_type,
+          m.group_id,
+          m.round,
+          m.round_index,
+          m.slot,
+          m.winner_team_id,
+          m.scheduled_at,
+          m.created_at,
+          m.updated_at,
+
+          ht.name AS home_name,
+          ht.logo AS home_logo,
+
+          at.name AS away_name,
+          at.logo AS away_logo
+
+        FROM matches m
+
+        LEFT JOIN teams ht
+          ON ht.id = m.home_team_id
+
+        LEFT JOIN teams at
+          ON at.id = m.away_team_id
+
+        WHERE m.tournament_id = ?
+
+        ORDER BY
+          CAST(m.round_index AS INTEGER) ASC,
+          m.created_at ASC
+      `)
+      .bind(tournamentId)
+      .all();
+
+    const matches = (result.results || []).map(match => ({
+      id: match.id,
+
+      tournament_id: match.tournament_id,
+
+      home_team_id: match.home_team_id,
+      away_team_id: match.away_team_id,
+
+      home: match.home_name || "",
+      away: match.away_name || "",
+
+      homeLogo: match.home_logo || null,
+      awayLogo: match.away_logo || null,
+
+      homeGoals: match.home_score,
+      awayGoals: match.away_score,
+
+      played: Boolean(match.played),
+
+      playedAt: match.played_at,
+      scheduledAt: match.scheduled_at,
+
+      match_type: match.match_type,
+
+      group_id: match.group_id,
+
+      round: match.round,
+      round_index: match.round_index,
+      slot: match.slot,
+
+      winner_team_id: match.winner_team_id,
+
+      created_at: match.created_at,
+      updated_at: match.updated_at
+    }));
+
+    return Response.json({
+      success: true,
+      matches
+    });
+
+  } catch (error) {
+    console.error(
+      "Get tournament matches error:",
+      error
+    );
+
+    return Response.json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to load tournament matches."
     }, {
       status: 500
     });
