@@ -1,10 +1,6 @@
-import {
-  handleTournamentRequest
-} from "./routes/tournaments.js";
-
-import { handleTeamRequest } from "./teams.js";
 import { handleAuthRequest } from "./auth.js";
 import { authenticate } from "./middleware.js";
+import { handleTeamRequest } from "./teams.js";
 
 export default {
   async fetch(request, env) {
@@ -36,10 +32,8 @@ export default {
         );
       }
       
-      const auth = await authenticate(
-        request,
-        env
-      );
+      const auth =
+        await authenticate(request, env);
       
       if (!auth.success) {
         return Response.json({
@@ -51,17 +45,6 @@ export default {
       }
       
       const user = auth.user;
-      
-      const tournamentResponse =
-        await handleTournamentRequest(
-          request,
-          env,
-          user
-        );
-      
-      if (tournamentResponse) {
-        return tournamentResponse;
-      }
       
       const teamResponse =
         await handleTeamRequest(
