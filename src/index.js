@@ -2,6 +2,7 @@ import { handleAuthRequest } from "./auth.js";
 import { authenticate } from "./middleware.js";
 import { handleTeamRequest } from "./teams.js";
 import { handleTournamentRequest } from "./routes/tournaments.js";
+import { handleCompetitionRequest } from "./routes/competitions.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -76,31 +77,42 @@ export default {
         );
       }
 
-      const user = auth.user;
+  const user = auth.user;
 
-      const tournamentResponse =
-        await handleTournamentRequest(
-          request,
-          env,
-          user
-        );
+const competitionResponse =
+  await handleCompetitionRequest(
+    request,
+    env,
+    user
+  );
 
-      if (tournamentResponse) {
-        return addCors(tournamentResponse);
-      }
+if (competitionResponse) {
+  return addCors(competitionResponse);
+}
 
-      const teamResponse =
-        await handleTeamRequest(
-          request,
-          env,
-          user
-        );
+const tournamentResponse =
+  await handleTournamentRequest(
+    request,
+    env,
+    user
+  );
 
-      if (teamResponse) {
-        return addCors(teamResponse);
-      }
+if (tournamentResponse) {
+  return addCors(tournamentResponse);
+}
 
-      return json(
+const teamResponse =
+  await handleTeamRequest(
+    request,
+    env,
+    user
+  );
+
+if (teamResponse) {
+  return addCors(teamResponse);
+}  
+
+return json(
         {
           success: false,
           error: "Route not found"

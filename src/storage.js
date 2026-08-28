@@ -12,22 +12,79 @@ export async function getUserByUsername(db, username) {
 }
 export async function getCompetition(db, id) {
   return await db
-    .prepare("SELECT * FROM competitions WHERE id = ?")
+    .prepare(`
+      SELECT *
+      FROM competitions
+      WHERE id = ?
+    `)
     .bind(id)
     .first();
 }
-export async function getCompetitionsByOwner(db, ownerId) {
+
+export async function getCompetitionsByOwner(
+  db,
+  ownerId
+) {
   const result = await db
     .prepare(`
-      SELECT *
+      SELECT
+        id,
+        name,
+        owner_id,
+        logo_url,
+        logo_public_id,
+        tournament_count,
+        active_seasons,
+        created_at,
+        updated_at
       FROM competitions
       WHERE owner_id = ?
       ORDER BY created_at DESC
     `)
     .bind(ownerId)
     .all();
+  
   return result.results || [];
 }
+
+export async function createCompetition(
+  db,
+  competition
+) {
+  await db
+    .prepare(`
+      INSERT INTO competitions (
+        id,
+        name,
+        owner_id,
+        logo_url,
+        logo_public_id,
+        tournament_count,
+        active_seasons,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    .bind(
+      competition.id,
+      competition.name,
+      competition.owner_id,
+      competition.logo_url || null,
+      competition.logo_public_id || null,
+      competition.tournament_count ?? 0,
+      competition.active_seasons ?? 0,
+      competition.created_at,
+      competition.updated_at || null
+    )
+    .run();
+  
+  return await getCompetition(
+    db,
+    competition.id
+  );
+}
+
 export async function getTournament(db, tournamentId, userId) {
   if (userId) {
     return await db
