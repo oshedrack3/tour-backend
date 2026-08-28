@@ -36,13 +36,13 @@ async function register(request, env) {
     const username = String(body.username || "").trim();
     const email = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
-    const role = String(body.role || "").trim();
+    const role = String(body.role || "player").trim().toLowerCase();
 
-    if (!username || !email || !password || !role) {
+    if (!username || !email || !password) {
       return Response.json(
         {
           success: false,
-          message: "Missing required fields."
+          message: "Username, email and password are required."
         },
         { status: 400 }
       );
@@ -109,7 +109,7 @@ async function register(request, env) {
     }
 
     const id = uuid();
-    const now = Date.now();
+    const createdAt = Date.now();
 
     const passwordHash = await hashPassword(password);
 
@@ -121,12 +121,9 @@ async function register(request, env) {
           email,
           password_hash,
           role,
-          created_at,
-          updated_at,
-          last_login,
-          status
+          created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
       `)
       .bind(
         id,
@@ -134,28 +131,21 @@ async function register(request, env) {
         email,
         passwordHash,
         role,
-        now,
-        now,
-        null,
-        "active"
+        createdAt
       )
       .run();
-
-    const user = {
-      id,
-      username,
-      email,
-      role,
-      created_at: now,
-      updated_at: now,
-      last_login: null,
-      status: "active"
-    };
 
     return Response.json(
       {
         success: true,
-        user
+        message: "Account created successfully.",
+        user: {
+          id,
+          username,
+          email,
+          role,
+          created_at: createdAt
+        }
       },
       { status: 201 }
     );
@@ -176,10 +166,7 @@ async function login(request, env) {
   try {
     const body = await request.json();
 
-    const loginValue = String(body.login || "")
-      .trim()
-      .toLowerCase();
-
+    const loginValue = String(body.login || "").trim().toLowerCase();
     const password = String(body.password || "");
 
     if (!loginValue || !password) {
@@ -200,10 +187,7 @@ async function login(request, env) {
           email,
           password_hash,
           role,
-          created_at,
-          updated_at,
-          last_login,
-          status
+          created_at
         FROM users
         WHERE LOWER(username) = ?
            OR LOWER(email) = ?
@@ -220,16 +204,6 @@ async function login(request, env) {
           message: "No account exists with these login details."
         },
         { status: 404 }
-      );
-    }
-
-    if (user.status !== "active") {
-      return Response.json(
-        {
-          success: false,
-          message: "This account is not active."
-        },
-        { status: 403 }
       );
     }
 
@@ -250,19 +224,6 @@ async function login(request, env) {
       );
     }
 
-    const now = Date.now();
-
-    await env.DB
-      .prepare(`
-        UPDATE users
-        SET
-          last_login = ?,
-          updated_at = ?
-        WHERE id = ?
-      `)
-      .bind(now, now, user.id)
-      .run();
-
     await env.DB
       .prepare(`
         DELETE FROM sessions
@@ -272,9 +233,8 @@ async function login(request, env) {
       .run();
 
     const token = uuid();
-
-    const expiresAt =
-      now + 30 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const expiresAt = now + 30 * 24 * 60 * 60 * 1000;
 
     await env.DB
       .prepare(`
@@ -296,21 +256,16 @@ async function login(request, env) {
       )
       .run();
 
-    const safeUser = {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      role: user.role,
-      created_at: user.created_at,
-      updated_at: now,
-      last_login: now,
-      status: user.status
-    };
-
     return Response.json({
       success: true,
       token,
-      user: safeUser
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        created_at: user.created_at
+      }
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -328,7 +283,6 @@ async function login(request, env) {
 async function logout(request, env) {
   try {
     const body = await request.json();
-
     const token = String(body.token || "").trim();
 
     if (!token) {
@@ -341,23 +295,13 @@ async function logout(request, env) {
       );
     }
 
-    const result = await env.DB
+    await env.DB
       .prepare(`
         DELETE FROM sessions
         WHERE token = ?
       `)
       .bind(token)
       .run();
-
-    if (!result.meta.changes) {
-      return Response.json(
-        {
-          success: false,
-          message: "Session not found."
-        },
-        { status: 404 }
-      );
-    }
 
     return Response.json({
       success: true,
@@ -379,7 +323,6 @@ async function logout(request, env) {
 async function verify(request, env) {
   try {
     const body = await request.json();
-
     const token = String(body.token || "").trim();
 
     if (!token) {
@@ -400,14 +343,11 @@ async function verify(request, env) {
           s.created_at AS session_created_at,
           s.expires_at,
           s.active,
-          u.id AS user_id_from_users,
+          u.id,
           u.username,
           u.email,
           u.role,
-          u.created_at AS user_created_at,
-          u.updated_at AS user_updated_at,
-          u.last_login,
-          u.status
+          u.created_at
         FROM sessions s
         INNER JOIN users u
           ON u.id = s.user_id
@@ -427,7 +367,7 @@ async function verify(request, env) {
       );
     }
 
-    if (!session.active) {
+    if (!Number(session.active)) {
       return Response.json(
         {
           success: false,
@@ -455,39 +395,23 @@ async function verify(request, env) {
       );
     }
 
-    if (session.status !== "active") {
-      return Response.json(
-        {
-          success: false,
-          message: "User account is not active."
-        },
-        { status: 403 }
-      );
-    }
-
-    const user = {
-      id: session.user_id_from_users,
-      username: session.username,
-      email: session.email,
-      role: session.role,
-      created_at: session.user_created_at,
-      updated_at: session.user_updated_at,
-      last_login: session.last_login,
-      status: session.status
-    };
-
     return Response.json({
       success: true,
-      user
+      user: {
+        id: session.id,
+        username: session.username,
+        email: session.email,
+        role: session.role,
+        created_at: session.created_at
+      }
     });
   } catch (error) {
-    console.error("Session verification error:", error);
+    console.error("Verify error:", error);
 
     return Response.json(
       {
         success: false,
-        message:
-          error.message || "Session verification failed."
+        message: error.message || "Session verification failed."
       },
       { status: 500 }
     );
@@ -501,70 +425,74 @@ async function hashPassword(password) {
     new Uint8Array(16)
   );
 
-  const keyMaterial = await crypto.subtle.importKey(
+  const key = await crypto.subtle.importKey(
     "raw",
     encoder.encode(password),
-    "PBKDF2",
+    {
+      name: "PBKDF2"
+    },
     false,
     ["deriveBits"]
   );
 
-  const derivedBits = await crypto.subtle.deriveBits(
+  const bits = await crypto.subtle.deriveBits(
     {
       name: "PBKDF2",
       salt,
       iterations: 100000,
       hash: "SHA-256"
     },
-    keyMaterial,
+    key,
     256
   );
 
-  const saltBase64 = arrayBufferToBase64(salt);
-  const hashBase64 = arrayBufferToBase64(derivedBits);
-
-  return `${saltBase64}.${hashBase64}`;
+  return (
+    arrayBufferToBase64(salt) +
+    "." +
+    arrayBufferToBase64(bits)
+  );
 }
 
-async function verifyPassword(password, storedPassword) {
-  if (!storedPassword || !storedPassword.includes(".")) {
+async function verifyPassword(password, storedHash) {
+  if (!storedHash || !storedHash.includes(".")) {
     return false;
   }
 
-  const [saltBase64, storedHash] =
-    storedPassword.split(".");
+  const parts = storedHash.split(".");
 
-  if (!saltBase64 || !storedHash) {
+  if (parts.length !== 2) {
     return false;
   }
+
+  const salt = base64ToUint8Array(parts[0]);
+  const expectedHash = parts[1];
 
   const encoder = new TextEncoder();
 
-  const salt = base64ToUint8Array(saltBase64);
-
-  const keyMaterial = await crypto.subtle.importKey(
+  const key = await crypto.subtle.importKey(
     "raw",
     encoder.encode(password),
-    "PBKDF2",
+    {
+      name: "PBKDF2"
+    },
     false,
     ["deriveBits"]
   );
 
-  const derivedBits = await crypto.subtle.deriveBits(
+  const bits = await crypto.subtle.deriveBits(
     {
       name: "PBKDF2",
       salt,
       iterations: 100000,
       hash: "SHA-256"
     },
-    keyMaterial,
+    key,
     256
   );
 
-  const calculatedHash =
-    arrayBufferToBase64(derivedBits);
+  const actualHash = arrayBufferToBase64(bits);
 
-  return calculatedHash === storedHash;
+  return actualHash === expectedHash;
 }
 
 function arrayBufferToBase64(buffer) {
