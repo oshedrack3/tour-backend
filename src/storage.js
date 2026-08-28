@@ -619,16 +619,19 @@ export async function createMatch(db, match) {
         away_team_id,
         home_score,
         away_score,
-        status,
-        match_type,
-        round,
-        group_name,
-        scheduled_at,
+        played,
         played_at,
+        match_type,
+        group_id,
+        round,
+        round_index,
+        slot,
+        winner_team_id,
+        scheduled_at,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .bind(
       match.id,
@@ -637,18 +640,70 @@ export async function createMatch(db, match) {
       match.away_team_id || null,
       match.home_score ?? null,
       match.away_score ?? null,
-      match.status || "scheduled",
-      match.match_type || null,
-      match.round || null,
-      match.group_name || null,
-      match.scheduled_at || null,
+      match.played ?? 0,
       match.played_at || null,
+      match.match_type,
+      match.group_id || null,
+      match.round || null,
+      match.round_index ?? null,
+      match.slot ?? null,
+      match.winner_team_id || null,
+      match.scheduled_at || null,
       match.created_at,
       match.updated_at || null
     )
     .run();
-  return await getMatch(db, match.id);
+  return match;
 }
+export async function createMatchesBatch(db, matches) {
+  if (!matches.length) return;
+  const statements = matches.map(match =>
+    db
+    .prepare(`
+        INSERT INTO matches (
+          id,
+          tournament_id,
+          home_team_id,
+          away_team_id,
+          home_score,
+          away_score,
+          played,
+          played_at,
+          match_type,
+          group_id,
+          round,
+          round_index,
+          slot,
+          winner_team_id,
+          scheduled_at,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+    .bind(
+      match.id,
+      match.tournament_id,
+      match.home_team_id || null,
+      match.away_team_id || null,
+      match.home_score ?? null,
+      match.away_score ?? null,
+      match.played ?? 0,
+      match.played_at || null,
+      match.match_type,
+      match.group_id || null,
+      match.round || null,
+      match.round_index ?? null,
+      match.slot ?? null,
+      match.winner_team_id || null,
+      match.scheduled_at || null,
+      match.created_at,
+      match.updated_at || null
+    )
+  );
+  await db.batch(statements);
+}
+
 export async function updateMatch(db, id, updates) {
   const fields = [];
   const values = [];
@@ -668,29 +723,41 @@ export async function updateMatch(db, id, updates) {
     fields.push("away_score = ?");
     values.push(updates.away_score);
   }
-  if (updates.status !== undefined) {
-    fields.push("status = ?");
-    values.push(updates.status);
+  if (updates.played !== undefined) {
+    fields.push("played = ?");
+    values.push(updates.played);
+  }
+  if (updates.played_at !== undefined) {
+    fields.push("played_at = ?");
+    values.push(updates.played_at);
   }
   if (updates.match_type !== undefined) {
     fields.push("match_type = ?");
     values.push(updates.match_type);
   }
+  if (updates.group_id !== undefined) {
+    fields.push("group_id = ?");
+    values.push(updates.group_id);
+  }
   if (updates.round !== undefined) {
     fields.push("round = ?");
     values.push(updates.round);
   }
-  if (updates.group_name !== undefined) {
-    fields.push("group_name = ?");
-    values.push(updates.group_name);
+  if (updates.round_index !== undefined) {
+    fields.push("round_index = ?");
+    values.push(updates.round_index);
+  }
+  if (updates.slot !== undefined) {
+    fields.push("slot = ?");
+    values.push(updates.slot);
+  }
+  if (updates.winner_team_id !== undefined) {
+    fields.push("winner_team_id = ?");
+    values.push(updates.winner_team_id);
   }
   if (updates.scheduled_at !== undefined) {
     fields.push("scheduled_at = ?");
     values.push(updates.scheduled_at);
-  }
-  if (updates.played_at !== undefined) {
-    fields.push("played_at = ?");
-    values.push(updates.played_at);
   }
   if (!fields.length) {
     return await getMatch(db, id);
@@ -717,4 +784,19 @@ export async function deleteMatch(db, id) {
     .bind(id)
     .run();
   return true;
+}
+export async function getTeamsByTournament(db, tournamentId) {
+  const result = await db
+    .prepare(`
+      SELECT
+        id,
+        name,
+        logo_url
+      FROM teams
+      WHERE tournament_id = ?
+      ORDER BY created_at ASC
+    `)
+    .bind(tournamentId)
+    .all();
+  return result.results || [];
 }

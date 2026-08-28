@@ -2,7 +2,9 @@ import {
   getTournament,
   getTournamentsByOwner,
   getTournamentsByPlayer,
-  createTournament
+  createTournament,
+  getTeamsByTournament,
+  createMatchesBatch
 } from "../storage.js";
 
 import {
@@ -38,6 +40,20 @@ export async function handleTournamentRequest(
       user
     );
   }
+  
+  if (
+    request.method === "POST" &&
+    /^\/tournaments\/[^/]+\/generate-fixtures$/.test(pathname)
+  ) {
+    const id = pathname.split("/")[2];
+    return await generateFixturesRoute(
+      request,
+      env,
+      id,
+      user
+    );
+  }
+  
   
   if (
     request.method === "GET" &&
@@ -78,60 +94,60 @@ async function createTournamentRoute(
 ) {
   try {
     const body = await request.json();
-
+    
     const competition_id =
       String(body.competition_id || "").trim();
-
+    
     const name =
       String(body.name || "").trim();
-
+    
     const season =
       String(body.season || "").trim();
-
+    
     const format =
       String(body.format || "").trim();
-
+    
     const season_status =
       String(
         body.season_status ||
         body.status ||
         "upcoming"
       ).trim();
-
+    
     const champion =
       body.champion || null;
-
+    
     const champion_name =
       body.champion_name || null;
-
+    
     const start_date =
       body.start_date || null;
-
+    
     const end_date =
       body.end_date || null;
-
+    
     const match_days =
       body.match_days ?? "[]";
-
+    
     const access_type =
       body.access_type || null;
-
+    
     const is_public =
-      body.is_public === undefined
-        ? null
-        : body.is_public
-          ? 1
-          : 0;
-
+      body.is_public === undefined ?
+      null :
+      body.is_public ?
+      1 :
+      0;
+    
     const settings =
       body.settings || {};
-
+    
     const tournamentImage =
       body.tournament_image ||
       body.tournamentImage ||
       body.image ||
       null;
-
+    
     if (!competition_id) {
       return Response.json({
         success: false,
@@ -140,7 +156,7 @@ async function createTournamentRoute(
         status: 400
       });
     }
-
+    
     if (!name) {
       return Response.json({
         success: false,
@@ -149,7 +165,7 @@ async function createTournamentRoute(
         status: 400
       });
     }
-
+    
     if (!season) {
       return Response.json({
         success: false,
@@ -158,7 +174,7 @@ async function createTournamentRoute(
         status: 400
       });
     }
-
+    
     if (!format) {
       return Response.json({
         success: false,
@@ -167,19 +183,19 @@ async function createTournamentRoute(
         status: 400
       });
     }
-
+    
     const id = crypto.randomUUID();
-
+    
     const competition =
       await env.DB
-        .prepare(`
+      .prepare(`
           SELECT id, owner_id
           FROM competitions
           WHERE id = ?
         `)
-        .bind(competition_id)
-        .first();
-
+      .bind(competition_id)
+      .first();
+    
     if (!competition) {
       return Response.json({
         success: false,
@@ -188,7 +204,7 @@ async function createTournamentRoute(
         status: 404
       });
     }
-
+    
     if (competition.owner_id !== user.id) {
       return Response.json({
         success: false,
@@ -197,9 +213,9 @@ async function createTournamentRoute(
         status: 403
       });
     }
-
+    
     let tournamentImageData = null;
-
+    
     if (tournamentImage) {
       if (
         typeof tournamentImage !== "string" ||
@@ -212,7 +228,7 @@ async function createTournamentRoute(
           status: 400
         });
       }
-
+      
       tournamentImageData =
         await uploadBase64Image(
           tournamentImage,
@@ -221,9 +237,9 @@ async function createTournamentRoute(
           env
         );
     }
-
+    
     const now = Date.now();
-
+    
     const tournament =
       await createTournament(
         env.DB,
@@ -239,23 +255,20 @@ async function createTournamentRoute(
           champion_name,
           start_date,
           end_date,
-          match_days:
-            typeof match_days === "string"
-              ? match_days
-              : JSON.stringify(match_days),
-          tournament_image:
-            tournamentImageData?.url || null,
-          settings:
-            typeof settings === "string"
-              ? settings
-              : JSON.stringify(settings),
+          match_days: typeof match_days === "string" ?
+            match_days :
+            JSON.stringify(match_days),
+          tournament_image: tournamentImageData?.url || null,
+          settings: typeof settings === "string" ?
+            settings :
+            JSON.stringify(settings),
           access_type,
           is_public,
           created_at: now,
           updated_at: now
         }
       );
-
+    
     await env.DB
       .prepare(`
         UPDATE competitions
@@ -268,25 +281,23 @@ async function createTournamentRoute(
         competition_id
       )
       .run();
-
+    
     return Response.json({
       success: true,
-      tournament:
-        parseTournament(tournament)
+      tournament: parseTournament(tournament)
     }, {
       status: 201
     });
-
+    
   } catch (error) {
     console.error(
       "Create tournament error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to create tournament."
     }, {
       status: 500
@@ -299,7 +310,7 @@ async function getMyTournamentsRoute(
   user
 ) {
   let tournaments;
-
+  
   if (user.role === "admin") {
     tournaments =
       await getTournamentsByOwner(
@@ -313,10 +324,10 @@ async function getMyTournamentsRoute(
         user.id
       );
   }
-
+  
   tournaments =
     tournaments.map(parseTournament);
-
+  
   return Response.json({
     success: true,
     tournaments
@@ -334,21 +345,19 @@ async function getTournamentRoute(
       id,
       user.id
     );
-
+  
   if (!tournament) {
     return Response.json({
       success: false,
-      message:
-        "Tournament not found or access denied."
+      message: "Tournament not found or access denied."
     }, {
       status: 404
     });
   }
-
+  
   return Response.json({
     success: true,
-    tournament:
-      parseTournament(tournament)
+    tournament: parseTournament(tournament)
   });
 }
 
@@ -356,7 +365,7 @@ function parseTournament(tournament) {
   if (!tournament) {
     return tournament;
   }
-
+  
   if (tournament.settings) {
     try {
       tournament.settings =
@@ -367,7 +376,7 @@ function parseTournament(tournament) {
       tournament.settings = {};
     }
   }
-
+  
   if (tournament.match_days) {
     try {
       tournament.match_days =
@@ -378,7 +387,7 @@ function parseTournament(tournament) {
       tournament.match_days = [];
     }
   }
-
+  
   return tournament;
 }
 
@@ -389,12 +398,14 @@ export async function rebuildTable(db, tournamentId) {
     .prepare(`
         SELECT
           id,
-          name
+          name,
+          logo_url
         FROM teams
         WHERE tournament_id = ?
       `)
     .bind(tournamentId)
     .all(),
+    
     db
     .prepare(`
         SELECT
@@ -410,11 +421,14 @@ export async function rebuildTable(db, tournamentId) {
     .bind(tournamentId)
     .all()
   ]);
+  
   const table = {};
+  
   for (const team of teamsResult.results || []) {
     table[team.id] = {
       id: team.id,
       name: team.name,
+      logo: team.logo_url || null,
       played: 0,
       wins: 0,
       draws: 0,
@@ -425,24 +439,32 @@ export async function rebuildTable(db, tournamentId) {
       pts: 0
     };
   }
+  
   for (const match of matchesResult.results || []) {
     const home = table[match.home_team_id];
     const away = table[match.away_team_id];
+    
     if (!home || !away) continue;
+    
     const homeScore = Number(match.home_score);
     const awayScore = Number(match.away_score);
+    
     if (
       !Number.isFinite(homeScore) ||
       !Number.isFinite(awayScore)
     ) {
       continue;
     }
+    
     home.played++;
     away.played++;
+    
     home.gf += homeScore;
     home.ga += awayScore;
+    
     away.gf += awayScore;
     away.ga += homeScore;
+    
     if (homeScore > awayScore) {
       home.wins++;
       home.pts += 3;
@@ -458,27 +480,35 @@ export async function rebuildTable(db, tournamentId) {
       away.pts++;
     }
   }
+  
   for (const team of Object.values(table)) {
     team.gd = team.gf - team.ga;
   }
+  
   const sortedTable =
     Object.values(table).sort((a, b) => {
       if (b.pts !== a.pts) {
         return b.pts - a.pts;
       }
+      
       if (b.gd !== a.gd) {
         return b.gd - a.gd;
       }
+      
       if (b.gf !== a.gf) {
         return b.gf - a.gf;
       }
+      
       return a.name.localeCompare(b.name);
     });
+  
   sortedTable.forEach((team, index) => {
     team.pos = index + 1;
   });
+  
   return sortedTable;
 }
+
 async function getTournamentTableRoute(
   env,
   tournamentId,
@@ -493,4 +523,150 @@ async function getTournamentTableRoute(
     success: true,
     table
   });
+}
+
+async function generateFixturesRoute(
+  request,
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament = await getTournament(
+      env.DB,
+      tournamentId,
+      user.id
+    );
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found or access denied."
+      }, {
+        status: 404
+      });
+    }
+    if (user.role !== "admin") {
+      return Response.json({
+        success: false,
+        message: "Access denied."
+      }, {
+        status: 403
+      });
+    }
+    const body = await request.json().catch(() => ({}));
+    const rounds = Number(body.rounds || 1);
+    if (rounds !== 1 && rounds !== 2) {
+      return Response.json({
+        success: false,
+        message: "Rounds must be 1 or 2."
+      }, {
+        status: 400
+      });
+    }
+    const teams = await getTeamsByTournament(
+      env.DB,
+      tournamentId
+    );
+    if (teams.length < 2) {
+      return Response.json({
+        success: false,
+        message: "Add at least 2 teams first."
+      }, {
+        status: 400
+      });
+    }
+    let teamList = teams.map(team => ({
+      id: team.id,
+      name: team.name,
+      logo_url: team.logo_url || null
+    }));
+    if (teamList.length % 2 !== 0) {
+      teamList.push({
+        id: "__BYE__",
+        name: "__BYE__",
+        logo_url: null
+      });
+    }
+    const numTeams = teamList.length;
+    const numRounds = numTeams - 1;
+    const halfSize = numTeams / 2;
+    let fixtures = [];
+    for (let round = 0; round < numRounds; round++) {
+      for (let i = 0; i < halfSize; i++) {
+        const home = teamList[i];
+        const away = teamList[numTeams - 1 - i];
+        if (
+          home.id !== "__BYE__" &&
+          away.id !== "__BYE__"
+        ) {
+          fixtures.push({
+            id: crypto.randomUUID(),
+            tournament_id: tournamentId,
+            home_team_id: home.id,
+            away_team_id: away.id,
+            home_score: null,
+            away_score: null,
+            played: 0,
+            played_at: null,
+            match_type: "league",
+            group_id: null,
+            round: String(round + 1),
+            round_index: round + 1,
+            slot: null,
+            winner_team_id: null,
+            scheduled_at: null,
+            created_at: Date.now(),
+            updated_at: null
+          });
+        }
+      }
+      const fixed = teamList[0];
+      const rest = teamList.slice(1);
+      rest.unshift(rest.pop());
+      teamList = [
+        fixed,
+        ...rest
+      ];
+    }
+    if (rounds === 2) {
+      const firstLegs = [...fixtures];
+      const returnLegs = firstLegs.map(match => ({
+        ...match,
+        id: crypto.randomUUID(),
+        home_team_id: match.away_team_id,
+        away_team_id: match.home_team_id,
+        round: String(
+          Number(match.round) + numRounds
+        ),
+        round_index:
+          Number(match.round_index) + numRounds,
+        created_at: Date.now()
+      }));
+      fixtures = [
+        ...fixtures,
+        ...returnLegs
+      ];
+    }
+    await createMatchesBatch(
+      env.DB,
+      fixtures
+    );
+    return Response.json({
+      success: true,
+      matches: fixtures
+    });
+  } catch (error) {
+    console.error(
+      "Generate fixtures error:",
+      error
+    );
+    return Response.json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to generate fixtures."
+    }, {
+      status: 500
+    });
+  }
 }
