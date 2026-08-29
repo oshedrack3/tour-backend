@@ -800,3 +800,325 @@ export async function getTeamsByTournament(db, tournamentId) {
     .all();
   return result.results || [];
 }
+
+
+export async function getTournamentPlayer(
+  db,
+  tournamentId,
+  userId
+) {
+  return await db
+    .prepare(`
+      SELECT *
+      FROM tournament_players
+      WHERE tournament_id = ?
+      AND user_id = ?
+    `)
+    .bind(
+      tournamentId,
+      userId
+    )
+    .first();
+}
+
+export async function getTournamentPlayers(
+  db,
+  tournamentId
+) {
+  const result = await db
+    .prepare(`
+      SELECT *
+      FROM tournament_players
+      WHERE tournament_id = ?
+      ORDER BY joined_at ASC
+    `)
+    .bind(tournamentId)
+    .all();
+  
+  return result.results || [];
+}
+
+export async function updateTournamentPlayer(
+  db,
+  tournamentId,
+  userId,
+  updates
+) {
+  const fields = [];
+  const values = [];
+  
+  if (updates.team_id !== undefined) {
+    fields.push("team_id = ?");
+    values.push(updates.team_id);
+  }
+  
+  if (updates.status !== undefined) {
+    fields.push("status = ?");
+    values.push(updates.status);
+  }
+  
+  if (updates.joined_at !== undefined) {
+    fields.push("joined_at = ?");
+    values.push(updates.joined_at);
+  }
+  
+  if (updates.responded_at !== undefined) {
+    fields.push("responded_at = ?");
+    values.push(updates.responded_at);
+  }
+  
+  if (
+    updates.has_new_invitation !== undefined
+  ) {
+    fields.push(
+      "has_new_invitation = ?"
+    );
+    values.push(
+      updates.has_new_invitation
+    );
+  }
+  
+  if (
+    updates.invitation_count !== undefined
+  ) {
+    fields.push(
+      "invitation_count = ?"
+    );
+    values.push(
+      updates.invitation_count
+    );
+  }
+  
+  if (!fields.length) {
+    return await getTournamentPlayer(
+      db,
+      tournamentId,
+      userId
+    );
+  }
+  
+  values.push(tournamentId);
+  values.push(userId);
+  
+  await db
+    .prepare(`
+      UPDATE tournament_players
+      SET ${fields.join(", ")}
+      WHERE tournament_id = ?
+      AND user_id = ?
+    `)
+    .bind(...values)
+    .run();
+  
+  return await getTournamentPlayer(
+    db,
+    tournamentId,
+    userId
+  );
+}
+
+export async function updateTournamentPlayerStats(
+  db,
+  tournamentId,
+  teamId,
+  stats
+) {
+  const fields = [];
+  const values = [];
+  
+  if (stats.played !== undefined) {
+    fields.push("played = ?");
+    values.push(stats.played);
+  }
+  
+  if (stats.wins !== undefined) {
+    fields.push("wins = ?");
+    values.push(stats.wins);
+  }
+  
+  if (stats.draws !== undefined) {
+    fields.push("draws = ?");
+    values.push(stats.draws);
+  }
+  
+  if (stats.losses !== undefined) {
+    fields.push("losses = ?");
+    values.push(stats.losses);
+  }
+  
+  if (stats.gf !== undefined) {
+    fields.push("gf = ?");
+    values.push(stats.gf);
+  }
+  
+  if (stats.ga !== undefined) {
+    fields.push("ga = ?");
+    values.push(stats.ga);
+  }
+  
+  if (stats.points !== undefined) {
+    fields.push("points = ?");
+    values.push(stats.points);
+  }
+  
+  if (!fields.length) {
+    return null;
+  }
+  
+  fields.push("updated_at = ?");
+  values.push(Date.now());
+  
+  values.push(tournamentId);
+  values.push(teamId);
+  
+  await db
+    .prepare(`
+      UPDATE tournament_players
+      SET ${fields.join(", ")}
+      WHERE tournament_id = ?
+      AND team_id = ?
+    `)
+    .bind(...values)
+    .run();
+  
+  return await db
+    .prepare(`
+      SELECT *
+      FROM tournament_players
+      WHERE tournament_id = ?
+      AND team_id = ?
+    `)
+    .bind(
+      tournamentId,
+      teamId
+    )
+    .first();
+}
+
+export async function getTournamentPlayerByTeam(
+  db,
+  tournamentId,
+  teamId
+) {
+  return await db
+    .prepare(`
+      SELECT *
+      FROM tournament_players
+      WHERE tournament_id = ?
+      AND team_id = ?
+    `)
+    .bind(
+      tournamentId,
+      teamId
+    )
+    .first();
+}
+
+export async function updateMatchResultAtomic(
+  db,
+  matchId,
+  matchUpdates,
+  homeTeamId,
+  awayTeamId,
+  homeStats,
+  awayStats,
+  tournamentId
+) {
+  const matchFields = [];
+  const matchValues = [];
+  
+  if (matchUpdates.home_score !== undefined) {
+    matchFields.push("home_score = ?");
+    matchValues.push(matchUpdates.home_score);
+  }
+  
+  if (matchUpdates.away_score !== undefined) {
+    matchFields.push("away_score = ?");
+    matchValues.push(matchUpdates.away_score);
+  }
+  
+  if (matchUpdates.played !== undefined) {
+    matchFields.push("played = ?");
+    matchValues.push(matchUpdates.played);
+  }
+  
+  if (matchUpdates.played_at !== undefined) {
+    matchFields.push("played_at = ?");
+    matchValues.push(matchUpdates.played_at);
+  }
+  
+  if (matchUpdates.winner_team_id !== undefined) {
+    matchFields.push("winner_team_id = ?");
+    matchValues.push(matchUpdates.winner_team_id);
+  }
+  
+  matchFields.push("updated_at = ?");
+  matchValues.push(Date.now());
+  matchValues.push(matchId);
+  
+  const statements = [
+    db
+    .prepare(`
+        UPDATE matches
+        SET ${matchFields.join(", ")}
+        WHERE id = ?
+      `)
+    .bind(...matchValues),
+    
+    db
+    .prepare(`
+        UPDATE tournament_players
+        SET
+          played = ?,
+          wins = ?,
+          draws = ?,
+          losses = ?,
+          gf = ?,
+          ga = ?,
+          points = ?
+        WHERE tournament_id = ?
+        AND team_id = ?
+      `)
+    .bind(
+      homeStats.played,
+      homeStats.wins,
+      homeStats.draws,
+      homeStats.losses,
+      homeStats.gf,
+      homeStats.ga,
+      homeStats.points,
+      tournamentId,
+      homeTeamId
+    ),
+    
+    db
+    .prepare(`
+        UPDATE tournament_players
+        SET
+          played = ?,
+          wins = ?,
+          draws = ?,
+          losses = ?,
+          gf = ?,
+          ga = ?,
+          points = ?
+        WHERE tournament_id = ?
+        AND team_id = ?
+      `)
+    .bind(
+      awayStats.played,
+      awayStats.wins,
+      awayStats.draws,
+      awayStats.losses,
+      awayStats.gf,
+      awayStats.ga,
+      awayStats.points,
+      tournamentId,
+      awayTeamId
+    )
+  ];
+  
+  await db.batch(statements);
+  
+  return true;
+}
