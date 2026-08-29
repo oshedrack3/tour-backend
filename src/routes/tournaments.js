@@ -8,7 +8,9 @@ import {
   getMatches,
   getMatch,
   updateMatchResultAtomic,
-  getTournamentPlayerByTeam
+  getTournamentPlayerByTeam,
+  getTournamentPlayers,
+  updateTournamentPlayer
 } from "../storage.js";
 import {
   uploadBase64Image
@@ -35,50 +37,6 @@ export async function handleTournamentRequest(
   }
   
   if (
-  request.method === "GET" &&
-  /^\/tournaments\/[^/]+\/matches$/.test(pathname)
-) {
-  const id = pathname.split("/")[2];
-  
-  return await getTournamentMatchesRoute(
-    env,
-    id,
-    user
-  );
-}
-
-if (
-  request.method === "POST" &&
-  /^\/tournaments\/[^/]+\/matches\/[^/]+\/result$/.test(pathname)
-) {
-  const parts = pathname.split("/");
-  
-  const tournamentId = parts[2];
-  const matchId = parts[4];
-  
-  return await updateMatchResultRoute(
-    request,
-    env,
-    tournamentId,
-    matchId,
-    user
-  );
-}
-
-if (
-  request.method === "GET" &&
-  /^\/tournaments\/[^/]+\/table$/.test(pathname)
-) {
-  const id = pathname.split("/")[2];
-  
-  return await getTournamentTableRoute(
-    env,
-    id,
-    user
-  );
-}
-  
-  if (
     request.method === "GET" &&
     pathname === "/tournaments/my"
   ) {
@@ -89,64 +47,47 @@ if (
   }
   
   if (
-    request.method === "POST" &&
-    /^\/tournaments\/[^/]+\/generate-fixtures$/.test(pathname)
+    request.method === "GET" &&
+    /^\/tournaments\/[^/]+\/matches$/.test(pathname)
   ) {
-    const id = pathname.split("/")[2];
-    return await generateFixturesRoute(
-      request,
+    const id =
+      pathname.split("/")[2];
+    
+    return await getTournamentMatchesRoute(
       env,
       id,
       user
     );
   }
-  if (
-  request.method === "GET" &&
-  /^\/tournaments\/[^/]+\/matches$/.test(pathname)
-) {
-  const id = pathname.split("/")[2];
-  
-  return await getTournamentMatchesRoute(
-    env,
-    id,
-    user
-  );
-}
   
   if (
-  request.method === "PUT" &&
-  /^\/matches\/[^/]+$/.test(pathname)
-) {
-  const matchId =
-    pathname.split("/")[2];
-  
-  return await updateMatchRoute(
-    request,
-    env,
-    matchId,
-    user
-  );
-}
-if (
-  request.method === "PUT" &&
-  /^\/tournaments\/[^/]+\/players\/team$/.test(pathname)
-) {
-  const tournamentId =
-    pathname.split("/")[2];
-  
-  return await assignTournamentTeamRoute(
-    request,
-    env,
-    tournamentId,
-    user
-  );
-}
+    request.method === "PATCH" &&
+    /^\/tournaments\/[^/]+\/matches\/[^/]+\/result$/.test(pathname)
+  ) {
+    const parts =
+      pathname.split("/");
+    
+    const tournamentId =
+      parts[2];
+    
+    const matchId =
+      parts[4];
+    
+    return await updateMatchResultRoute(
+      request,
+      env,
+      tournamentId,
+      matchId,
+      user
+    );
+  }
   
   if (
     request.method === "GET" &&
     /^\/tournaments\/[^/]+\/table$/.test(pathname)
   ) {
-    const id = pathname.split("/")[2];
+    const id =
+      pathname.split("/")[2];
     
     return await getTournamentTableRoute(
       env,
@@ -156,10 +97,56 @@ if (
   }
   
   if (
+    request.method === "POST" &&
+    /^\/tournaments\/[^/]+\/generate-fixtures$/.test(pathname)
+  ) {
+    const id =
+      pathname.split("/")[2];
+    
+    return await generateFixturesRoute(
+      request,
+      env,
+      id,
+      user
+    );
+  }
+  
+  if (
+    request.method === "PUT" &&
+    /^\/matches\/[^/]+$/.test(pathname)
+  ) {
+    const matchId =
+      pathname.split("/")[2];
+    
+    return await updateMatchRoute(
+      request,
+      env,
+      matchId,
+      user
+    );
+  }
+  
+  if (
+    request.method === "PUT" &&
+    /^\/tournaments\/[^/]+\/players\/team$/.test(pathname)
+  ) {
+    const tournamentId =
+      pathname.split("/")[2];
+    
+    return await assignTournamentTeamRoute(
+      request,
+      env,
+      tournamentId,
+      user
+    );
+  }
+  
+  if (
     request.method === "GET" &&
     pathname.startsWith("/tournaments/")
   ) {
-    const id = pathname.split("/")[2];
+    const id =
+      pathname.split("/")[2];
     
     if (id) {
       return await getTournamentRoute(
@@ -172,6 +159,7 @@ if (
   
   return null;
 }
+
 
 
 async function createTournamentRoute(
@@ -432,22 +420,35 @@ async function getTournamentRoute(
       id,
       user.id
     );
-  
+
   if (!tournament) {
     return Response.json({
       success: false,
-      message: "Tournament not found or access denied."
+      message:
+        "Tournament not found or access denied."
     }, {
       status: 404
     });
   }
-  
+
+  const tournamentPlayers =
+    await getTournamentPlayers(
+      env.DB,
+      id
+    );
+
+  const parsedTournament =
+    parseTournament(tournament);
+
+  parsedTournament.tournament_players =
+    tournamentPlayers;
+
   return Response.json({
     success: true,
-    tournament: parseTournament(tournament)
+    tournament:
+      parsedTournament
   });
 }
-
 function parseTournament(tournament) {
   if (!tournament) {
     return tournament;
@@ -479,114 +480,119 @@ function parseTournament(tournament) {
 }
 
 
-export async function rebuildTable(db, tournamentId) {
-  const [teamsResult, matchesResult] = await Promise.all([
-    db
-    .prepare(`
+export async function rebuildTable(
+  db,
+  tournamentId
+) {
+  const result =
+    await db
+      .prepare(`
         SELECT
-          id,
-          name,
-          logo
-        FROM teams
-        WHERE tournament_id = ?
+          tp.team_id,
+          tp.played,
+          tp.wins,
+          tp.draws,
+          tp.losses,
+          tp.gf,
+          tp.ga,
+          tp.points,
+          t.name AS team_name,
+          t.logo AS team_logo
+        FROM tournament_players tp
+        LEFT JOIN teams t
+          ON t.id = tp.team_id
+        WHERE tp.tournament_id = ?
+        AND tp.team_id IS NOT NULL
       `)
-    .bind(tournamentId)
-    .all(),
-    db
-    .prepare(`
-        SELECT
-          home_team_id,
-          away_team_id,
-          home_score,
-          away_score
-        FROM matches
-        WHERE tournament_id = ?
-          AND match_type = 'league'
-          AND played = 1
-      `)
-    .bind(tournamentId)
-    .all()
-  ]);
-  const table = {};
-  for (const team of teamsResult.results || []) {
-    table[team.id] = {
-      id: team.id,
-      name: team.name,
-      logo: team.logo || null,
-      played: 0,
-      wins: 0,
-      draws: 0,
-      losses: 0,
-      gf: 0,
-      ga: 0,
-      gd: 0,
-      pts: 0
-    };
-  }
-  for (const match of matchesResult.results || []) {
-    const home = table[match.home_team_id];
-    const away = table[match.away_team_id];
-    if (!home || !away) continue;
-    const homeScore = Number(match.home_score);
-    const awayScore = Number(match.away_score);
-    if (
-      !Number.isFinite(homeScore) ||
-      !Number.isFinite(awayScore)
-    ) {
-      continue;
+      .bind(tournamentId)
+      .all();
+
+  const table =
+    (result.results || []).map(
+      player => {
+        const gf =
+          Number(player.gf) || 0;
+
+        const ga =
+          Number(player.ga) || 0;
+
+        return {
+          id: player.team_id,
+          name: player.team_name || "",
+          logo: player.team_logo || null,
+          played:
+            Number(player.played) || 0,
+          wins:
+            Number(player.wins) || 0,
+          draws:
+            Number(player.draws) || 0,
+          losses:
+            Number(player.losses) || 0,
+          gf,
+          ga,
+          gd: gf - ga,
+          pts:
+            Number(player.points) || 0
+        };
+      }
+    );
+
+  table.sort((a, b) => {
+    if (b.pts !== a.pts) {
+      return b.pts - a.pts;
     }
-    home.played++;
-    away.played++;
-    home.gf += homeScore;
-    home.ga += awayScore;
-    away.gf += awayScore;
-    away.ga += homeScore;
-    if (homeScore > awayScore) {
-      home.wins++;
-      home.pts += 3;
-      away.losses++;
-    } else if (awayScore > homeScore) {
-      away.wins++;
-      away.pts += 3;
-      home.losses++;
-    } else {
-      home.draws++;
-      away.draws++;
-      home.pts++;
-      away.pts++;
+
+    if (b.gd !== a.gd) {
+      return b.gd - a.gd;
     }
-  }
-  for (const team of Object.values(table)) {
-    team.gd = team.gf - team.ga;
-  }
-  const sortedTable =
-    Object.values(table).sort((a, b) => {
-      if (b.pts !== a.pts) {
-        return b.pts - a.pts;
-      }
-      if (b.gd !== a.gd) {
-        return b.gd - a.gd;
-      }
-      if (b.gf !== a.gf) {
-        return b.gf - a.gf;
-      }
-      return a.name.localeCompare(b.name);
-    });
-  sortedTable.forEach((team, index) => {
-    team.pos = index + 1;
+
+    if (b.gf !== a.gf) {
+      return b.gf - a.gf;
+    }
+
+    return a.name.localeCompare(
+      b.name
+    );
   });
-  return sortedTable;
+
+  table.forEach(
+    (team, index) => {
+      team.pos = index + 1;
+    }
+  );
+
+  return table;
 }
+
+
 async function getTournamentTableRoute(
   env,
   tournamentId,
   user
 ) {
+  const tournament =
+    await getTournament(
+      env.DB,
+      tournamentId,
+      user.id
+    );
+
+  if (!tournament) {
+    return Response.json({
+      success: false,
+      message:
+        "Tournament not found or access denied."
+    }, {
+      status: 404
+    });
+  }
+
   const table =
     await rebuildTable(
       env.DB,
       tournamentId
     );
+
   return Response.json({
     success: true,
     table
@@ -857,6 +863,7 @@ async function generateFixturesRoute(
     });
   }
 }
+
 async function getTournamentMatchesRoute(
   env,
   tournamentId,
@@ -1019,23 +1026,37 @@ async function updateMatchResultRoute(
       Number(match.away_score);
 
     let homeStats = {
-      played: Number(homePlayer.played) || 0,
-      wins: Number(homePlayer.wins) || 0,
-      draws: Number(homePlayer.draws) || 0,
-      losses: Number(homePlayer.losses) || 0,
-      gf: Number(homePlayer.gf) || 0,
-      ga: Number(homePlayer.ga) || 0,
-      points: Number(homePlayer.points) || 0
+      played:
+        Number(homePlayer.played) || 0,
+      wins:
+        Number(homePlayer.wins) || 0,
+      draws:
+        Number(homePlayer.draws) || 0,
+      losses:
+        Number(homePlayer.losses) || 0,
+      gf:
+        Number(homePlayer.gf) || 0,
+      ga:
+        Number(homePlayer.ga) || 0,
+      points:
+        Number(homePlayer.points) || 0
     };
 
     let awayStats = {
-      played: Number(awayPlayer.played) || 0,
-      wins: Number(awayPlayer.wins) || 0,
-      draws: Number(awayPlayer.draws) || 0,
-      losses: Number(awayPlayer.losses) || 0,
-      gf: Number(awayPlayer.gf) || 0,
-      ga: Number(awayPlayer.ga) || 0,
-      points: Number(awayPlayer.points) || 0
+      played:
+        Number(awayPlayer.played) || 0,
+      wins:
+        Number(awayPlayer.wins) || 0,
+      draws:
+        Number(awayPlayer.draws) || 0,
+      losses:
+        Number(awayPlayer.losses) || 0,
+      gf:
+        Number(awayPlayer.gf) || 0,
+      ga:
+        Number(awayPlayer.ga) || 0,
+      points:
+        Number(awayPlayer.points) || 0
     };
 
     if (
@@ -1094,6 +1115,13 @@ async function updateMatchResultRoute(
         match.away_team_id;
     }
 
+    const playedAt =
+      match.played_at ||
+      Date.now();
+
+    const updatedAt =
+      Date.now();
+
     await updateMatchResultAtomic(
       env.DB,
       matchId,
@@ -1101,11 +1129,8 @@ async function updateMatchResultRoute(
         home_score: homeScore,
         away_score: awayScore,
         played: 1,
-        played_at:
-          match.played_at ||
-          Date.now(),
-        winner_team_id:
-          winnerTeamId
+        played_at: playedAt,
+        winner_team_id: winnerTeamId
       },
       match.home_team_id,
       match.away_team_id,
@@ -1114,30 +1139,30 @@ async function updateMatchResultRoute(
       tournamentId
     );
 
-    const updatedMatch =
-      await getMatch(
-        env.DB,
-        matchId
-      );
+    const updatedMatch = {
+      ...match,
+      home_score: homeScore,
+      away_score: awayScore,
+      played: 1,
+      played_at: playedAt,
+      winner_team_id: winnerTeamId,
+      updated_at: updatedAt
+    };
 
-    const updatedHomePlayer =
-      await getTournamentPlayerByTeam(
-        env.DB,
-        tournamentId,
-        match.home_team_id
-      );
+    const updatedHomePlayer = {
+      ...homePlayer,
+      ...homeStats
+    };
 
-    const updatedAwayPlayer =
-      await getTournamentPlayerByTeam(
-        env.DB,
-        tournamentId,
-        match.away_team_id
-      );
+    const updatedAwayPlayer = {
+      ...awayPlayer,
+      ...awayStats
+    };
 
     return Response.json({
       success: true,
       match: updatedMatch,
-      teams: [
+      players: [
         updatedHomePlayer,
         updatedAwayPlayer
       ]

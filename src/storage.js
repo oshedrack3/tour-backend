@@ -827,10 +827,15 @@ export async function getTournamentPlayers(
 ) {
   const result = await db
     .prepare(`
-      SELECT *
-      FROM tournament_players
-      WHERE tournament_id = ?
-      ORDER BY joined_at ASC
+      SELECT
+        tp.*,
+        t.name AS team_name,
+        t.logo AS team_logo
+      FROM tournament_players tp
+      LEFT JOIN teams t
+        ON t.id = tp.team_id
+      WHERE tp.tournament_id = ?
+      ORDER BY tp.joined_at ASC
     `)
     .bind(tournamentId)
     .all();
@@ -1024,46 +1029,32 @@ export async function updateMatchResultAtomic(
   awayStats,
   tournamentId
 ) {
-  const matchFields = [];
-  const matchValues = [];
-  
-  if (matchUpdates.home_score !== undefined) {
-    matchFields.push("home_score = ?");
-    matchValues.push(matchUpdates.home_score);
-  }
-  
-  if (matchUpdates.away_score !== undefined) {
-    matchFields.push("away_score = ?");
-    matchValues.push(matchUpdates.away_score);
-  }
-  
-  if (matchUpdates.played !== undefined) {
-    matchFields.push("played = ?");
-    matchValues.push(matchUpdates.played);
-  }
-  
-  if (matchUpdates.played_at !== undefined) {
-    matchFields.push("played_at = ?");
-    matchValues.push(matchUpdates.played_at);
-  }
-  
-  if (matchUpdates.winner_team_id !== undefined) {
-    matchFields.push("winner_team_id = ?");
-    matchValues.push(matchUpdates.winner_team_id);
-  }
-  
-  matchFields.push("updated_at = ?");
-  matchValues.push(Date.now());
-  matchValues.push(matchId);
+  const now = Date.now();
   
   const statements = [
     db
     .prepare(`
         UPDATE matches
-        SET ${matchFields.join(", ")}
+        SET
+          home_score = ?,
+          away_score = ?,
+          played = ?,
+          played_at = ?,
+          winner_team_id = ?,
+          updated_at = ?
         WHERE id = ?
+        AND tournament_id = ?
       `)
-    .bind(...matchValues),
+    .bind(
+      matchUpdates.home_score,
+      matchUpdates.away_score,
+      matchUpdates.played,
+      matchUpdates.played_at,
+      matchUpdates.winner_team_id,
+      now,
+      matchId,
+      tournamentId
+    ),
     
     db
     .prepare(`
@@ -1120,5 +1111,66 @@ export async function updateMatchResultAtomic(
   
   await db.batch(statements);
   
-  return true;
+  const [
+    updatedMatch,
+    updatedHomePlayer,
+    updatedAwayPlayer
+  ] = await Promise.all([
+    db
+    .prepare(`
+        SELECT *
+        FROM matches
+        WHERE id = ?
+        AND tournament_id = ?
+      `)
+    .bind(
+      matchId,
+      tournamentId
+    )
+    .first(),
+    
+    db
+    .prepare(`
+        SELECT
+          tp.*,
+          tm.name AS team_name,
+          tm.logo AS team_logo
+        FROM tournament_players tp
+        INNER JOIN teams tm
+          ON tm.id = tp.team_id
+        WHERE tp.tournament_id = ?
+        AND tp.team_id = ?
+      `)
+    .bind(
+      tournamentId,
+      homeTeamId
+    )
+    .first(),
+    
+    db
+    .prepare(`
+        SELECT
+          tp.*,
+          tm.name AS team_name,
+          tm.logo AS team_logo
+        FROM tournament_players tp
+        INNER JOIN teams tm
+          ON tm.id = tp.team_id
+        WHERE tp.tournament_id = ?
+        AND tp.team_id = ?
+      `)
+    .bind(
+      tournamentId,
+      awayTeamId
+    )
+    .first()
+  ]);
+  
+  return {
+    match: updatedMatch,
+    players: [
+      updatedHomePlayer,
+      updatedAwayPlayer
+    ]
+  };
 }
