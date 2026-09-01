@@ -484,86 +484,79 @@ export async function rebuildTable(
   db,
   tournamentId
 ) {
-  const result =
-    await db
-      .prepare(`
-        SELECT
-          tp.team_id,
-          tp.played,
-          tp.wins,
-          tp.draws,
-          tp.losses,
-          tp.gf,
-          tp.ga,
-          tp.points,
-          t.name AS team_name,
-          t.logo AS team_logo
-        FROM tournament_players tp
-        LEFT JOIN teams t
-          ON t.id = tp.team_id
-        WHERE tp.tournament_id = ?
-        AND tp.team_id IS NOT NULL
-      `)
-      .bind(tournamentId)
-      .all();
+  const result = await db
+    .prepare(`
+      SELECT
+        t.id,
+        t.name,
+        t.logo,
 
+        COALESCE(tp.played, 0) AS played,
+        COALESCE(tp.wins, 0) AS wins,
+        COALESCE(tp.draws, 0) AS draws,
+        COALESCE(tp.losses, 0) AS losses,
+        COALESCE(tp.gf, 0) AS gf,
+        COALESCE(tp.ga, 0) AS ga,
+        COALESCE(tp.points, 0) AS points
+
+      FROM teams t
+
+      LEFT JOIN tournament_players tp
+        ON tp.team_id = t.id
+        AND tp.tournament_id = t.tournament_id
+
+      WHERE t.tournament_id = ?
+
+      ORDER BY t.created_at ASC
+    `)
+    .bind(tournamentId)
+    .all();
+  
   const table =
-    (result.results || []).map(
-      player => {
-        const gf =
-          Number(player.gf) || 0;
-
-        const ga =
-          Number(player.ga) || 0;
-
-        return {
-          id: player.team_id,
-          name: player.team_name || "",
-          logo: player.team_logo || null,
-          played:
-            Number(player.played) || 0,
-          wins:
-            Number(player.wins) || 0,
-          draws:
-            Number(player.draws) || 0,
-          losses:
-            Number(player.losses) || 0,
-          gf,
-          ga,
-          gd: gf - ga,
-          pts:
-            Number(player.points) || 0
-        };
-      }
-    );
-
+    (result.results || []).map(team => {
+      const gf = Number(team.gf) || 0;
+      const ga = Number(team.ga) || 0;
+      
+      return {
+        id: team.id,
+        name: team.name || "",
+        logo: team.logo || null,
+        
+        played: Number(team.played) || 0,
+        wins: Number(team.wins) || 0,
+        draws: Number(team.draws) || 0,
+        losses: Number(team.losses) || 0,
+        
+        gf,
+        ga,
+        gd: gf - ga,
+        
+        pts: Number(team.points) || 0
+      };
+    });
+  
   table.sort((a, b) => {
     if (b.pts !== a.pts) {
       return b.pts - a.pts;
     }
-
+    
     if (b.gd !== a.gd) {
       return b.gd - a.gd;
     }
-
+    
     if (b.gf !== a.gf) {
       return b.gf - a.gf;
     }
-
-    return a.name.localeCompare(
-      b.name
-    );
+    
+    return a.name.localeCompare(b.name);
   });
-
-  table.forEach(
-    (team, index) => {
-      team.pos = index + 1;
-    }
-  );
-
+  
+  table.forEach((team, index) => {
+    team.pos = index + 1;
+  });
+  
   return table;
 }
-
 
 async function getTournamentTableRoute(
   env,
@@ -967,6 +960,50 @@ async function updateMatchResultRoute(
       });
     }
 
+    const homeTeam =
+      await env.DB
+        .prepare(`
+          SELECT
+            id,
+            name,
+            logo
+          FROM teams
+          WHERE id = ?
+          AND tournament_id = ?
+        `)
+        .bind(
+          match.home_team_id,
+          tournamentId
+        )
+        .first();
+
+    const awayTeam =
+      await env.DB
+        .prepare(`
+          SELECT
+            id,
+            name,
+            logo
+          FROM teams
+          WHERE id = ?
+          AND tournament_id = ?
+        `)
+        .bind(
+          match.away_team_id,
+          tournamentId
+        )
+        .first();
+
+    if (!homeTeam || !awayTeam) {
+      return Response.json({
+        success: false,
+        message:
+          "One or both teams are not registered in this tournament."
+      }, {
+        status: 400
+      });
+    }
+
     const body =
       await request
         .json()
@@ -992,119 +1029,6 @@ async function updateMatchResultRoute(
       });
     }
 
-    const homePlayer =
-      await getTournamentPlayerByTeam(
-        env.DB,
-        tournamentId,
-        match.home_team_id
-      );
-
-    const awayPlayer =
-      await getTournamentPlayerByTeam(
-        env.DB,
-        tournamentId,
-        match.away_team_id
-      );
-
-    if (!homePlayer || !awayPlayer) {
-      return Response.json({
-        success: false,
-        message:
-          "One or both teams are not assigned to tournament players."
-      }, {
-        status: 400
-      });
-    }
-
-    const oldPlayed =
-      Number(match.played) === 1;
-
-    const oldHomeScore =
-      Number(match.home_score);
-
-    const oldAwayScore =
-      Number(match.away_score);
-
-    let homeStats = {
-      played:
-        Number(homePlayer.played) || 0,
-      wins:
-        Number(homePlayer.wins) || 0,
-      draws:
-        Number(homePlayer.draws) || 0,
-      losses:
-        Number(homePlayer.losses) || 0,
-      gf:
-        Number(homePlayer.gf) || 0,
-      ga:
-        Number(homePlayer.ga) || 0,
-      points:
-        Number(homePlayer.points) || 0
-    };
-
-    let awayStats = {
-      played:
-        Number(awayPlayer.played) || 0,
-      wins:
-        Number(awayPlayer.wins) || 0,
-      draws:
-        Number(awayPlayer.draws) || 0,
-      losses:
-        Number(awayPlayer.losses) || 0,
-      gf:
-        Number(awayPlayer.gf) || 0,
-      ga:
-        Number(awayPlayer.ga) || 0,
-      points:
-        Number(awayPlayer.points) || 0
-    };
-
-    if (
-      oldPlayed &&
-      Number.isFinite(oldHomeScore) &&
-      Number.isFinite(oldAwayScore)
-    ) {
-      const oldStats =
-        getResultStats(
-          oldHomeScore,
-          oldAwayScore
-        );
-
-      homeStats =
-        applyStats(
-          homeStats,
-          oldStats.home,
-          -1
-        );
-
-      awayStats =
-        applyStats(
-          awayStats,
-          oldStats.away,
-          -1
-        );
-    }
-
-    const newStats =
-      getResultStats(
-        homeScore,
-        awayScore
-      );
-
-    homeStats =
-      applyStats(
-        homeStats,
-        newStats.home,
-        1
-      );
-
-    awayStats =
-      applyStats(
-        awayStats,
-        newStats.away,
-        1
-      );
-
     let winnerTeamId = null;
 
     if (homeScore > awayScore) {
@@ -1116,56 +1040,48 @@ async function updateMatchResultRoute(
     }
 
     const playedAt =
-      match.played_at ||
-      Date.now();
+      Number(match.played) === 1 &&
+      match.played_at
+        ? match.played_at
+        : Date.now();
 
     const updatedAt =
       Date.now();
 
-    await updateMatchResultAtomic(
-      env.DB,
-      matchId,
-      {
-        home_score: homeScore,
-        away_score: awayScore,
-        played: 1,
-        played_at: playedAt,
-        winner_team_id: winnerTeamId
-      },
-      match.home_team_id,
-      match.away_team_id,
-      homeStats,
-      awayStats,
-      tournamentId
-    );
+    await env.DB
+      .prepare(`
+        UPDATE matches
+        SET
+          home_score = ?,
+          away_score = ?,
+          played = 1,
+          played_at = ?,
+          winner_team_id = ?,
+          updated_at = ?
+        WHERE id = ?
+        AND tournament_id = ?
+      `)
+      .bind(
+        homeScore,
+        awayScore,
+        playedAt,
+        winnerTeamId,
+        updatedAt,
+        matchId,
+        tournamentId
+      )
+      .run();
 
-    const updatedMatch = {
-      ...match,
-      home_score: homeScore,
-      away_score: awayScore,
-      played: 1,
-      played_at: playedAt,
-      winner_team_id: winnerTeamId,
-      updated_at: updatedAt
-    };
-
-    const updatedHomePlayer = {
-      ...homePlayer,
-      ...homeStats
-    };
-
-    const updatedAwayPlayer = {
-      ...awayPlayer,
-      ...awayStats
-    };
+    const updatedMatch =
+      await getMatch(
+        env.DB,
+        matchId
+      );
 
     return Response.json({
       success: true,
       match: updatedMatch,
-      players: [
-        updatedHomePlayer,
-        updatedAwayPlayer
-      ]
+      players: []
     });
 
   } catch (error) {
@@ -1184,6 +1100,7 @@ async function updateMatchResultRoute(
     });
   }
 }
+
 async function assignTournamentTeamRoute(
   request,
   env,
