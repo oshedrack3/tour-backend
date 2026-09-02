@@ -444,68 +444,116 @@ export async function createTeam(
 ) {
   const countResult =
     await db
-    .prepare(`
+      .prepare(`
         SELECT COUNT(*) AS count
         FROM teams
         WHERE owner_uid = ?
       `)
-    .bind(userId)
-    .first();
-  
+      .bind(userId)
+      .first();
+
   const teamCount =
     Number(countResult?.count) || 0;
-  
+
   const maxTeams =
-    userRole === "admin" ?
-    20 :
-    1;
-  
+    userRole === "admin"
+      ? 20
+      : 1;
+
   if (teamCount >= maxTeams) {
     return {
       success: false,
-      message: userRole === "admin" ?
-        "You can create a maximum of 20 teams." :
-        "You can create only one team."
+      message:
+        userRole === "admin"
+          ? "You can create a maximum of 20 teams."
+          : "You can create only one team."
     };
   }
-  
-  await db
-    .prepare(`
-      INSERT INTO teams (
-        id,
-        owner_uid,
-        name,
-        logo,
-        created_at,
-        updated_at
+
+  const teamName =
+    String(team.name || "").trim();
+
+  if (!teamName) {
+    return {
+      success: false,
+      message: "Team name is required."
+    };
+  }
+
+  const existingTeam =
+    await db
+      .prepare(`
+        SELECT id
+        FROM teams
+        WHERE LOWER(TRIM(name)) =
+              LOWER(TRIM(?))
+        LIMIT 1
+      `)
+      .bind(teamName)
+      .first();
+
+  if (existingTeam) {
+    return {
+      success: false,
+      message:
+        "A team with this name already exists."
+    };
+  }
+
+  try {
+    await db
+      .prepare(`
+        INSERT INTO teams (
+          id,
+          owner_uid,
+          name,
+          logo,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+      `)
+      .bind(
+        team.id,
+        userId,
+        teamName,
+        team.logo || null,
+        team.created_at,
+        team.updated_at ||
+          team.created_at
       )
-      VALUES (?, ?, ?, ?, ?, ?)
-    `)
-    .bind(
-      team.id,
-      userId,
-      team.name,
-      team.logo || null,
-      team.created_at,
-      team.updated_at ||
-      team.created_at
-    )
-    .run();
-  
+      .run();
+
+  } catch (error) {
+    if (
+      String(error.message || "")
+        .toLowerCase()
+        .includes("unique")
+    ) {
+      return {
+        success: false,
+        message:
+          "A team with this name already exists."
+      };
+    }
+
+    throw error;
+  }
+
   const createdTeam =
     await db
-    .prepare(`
+      .prepare(`
         SELECT *
         FROM teams
         WHERE id = ?
         AND owner_uid = ?
       `)
-    .bind(
-      team.id,
-      userId
-    )
-    .first();
-  
+      .bind(
+        team.id,
+        userId
+      )
+      .first();
+
   return {
     success: true,
     team: createdTeam
