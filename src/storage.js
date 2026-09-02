@@ -85,41 +85,6 @@ export async function createCompetition(
   );
 }
 
-export async function getTournament(db, tournamentId, userId) {
-  if (userId) {
-    return await db
-      .prepare(`
-        SELECT t.*
-        FROM tournaments t
-        WHERE t.id = ?
-        AND (
-          t.admin_uid = ?
-          OR EXISTS (
-            SELECT 1
-            FROM tournament_players tp
-            WHERE tp.tournament_id = t.id
-            AND tp.user_id = ?
-          )
-        )
-      `)
-      .bind(
-        tournamentId,
-        userId,
-        userId
-      )
-      .first();
-  }
-  
-  return await db
-    .prepare(`
-      SELECT *
-      FROM tournaments
-      WHERE id = ?
-    `)
-    .bind(tournamentId)
-    .first();
-}
-
 export async function getTournamentForUser(
   db,
   id,
@@ -171,7 +136,7 @@ export async function getTournamentsByPlayer(
 ) {
   const result = await db
     .prepare(`
-      SELECT t.*
+      SELECT DISTINCT t.*
       FROM tournaments t
       INNER JOIN tournament_players tp
         ON tp.tournament_id = t.id
@@ -183,7 +148,6 @@ export async function getTournamentsByPlayer(
   
   return result.results || [];
 }
-
 export async function createTournament(
   db,
   tournament
@@ -238,10 +202,9 @@ export async function createTournament(
     .run();
   
   return await getTournament(
-    db,
-    tournament.id,
-    tournament.admin_uid
-  );
+  db,
+  tournament.id
+);
 }
 
 export async function updateTournament(
@@ -251,11 +214,11 @@ export async function updateTournament(
   userId
 ) {
   const existing =
-    await getTournament(
-      db,
-      id,
-      userId
-    );
+  await getTournamentForUser(
+    db,
+    id,
+    userId
+  );
   
   if (!existing) {
     return null;
@@ -378,37 +341,43 @@ export async function updateTournament(
     .bind(...values)
     .run();
   
-  return await getTournament(
-    db,
-    id,
-    userId
-  );
+  return await getTournamentForUser(
+  db,
+  id,
+  userId
+);
 }
 
-export async function deleteTournament(db, id) {
+export async function deleteTournament(
+  db,
+  id
+) {
   await db
-    .prepare("DELETE FROM matches WHERE tournament_id = ?")
+    .prepare(`
+      DELETE FROM matches
+      WHERE tournament_id = ?
+    `)
     .bind(id)
     .run();
+  
   await db
-    .prepare("DELETE FROM players WHERE tournament_id = ?")
+    .prepare(`
+      DELETE FROM tournament_players
+      WHERE tournament_id = ?
+    `)
     .bind(id)
     .run();
+  
   await db
-    .prepare("DELETE FROM tournament_players WHERE tournament_id = ?")
+    .prepare(`
+      DELETE FROM tournaments
+      WHERE id = ?
+    `)
     .bind(id)
     .run();
-  await db
-    .prepare("DELETE FROM teams WHERE tournament_id = ?")
-    .bind(id)
-    .run();
-  await db
-    .prepare("DELETE FROM tournaments WHERE id = ?")
-    .bind(id)
-    .run();
+  
   return true;
 }
-
 export async function getMyTeams(
   db,
   userId
@@ -475,32 +444,31 @@ export async function createTeam(
 ) {
   const countResult =
     await db
-      .prepare(`
+    .prepare(`
         SELECT COUNT(*) AS count
         FROM teams
         WHERE owner_uid = ?
       `)
-      .bind(userId)
-      .first();
-
+    .bind(userId)
+    .first();
+  
   const teamCount =
     Number(countResult?.count) || 0;
-
+  
   const maxTeams =
-    userRole === "admin"
-      ? 20
-      : 1;
-
+    userRole === "admin" ?
+    20 :
+    1;
+  
   if (teamCount >= maxTeams) {
     return {
       success: false,
-      message:
-        userRole === "admin"
-          ? "You can create a maximum of 20 teams."
-          : "You can create only one team."
+      message: userRole === "admin" ?
+        "You can create a maximum of 20 teams." :
+        "You can create only one team."
     };
   }
-
+  
   await db
     .prepare(`
       INSERT INTO teams (
@@ -520,24 +488,24 @@ export async function createTeam(
       team.logo || null,
       team.created_at,
       team.updated_at ||
-        team.created_at
+      team.created_at
     )
     .run();
-
+  
   const createdTeam =
     await db
-      .prepare(`
+    .prepare(`
         SELECT *
         FROM teams
         WHERE id = ?
         AND owner_uid = ?
       `)
-      .bind(
-        team.id,
-        userId
-      )
-      .first();
-
+    .bind(
+      team.id,
+      userId
+    )
+    .first();
+  
   return {
     success: true,
     team: createdTeam
@@ -615,45 +583,43 @@ export async function deleteTeam(
 ) {
   const team =
     await db
-      .prepare(`
+    .prepare(`
         SELECT id
         FROM teams
         WHERE id = ?
         AND owner_uid = ?
       `)
-      .bind(
-        id,
-        userId
-      )
-      .first();
-
+    .bind(
+      id,
+      userId
+    )
+    .first();
+  
   if (!team) {
     return {
       success: false,
-      message:
-        "Team not found or access denied."
+      message: "Team not found or access denied."
     };
   }
-
+  
   const participation =
     await db
-      .prepare(`
+    .prepare(`
         SELECT 1
         FROM tournament_players
         WHERE team_id = ?
         LIMIT 1
       `)
-      .bind(id)
-      .first();
-
+    .bind(id)
+    .first();
+  
   if (participation) {
     return {
       success: false,
-      message:
-        "This team cannot be deleted because it has participated in a tournament."
+      message: "This team cannot be deleted because it has participated in a tournament."
     };
   }
-
+  
   await db
     .prepare(`
       DELETE FROM teams
@@ -665,11 +631,10 @@ export async function deleteTeam(
       userId
     )
     .run();
-
+  
   return {
     success: true,
-    message:
-      "Team deleted successfully."
+    message: "Team deleted successfully."
   };
 }
 
@@ -1302,4 +1267,19 @@ export async function updateMatchResultAtomic(
       updatedAwayPlayer
     ]
   };
+}
+
+export async function getTournament(
+  db,
+  tournamentId
+) {
+  return await db
+    .prepare(`
+      SELECT *
+      FROM tournaments
+      WHERE id = ?
+      LIMIT 1
+    `)
+    .bind(tournamentId)
+    .first();
 }

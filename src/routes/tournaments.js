@@ -408,70 +408,106 @@ async function getMyTournamentsRoute(
   env,
   user
 ) {
-  let tournaments;
-  
-  if (user.role === "admin") {
-    tournaments =
-      await getTournamentsByOwner(
-        env.DB,
-        user.id
-      );
-  } else {
-    tournaments =
-      await getTournamentsByPlayer(
-        env.DB,
-        user.id
-      );
-  }
-  
-  tournaments =
-    tournaments.map(parseTournament);
-  
-  return Response.json({
-    success: true,
-    tournaments
-  });
-}
+  try {
+    let tournaments;
 
+    if (user.role === "admin") {
+      tournaments =
+        await getTournamentsByOwner(
+          env.DB,
+          user.id
+        );
+    } else {
+      tournaments =
+        await getTournamentsByPlayer(
+          env.DB,
+          user.id
+        );
+    }
+
+    tournaments =
+      (tournaments || [])
+        .map(parseTournament);
+
+    return Response.json({
+      success: true,
+      tournaments
+    });
+
+  } catch (error) {
+    console.error(
+      "Get my tournaments error:",
+      error
+    );
+
+    return Response.json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to load tournaments."
+    }, {
+      status: 500
+    });
+  }
+}
 async function getTournamentRoute(
   env,
   id,
   user
 ) {
-  const tournament =
-    await getTournament(
-      env.DB,
-      id,
-      user.id
+  try {
+    const tournament =
+      await getTournament(
+        env.DB,
+        id
+      );
+
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message:
+          "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+
+    const tournamentPlayers =
+      await getTournamentPlayers(
+        env.DB,
+        id
+      );
+
+    const parsedTournament =
+      parseTournament(
+        tournament
+      );
+
+    parsedTournament.tournament_players =
+      tournamentPlayers || [];
+
+    return Response.json({
+      success: true,
+      tournament:
+        parsedTournament
+    });
+
+  } catch (error) {
+    console.error(
+      "Get tournament error:",
+      error
     );
-  
-  if (!tournament) {
+
     return Response.json({
       success: false,
-      message: "Tournament not found or access denied."
+      message:
+        error.message ||
+        "Failed to load tournament."
     }, {
-      status: 404
+      status: 500
     });
   }
-  
-  const tournamentPlayers =
-    await getTournamentPlayers(
-      env.DB,
-      id
-    );
-  
-  const parsedTournament =
-    parseTournament(tournament);
-  
-  parsedTournament.tournament_players =
-    tournamentPlayers;
-  
-  return Response.json({
-    success: true,
-    tournament: parsedTournament
-  });
 }
-
 function parseTournament(tournament) {
   if (!tournament) {
     return tournament;
