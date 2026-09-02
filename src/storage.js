@@ -696,18 +696,73 @@ export async function getMatch(db, id) {
     .bind(id)
     .first();
 }
-export async function getMatches(db, tournamentId) {
-  const result = await db
-    .prepare(`
-      SELECT *
-      FROM matches
-      WHERE tournament_id = ?
-      ORDER BY created_at ASC
-    `)
-    .bind(tournamentId)
+
+export async function getMatches(
+  db,
+  tournamentId,
+  userId,
+  isAdmin = false
+) {
+  let query;
+  let bindings;
+  
+  if (isAdmin) {
+    query = `
+      SELECT
+        m.*,
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM match_submissions ms
+            WHERE ms.tournament_id = m.tournament_id
+            AND ms.match_id = m.id
+            AND ms.status = 'pending'
+          )
+          THEN 'pending'
+          ELSE NULL
+        END AS submission_status
+      FROM matches m
+      WHERE m.tournament_id = ?
+      ORDER BY m.created_at ASC
+    `;
+    
+    bindings = [
+      tournamentId
+    ];
+  } else {
+    query = `
+      SELECT
+        m.*,
+        (
+          SELECT ms.status
+          FROM match_submissions ms
+          WHERE ms.tournament_id = m.tournament_id
+          AND ms.match_id = m.id
+          AND ms.submitted_by = ?
+          AND ms.status IN ('pending', 'rejected')
+          ORDER BY ms.created_at DESC
+          LIMIT 1
+        ) AS submission_status
+      FROM matches m
+      WHERE m.tournament_id = ?
+      ORDER BY m.created_at ASC
+    `;
+    
+    bindings = [
+      userId,
+      tournamentId
+    ];
+  }
+  
+  const result =
+    await db
+    .prepare(query)
+    .bind(...bindings)
     .all();
+  
   return result.results || [];
 }
+
 export async function createMatch(db, match) {
   await db
     .prepare(`
@@ -1330,4 +1385,200 @@ export async function getTournament(
     `)
     .bind(tournamentId)
     .first();
+}
+
+
+
+export async function getMatchSubmission(
+  db,
+  tournamentId,
+  submissionId
+) {
+  return await db.prepare(`
+    SELECT
+      ms.*,
+      u.username AS submitter_username,
+      t.name AS team_name,
+      t.logo AS team_logo
+    FROM match_submissions ms
+    LEFT JOIN users u
+      ON u.id = ms.submitted_by
+    LEFT JOIN teams t
+      ON t.id = ms.team_id
+    WHERE ms.tournament_id = ?
+    AND ms.id = ?
+    LIMIT 1
+  `).bind(
+    tournamentId,
+    submissionId
+  ).first();
+}
+
+export async function getPlayerMatchSubmission(
+  db,
+  tournamentId,
+  matchId,
+  userId
+) {
+  return await db.prepare(`
+    SELECT
+      ms.*,
+      t.name AS team_name,
+      t.logo AS team_logo
+    FROM match_submissions ms
+    LEFT JOIN teams t
+      ON t.id = ms.team_id
+    WHERE ms.tournament_id = ?
+    AND ms.match_id = ?
+    AND ms.submitted_by = ?
+    ORDER BY ms.created_at DESC
+    LIMIT 1
+  `).bind(
+    tournamentId,
+    matchId,
+    userId
+  ).first();
+}
+
+export async function getMatchSubmissions(
+  db,
+  tournamentId,
+  matchId
+) {
+  const result = await db.prepare(`
+    SELECT
+      ms.*,
+      u.username AS submitter_username,
+      t.name AS team_name,
+      t.logo AS team_logo
+    FROM match_submissions ms
+    LEFT JOIN users u
+      ON u.id = ms.submitted_by
+    LEFT JOIN teams t
+      ON t.id = ms.team_id
+    WHERE ms.tournament_id = ?
+    AND ms.match_id = ?
+    ORDER BY ms.created_at DESC
+  `).bind(
+    tournamentId,
+    matchId
+  ).all();
+  
+  return result.results || [];
+}
+
+export async function createMatchSubmission(
+  db,
+  submission
+) {
+  await db.prepare(`
+    INSERT INTO match_submissions (
+      id,
+      tournament_id,
+      match_id,
+      submitted_by,
+      team_id,
+      home_goals,
+      away_goals,
+      screenshot,
+      screenshot_public_id,
+      status,
+      created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+  `).bind(
+    submission.id,
+    submission.tournament_id,
+    submission.match_id,
+    submission.submitted_by,
+    submission.team_id,
+    submission.home_goals,
+    submission.away_goals,
+    submission.screenshot || null,
+    submission.screenshot_public_id || null,
+    submission.created_at
+  ).run();
+  
+  return await getMatchSubmission(
+    db,
+    submission.tournament_id,
+    submission.id
+  );
+}
+
+export async function getPendingMatchSubmission(
+  db,
+  tournamentId,
+  matchId,
+  userId
+) {
+  return await db.prepare(`
+    SELECT id
+    FROM match_submissions
+    WHERE tournament_id = ?
+    AND match_id = ?
+    AND submitted_by = ?
+    AND status = 'pending'
+    LIMIT 1
+  `).bind(
+    tournamentId,
+    matchId,
+    userId
+  ).first();
+}
+
+export async function updateMatchSubmission(
+  db,
+  tournamentId,
+  submissionId,
+  updates
+) {
+  const fields = [];
+  const values = [];
+  
+  if (updates.status !== undefined) {
+    fields.push("status = ?");
+    values.push(updates.status);
+  }
+  
+  if (updates.reviewed_at !== undefined) {
+    fields.push("reviewed_at = ?");
+    values.push(updates.reviewed_at);
+  }
+  
+  if (updates.reviewed_by !== undefined) {
+    fields.push("reviewed_by = ?");
+    values.push(updates.reviewed_by);
+  }
+  
+  if (updates.rejection_reason !== undefined) {
+    fields.push("rejection_reason = ?");
+    values.push(updates.rejection_reason);
+  }
+  
+  if (!fields.length) {
+    return await getMatchSubmission(
+      db,
+      tournamentId,
+      submissionId
+    );
+  }
+  
+  values.push(
+    tournamentId,
+    submissionId
+  );
+  
+  await db.prepare(`
+    UPDATE match_submissions
+    SET ${fields.join(", ")}
+    WHERE tournament_id = ?
+    AND id = ?
+  `).bind(...values).run();
+  
+  return await getMatchSubmission(
+    db,
+    tournamentId,
+    submissionId
+  );
 }

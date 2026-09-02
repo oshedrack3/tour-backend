@@ -209,6 +209,7 @@ async function getCompetitionRoute(
         env.DB,
         id
       );
+
     if (!competition) {
       return Response.json({
         success: false,
@@ -218,30 +219,34 @@ async function getCompetitionRoute(
         status: 404
       });
     }
+
     if (
+      user.role === "admin" &&
       competition.owner_id !== user.id
     ) {
       return Response.json({
         success: false,
         message:
-          "Access denied."
+          "Competition not found."
       }, {
-        status: 403
+        status: 404
       });
     }
+
     return Response.json({
       success: true,
       competition
     });
+
   } catch (error) {
     console.error(
       "Get competition error:",
       error
     );
+
     return Response.json({
       success: false,
       message:
-        error.message ||
         "Failed to load competition."
     }, {
       status: 500

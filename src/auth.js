@@ -42,7 +42,8 @@ async function register(request, env) {
       return Response.json(
         {
           success: false,
-          message: "Username, email and password are required."
+          message:
+            "Username, email and password are required."
         },
         { status: 400 }
       );
@@ -62,83 +63,94 @@ async function register(request, env) {
       return Response.json(
         {
           success: false,
-          message: "Password must be at least 6 characters."
+          message:
+            "Password must be at least 6 characters."
         },
         { status: 400 }
-      );
-    }
-
-    const existingUsername = await env.DB
-      .prepare(`
-        SELECT id
-        FROM users
-        WHERE LOWER(username) = ?
-        LIMIT 1
-      `)
-      .bind(username)
-      .first();
-
-    if (existingUsername) {
-      return Response.json(
-        {
-          success: false,
-          message: "Username already exists."
-        },
-        { status: 409 }
-      );
-    }
-
-    const existingEmail = await env.DB
-      .prepare(`
-        SELECT id
-        FROM users
-        WHERE LOWER(email) = ?
-        LIMIT 1
-      `)
-      .bind(email)
-      .first();
-
-    if (existingEmail) {
-      return Response.json(
-        {
-          success: false,
-          message: "Email already exists."
-        },
-        { status: 409 }
       );
     }
 
     const id = uuid();
     const createdAt = Date.now();
 
-    const passwordHash = await hashPassword(password);
+    const passwordHash =
+      await hashPassword(password);
 
-    await env.DB
-      .prepare(`
-        INSERT INTO users (
+    try {
+      await env.DB
+        .prepare(`
+          INSERT INTO users (
+            id,
+            username,
+            email,
+            password_hash,
+            role,
+            created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?)
+        `)
+        .bind(
           id,
           username,
           email,
-          password_hash,
+          passwordHash,
           role,
-          created_at
+          createdAt
         )
-        VALUES (?, ?, ?, ?, ?, ?)
-      `)
-      .bind(
-        id,
-        username,
-        email,
-        passwordHash,
-        role,
-        createdAt
-      )
-      .run();
+        .run();
+
+    } catch (error) {
+      const message =
+        String(error?.message || "").toLowerCase();
+
+      console.error(
+        "Registration database error:",
+        error
+      );
+
+      if (
+        message.includes("unique constraint") &&
+        message.includes("users.username")
+      ) {
+        return Response.json(
+          {
+            success: false,
+            message:
+              "Username already exists."
+          },
+          { status: 409 }
+        );
+      }
+
+      if (
+        message.includes("unique constraint") &&
+        message.includes("users.email")
+      ) {
+        return Response.json(
+          {
+            success: false,
+            message:
+              "Email already exists."
+          },
+          { status: 409 }
+        );
+      }
+
+      return Response.json(
+        {
+          success: false,
+          message:
+            "Unable to create account. Please try again."
+        },
+        { status: 500 }
+      );
+    }
 
     return Response.json(
       {
         success: true,
-        message: "Account created successfully.",
+        message:
+          "Account created successfully.",
         user: {
           id,
           username,
@@ -149,13 +161,18 @@ async function register(request, env) {
       },
       { status: 201 }
     );
+
   } catch (error) {
-    console.error("Registration error:", error);
+    console.error(
+      "Registration error:",
+      error
+    );
 
     return Response.json(
       {
         success: false,
-        message: error.message || "Registration failed."
+        message:
+          "Registration failed. Please try again."
       },
       { status: 500 }
     );
