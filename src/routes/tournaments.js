@@ -510,7 +510,6 @@ export async function rebuildTable(
 
       LEFT JOIN teams t
         ON t.id = tp.team_id
-        AND t.tournament_id = tp.tournament_id
 
       WHERE tp.tournament_id = ?
       AND tp.team_id IS NOT NULL
@@ -522,8 +521,11 @@ export async function rebuildTable(
   
   const table =
     (result.results || []).map(team => {
-      const gf = Number(team.gf) || 0;
-      const ga = Number(team.ga) || 0;
+      const gf =
+        Number(team.gf) || 0;
+      
+      const ga =
+        Number(team.ga) || 0;
       
       return {
         id: team.id,
@@ -531,12 +533,16 @@ export async function rebuildTable(
         logo: team.logo || null,
         
         played: Number(team.played) || 0,
+        
         wins: Number(team.wins) || 0,
+        
         draws: Number(team.draws) || 0,
+        
         losses: Number(team.losses) || 0,
         
         gf,
         ga,
+        
         gd: gf - ga,
         
         pts: Number(team.points) || 0
@@ -556,16 +562,19 @@ export async function rebuildTable(
       return b.gf - a.gf;
     }
     
-    return a.name.localeCompare(b.name);
+    return a.name.localeCompare(
+      b.name
+    );
   });
   
-  table.forEach((team, index) => {
-    team.pos = index + 1;
-  });
+  table.forEach(
+    (team, index) => {
+      team.pos = index + 1;
+    }
+  );
   
   return table;
 }
-
 
 async function getTournamentTableRoute(
   env,
@@ -896,98 +905,111 @@ async function updateMatchResultRoute(
         tournamentId,
         user.id
       );
-    
+
     if (!tournament) {
       return Response.json({
         success: false,
-        message: "Tournament not found or access denied."
+        message:
+          "Tournament not found or access denied."
       }, {
         status: 404
       });
     }
-    
+
     if (user.role !== "admin") {
       return Response.json({
         success: false,
-        message: "Access denied."
+        message:
+          "Access denied."
       }, {
         status: 403
       });
     }
-    
+
     const match =
       await getMatch(
         env.DB,
         matchId
       );
-    
+
     if (
       !match ||
       String(match.tournament_id) !==
-      String(tournamentId)
+        String(tournamentId)
     ) {
       return Response.json({
         success: false,
-        message: "Match not found."
+        message:
+          "Match not found."
       }, {
         status: 404
       });
     }
-    
+
     const homeTeam =
       await env.DB
-      .prepare(`
+        .prepare(`
           SELECT
-            id,
-            name,
-            logo
-          FROM teams
-          WHERE id = ?
-          AND tournament_id = ?
+            t.id,
+            t.name,
+            t.logo
+          FROM teams t
+          INNER JOIN tournament_players tp
+            ON tp.team_id = t.id
+          WHERE t.id = ?
+          AND tp.tournament_id = ?
+          LIMIT 1
         `)
-      .bind(
-        match.home_team_id,
-        tournamentId
-      )
-      .first();
-    
+        .bind(
+          match.home_team_id,
+          tournamentId
+        )
+        .first();
+
     const awayTeam =
       await env.DB
-      .prepare(`
+        .prepare(`
           SELECT
-            id,
-            name,
-            logo
-          FROM teams
-          WHERE id = ?
-          AND tournament_id = ?
+            t.id,
+            t.name,
+            t.logo
+          FROM teams t
+          INNER JOIN tournament_players tp
+            ON tp.team_id = t.id
+          WHERE t.id = ?
+          AND tp.tournament_id = ?
+          LIMIT 1
         `)
-      .bind(
-        match.away_team_id,
-        tournamentId
-      )
-      .first();
-    
-    if (!homeTeam || !awayTeam) {
+        .bind(
+          match.away_team_id,
+          tournamentId
+        )
+        .first();
+
+    if (
+      !homeTeam ||
+      !awayTeam
+    ) {
       return Response.json({
         success: false,
-        message: "One or both teams are not registered in this tournament."
+        message:
+          "One or both teams are not registered in this tournament."
       }, {
         status: 400
       });
     }
-    
+
     const body =
       await request
-      .json()
-      .catch(() => ({}));
-    
+        .json()
+        .catch(() => ({}));
+
     const homeScore =
       Number(body.home_score);
-    
+
     const awayScore =
       Number(body.away_score);
-    
+
     if (
       !Number.isInteger(homeScore) ||
       !Number.isInteger(awayScore) ||
@@ -996,62 +1018,83 @@ async function updateMatchResultRoute(
     ) {
       return Response.json({
         success: false,
-        message: "Invalid score."
+        message:
+          "Invalid score."
       }, {
         status: 400
       });
     }
-    
+
     const homePlayer =
       await getTournamentPlayerByTeam(
         env.DB,
         tournamentId,
         match.home_team_id
       );
-    
+
     const awayPlayer =
       await getTournamentPlayerByTeam(
         env.DB,
         tournamentId,
         match.away_team_id
       );
-    
-    if (!homePlayer || !awayPlayer) {
+
+    if (
+      !homePlayer ||
+      !awayPlayer
+    ) {
       return Response.json({
         success: false,
-        message: "One or both teams do not have tournament player records."
+        message:
+          "One or both teams do not have tournament player records."
       }, {
         status: 400
       });
     }
-    
+
     let currentHome = {
-      played: Number(homePlayer.played) || 0,
-      wins: Number(homePlayer.wins) || 0,
-      draws: Number(homePlayer.draws) || 0,
-      losses: Number(homePlayer.losses) || 0,
-      gf: Number(homePlayer.gf) || 0,
-      ga: Number(homePlayer.ga) || 0,
-      points: Number(homePlayer.points) || 0
+      played:
+        Number(homePlayer.played) || 0,
+      wins:
+        Number(homePlayer.wins) || 0,
+      draws:
+        Number(homePlayer.draws) || 0,
+      losses:
+        Number(homePlayer.losses) || 0,
+      gf:
+        Number(homePlayer.gf) || 0,
+      ga:
+        Number(homePlayer.ga) || 0,
+      points:
+        Number(homePlayer.points) || 0
     };
-    
+
     let currentAway = {
-      played: Number(awayPlayer.played) || 0,
-      wins: Number(awayPlayer.wins) || 0,
-      draws: Number(awayPlayer.draws) || 0,
-      losses: Number(awayPlayer.losses) || 0,
-      gf: Number(awayPlayer.gf) || 0,
-      ga: Number(awayPlayer.ga) || 0,
-      points: Number(awayPlayer.points) || 0
+      played:
+        Number(awayPlayer.played) || 0,
+      wins:
+        Number(awayPlayer.wins) || 0,
+      draws:
+        Number(awayPlayer.draws) || 0,
+      losses:
+        Number(awayPlayer.losses) || 0,
+      gf:
+        Number(awayPlayer.gf) || 0,
+      ga:
+        Number(awayPlayer.ga) || 0,
+      points:
+        Number(awayPlayer.points) || 0
     };
-    
-    if (Number(match.played) === 1) {
+
+    if (
+      Number(match.played) === 1
+    ) {
       const oldHomeScore =
         Number(match.home_score);
-      
+
       const oldAwayScore =
         Number(match.away_score);
-      
+
       if (
         Number.isInteger(oldHomeScore) &&
         Number.isInteger(oldAwayScore)
@@ -1061,14 +1104,14 @@ async function updateMatchResultRoute(
             oldHomeScore,
             oldAwayScore
           );
-        
+
         currentHome =
           applyStats(
             currentHome,
             oldStats.home,
             -1
           );
-        
+
         currentAway =
           applyStats(
             currentAway,
@@ -1077,43 +1120,48 @@ async function updateMatchResultRoute(
           );
       }
     }
-    
+
     const newStats =
       getResultStats(
         homeScore,
         awayScore
       );
-    
+
     const newHomeStats =
       applyStats(
         currentHome,
         newStats.home,
         1
       );
-    
+
     const newAwayStats =
       applyStats(
         currentAway,
         newStats.away,
         1
       );
-    
-    let winnerTeamId = null;
-    
-    if (homeScore > awayScore) {
+
+    let winnerTeamId =
+      null;
+
+    if (
+      homeScore > awayScore
+    ) {
       winnerTeamId =
         match.home_team_id;
-    } else if (awayScore > homeScore) {
+    } else if (
+      awayScore > homeScore
+    ) {
       winnerTeamId =
         match.away_team_id;
     }
-    
+
     const playedAt =
       Number(match.played) === 1 &&
-      match.played_at ?
-      match.played_at :
-      Date.now();
-    
+      match.played_at
+        ? match.played_at
+        : Date.now();
+
     const result =
       await updateMatchResultAtomic(
         env.DB,
@@ -1123,7 +1171,8 @@ async function updateMatchResultRoute(
           away_score: awayScore,
           played: 1,
           played_at: playedAt,
-          winner_team_id: winnerTeamId
+          winner_team_id:
+            winnerTeamId
         },
         match.home_team_id,
         match.away_team_id,
@@ -1131,22 +1180,23 @@ async function updateMatchResultRoute(
         newAwayStats,
         tournamentId
       );
-    
+
     return Response.json({
       success: true,
       match: result.match,
       players: result.players
     });
-    
+
   } catch (error) {
     console.error(
       "Update match result error:",
       error
     );
-    
+
     return Response.json({
       success: false,
-      message: error.message ||
+      message:
+        error.message ||
         "Failed to save match result."
     }, {
       status: 500
@@ -1201,7 +1251,13 @@ async function assignTournamentTeamRoute(
     const team =
       await env.DB
         .prepare(`
-          SELECT *
+          SELECT
+            id,
+            owner_uid,
+            name,
+            logo,
+            created_at,
+            updated_at
           FROM teams
           WHERE id = ?
           AND owner_uid = ?
@@ -1229,6 +1285,7 @@ async function assignTournamentTeamRoute(
           FROM tournament_players
           WHERE tournament_id = ?
           AND team_id = ?
+          LIMIT 1
         `)
         .bind(
           tournamentId,
@@ -1324,7 +1381,6 @@ async function assignTournamentTeamRoute(
   }
 }
 
-
 function getResultStats(
   homeScore,
   awayScore
@@ -1408,30 +1464,29 @@ async function createTeamRoute(
   try {
     const body =
       await request
-        .json()
-        .catch(() => ({}));
-
+      .json()
+      .catch(() => ({}));
+    
     const name =
       String(
         body.name || ""
       ).trim();
-
+    
     const logo =
       body.logo ||
       body.team_logo ||
       body.teamLogo ||
       null;
-
+    
     if (!name) {
       return Response.json({
         success: false,
-        message:
-          "Team name is required."
+        message: "Team name is required."
       }, {
         status: 400
       });
     }
-
+    
     if (
       logo !== null &&
       (
@@ -1441,18 +1496,17 @@ async function createTeamRoute(
     ) {
       return Response.json({
         success: false,
-        message:
-          "Invalid team logo."
+        message: "Invalid team logo."
       }, {
         status: 400
       });
     }
-
+    
     const id =
       crypto.randomUUID();
-
+    
     let logoData = null;
-
+    
     if (logo) {
       logoData =
         await uploadBase64Image(
@@ -1462,55 +1516,52 @@ async function createTeamRoute(
           env
         );
     }
-
+    
     const now =
       Date.now();
-
+    
     const result =
       await createTeam(
         env.DB,
         {
           id,
           name,
-          logo:
-            logoData?.url || null,
+          logo: logoData?.url || null,
           created_at: now,
           updated_at: now
         },
         user.id,
         user.role
       );
-
+    
     if (!result?.success) {
       return Response.json(
         result || {
           success: false,
-          message:
-            "Failed to create team."
+          message: "Failed to create team."
         },
         {
           status: 400
         }
       );
     }
-
+    
     return Response.json({
       success: true,
       team: result.team
     }, {
       status: 201
     });
-
+    
   } catch (error) {
     console.error(
       "Create team error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to create team."
     }, {
       status: 500

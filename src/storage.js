@@ -848,22 +848,28 @@ export async function deleteMatch(db, id) {
     .run();
   return true;
 }
-export async function getTeamsByTournament(db, tournamentId) {
-  const result = await db
+export async function getTeamsByTournament(
+  db,
+  tournamentId
+) {
+  const result =
+    await db
     .prepare(`
-      SELECT
-        id,
-        name,
-        logo
-      FROM teams
-      WHERE tournament_id = ?
-      ORDER BY created_at ASC
-    `)
+        SELECT DISTINCT
+          t.id,
+          t.name,
+          t.logo
+        FROM teams t
+        INNER JOIN tournament_players tp
+          ON tp.team_id = t.id
+        WHERE tp.tournament_id = ?
+        ORDER BY t.created_at ASC
+      `)
     .bind(tournamentId)
     .all();
+  
   return result.results || [];
 }
-
 
 
 export async function getTournamentPlayer(
