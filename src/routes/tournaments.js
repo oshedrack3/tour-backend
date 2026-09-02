@@ -23,8 +23,10 @@ export async function handleTournamentRequest(
   user
 ) {
   const url = new URL(request.url);
+  
   const pathname =
     url.pathname.replace(/\/+$/, "") || "/";
+  
   if (
     request.method === "POST" &&
     pathname === "/teams/create"
@@ -35,6 +37,7 @@ export async function handleTournamentRequest(
       user
     );
   }
+  
   if (
     request.method === "POST" &&
     pathname === "/tournaments/create"
@@ -108,6 +111,21 @@ export async function handleTournamentRequest(
   
   if (
     request.method === "POST" &&
+    /^\/tournaments\/[^/]+\/join$/.test(pathname)
+  ) {
+    const tournamentId =
+      pathname.split("/")[2];
+    
+    return await joinTournamentRoute(
+      request,
+      env,
+      tournamentId,
+      user
+    );
+  }
+  
+  if (
+    request.method === "POST" &&
     /^\/tournaments\/[^/]+\/generate-fixtures$/.test(pathname)
   ) {
     const id =
@@ -169,8 +187,6 @@ export async function handleTournamentRequest(
   
   return null;
 }
-
-
 
 async function createTournamentRoute(
   request,
@@ -1563,6 +1579,262 @@ async function createTeamRoute(
       success: false,
       message: error.message ||
         "Failed to create team."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+async function joinTournamentRoute(
+  request,
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournament(
+        env.DB,
+        tournamentId,
+        user.id
+      );
+
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+
+    if (
+      tournament.is_public === false ||
+      tournament.is_public === 0
+    ) {
+      return Response.json({
+        success: false,
+        message: "This tournament is private."
+      }, {
+        status: 403
+      });
+    }
+
+    const body =
+      await request
+        .json()
+        .catch(() => ({}));
+
+    let teamIds =
+      Array.isArray(body.team_ids)
+        ? body.team_ids
+        : [];
+
+    teamIds = [
+      ...new Set(
+        teamIds
+          .map(id =>
+            String(id).trim()
+          )
+          .filter(Boolean)
+      )
+    ];
+
+    if (!teamIds.length) {
+      return Response.json({
+        success: false,
+        message: "Select at least one team."
+      }, {
+        status: 400
+      });
+    }
+
+    const maxTeams =
+      user.role === "admin"
+        ? 20
+        : 1;
+
+    if (teamIds.length > maxTeams) {
+      return Response.json({
+        success: false,
+        message:
+          user.role === "admin"
+            ? "You can register a maximum of 20 teams."
+            : "You can register only one team."
+      }, {
+        status: 400
+      });
+    }
+
+    const placeholders =
+      teamIds
+        .map(() => "?")
+        .join(",");
+
+    const ownedTeams =
+      await env.DB
+        .prepare(`
+          SELECT
+            id,
+            name,
+            logo
+          FROM teams
+          WHERE owner_uid = ?
+          AND id IN (${placeholders})
+        `)
+        .bind(
+          user.id,
+          ...teamIds
+        )
+        .all();
+
+    const teams =
+      ownedTeams.results || [];
+
+    if (
+      teams.length !==
+      teamIds.length
+    ) {
+      return Response.json({
+        success: false,
+        message:
+          "One or more selected teams were not found or you do not own them."
+      }, {
+        status: 403
+      });
+    }
+
+    const existing =
+      await env.DB
+        .prepare(`
+          SELECT team_id
+          FROM tournament_players
+          WHERE tournament_id = ?
+          AND team_id IN (${placeholders})
+        `)
+        .bind(
+          tournamentId,
+          ...teamIds
+        )
+        .all();
+
+    const existingTeamIds =
+      new Set(
+        (existing.results || [])
+          .map(row =>
+            String(row.team_id)
+          )
+      );
+
+    const alreadyRegistered =
+      teamIds.filter(id =>
+        existingTeamIds.has(
+          String(id)
+        )
+      );
+
+    if (
+      alreadyRegistered.length
+    ) {
+      return Response.json({
+        success: false,
+        message:
+          "One or more selected teams are already registered in this tournament."
+      }, {
+        status: 409
+      });
+    }
+
+    const now =
+      Date.now();
+
+    const statements =
+      teamIds.map(teamId =>
+        env.DB
+          .prepare(`
+            INSERT INTO tournament_players (
+              id,
+              tournament_id,
+              user_id,
+              team_id,
+              status,
+              joined_at,
+              responded_at,
+              has_new_invitation,
+              invitation_count,
+              played,
+              wins,
+              draws,
+              losses,
+              gf,
+              ga,
+              points
+            )
+            VALUES (
+              ?, ?, ?, ?,
+              'accepted',
+              ?, ?,
+              0,
+              1,
+              0, 0, 0, 0, 0, 0, 0
+            )
+          `)
+          .bind(
+            crypto.randomUUID(),
+            tournamentId,
+            user.id,
+            teamId,
+            now,
+            now
+          )
+      );
+
+    await env.DB.batch(
+      statements
+    );
+
+    const registered =
+      await env.DB
+        .prepare(`
+          SELECT
+            tp.*,
+            t.name AS team_name,
+            t.logo AS team_logo
+          FROM tournament_players tp
+          LEFT JOIN teams t
+            ON t.id = tp.team_id
+          WHERE tp.tournament_id = ?
+          AND tp.user_id = ?
+          AND tp.team_id IN (${placeholders})
+          ORDER BY tp.joined_at ASC
+        `)
+        .bind(
+          tournamentId,
+          user.id,
+          ...teamIds
+        )
+        .all();
+
+    return Response.json({
+      success: true,
+      message:
+        "Successfully joined the tournament!",
+      players:
+        registered.results || []
+    });
+
+  } catch (error) {
+    console.error(
+      "Join tournament error:",
+      error
+    );
+
+    return Response.json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to join tournament."
     }, {
       status: 500
     });
