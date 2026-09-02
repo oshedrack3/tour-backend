@@ -1,366 +1,553 @@
 import {
   getTeam,
   getTeams,
+  getTeamsByTournament,
   createTeam,
   updateTeam,
   deleteTeam
 } from "./storage.js";
+
 import {
   uploadBase64Image,
   deleteCloudinaryImage
 } from "./cloudinary.js";
+
+
 export async function handleTeamRequest(
   request,
   env,
   user
 ) {
-  const url = new URL(request.url);
+  const url =
+    new URL(request.url);
+
   const pathname =
     url.pathname.replace(/\/+$/, "") || "/";
+
   const tournamentTeamsMatch =
     pathname.match(
       /^\/tournaments\/([^/]+)\/teams$/
     );
+
   const teamMatch =
     pathname.match(
       /^\/teams\/([^/]+)$/
     );
+
+
+  if (
+    request.method === "GET" &&
+    pathname === "/teams"
+  ) {
+    try {
+      const teams =
+        await getTeams(
+          env.DB,
+          user.id
+        );
+
+      return Response.json({
+        success: true,
+        teams
+      });
+
+    } catch (error) {
+      console.error(
+        "Get my teams error:",
+        error
+      );
+
+      return Response.json({
+        success: false,
+        message:
+          error.message ||
+          "Failed to load teams."
+      }, {
+        status: 500
+      });
+    }
+  }
+
+
   if (
     request.method === "GET" &&
     tournamentTeamsMatch
   ) {
-    const tournamentId =
-      tournamentTeamsMatch[1];
-    const teams =
-      await getTeams(
-        env.DB,
-        tournamentId,
-        user.id
+    try {
+      const tournamentId =
+        tournamentTeamsMatch[1];
+
+      const teams =
+        await getTeamsByTournament(
+          env.DB,
+          tournamentId
+        );
+
+      return Response.json({
+        success: true,
+        teams
+      });
+
+    } catch (error) {
+      console.error(
+        "Get tournament teams error:",
+        error
       );
-    return Response.json({
-      success: true,
-      teams
-    });
+
+      return Response.json({
+        success: false,
+        message:
+          error.message ||
+          "Failed to load tournament teams."
+      }, {
+        status: 500
+      });
+    }
   }
+
+
   if (
     request.method === "GET" &&
     teamMatch
   ) {
-    const teamId =
-      teamMatch[1];
-    const team =
-      await getTeam(
-        env.DB,
-        teamId,
-        user.id
-      );
-    if (!team) {
-      return Response.json({
-        success: false,
-        message: "Team not found."
-      }, {
-        status: 404
-      });
-    }
-    return Response.json({
-      success: true,
-      team
-    });
-  }
-  if (
-    request.method === "POST" &&
-    tournamentTeamsMatch
-  ) {
-    const tournamentId =
-      tournamentTeamsMatch[1];
-    const body =
-      await request.json();
-    const name =
-      String(body.name || "").trim();
-    if (!name) {
-      return Response.json({
-        success: false,
-        message: "Team name is required."
-      }, {
-        status: 400
-      });
-    }
-    const id =
-      crypto.randomUUID();
-    const now =
-      Date.now();
-    let ownerUid = null;
-    if (user.role === "admin") {
-      ownerUid =
-        body.owner_uid ||
-        body.ownerUid ||
-        null;
-      if (ownerUid !== null) {
-        ownerUid =
-          String(ownerUid).trim() || null;
-      }
-    }
-    let logoUrl = null;
-    let logoPublicId = null;
-    const logo =
-      body.logo || null;
-    if (logo) {
-      if (
-        typeof logo !== "string" ||
-        !logo.startsWith("data:image/")
-      ) {
+    try {
+      const teamId =
+        teamMatch[1];
+
+      const team =
+        await getTeam(
+          env.DB,
+          teamId,
+          user.id
+        );
+
+      if (!team) {
         return Response.json({
           success: false,
-          message: "Invalid team logo."
+          message:
+            "Team not found."
         }, {
-          status: 400
+          status: 404
         });
       }
-      const image =
-        await uploadBase64Image(
-          logo,
-          "teams",
-          id,
-          env
-        );
-      logoUrl =
-        image?.url || null;
-      logoPublicId =
-        image?.publicId || null;
-    }
-    const team =
-      await createTeam(
-        env.DB,
-        {
-          id,
-          tournament_id:
-            tournamentId,
-          owner_uid:
-            ownerUid,
-          name,
-          logo:
-            logoUrl,
-          created_at:
-            now,
-          updated_at:
-            now
-        },
-        user.id
+
+      return Response.json({
+        success: true,
+        team
+      });
+
+    } catch (error) {
+      console.error(
+        "Get team error:",
+        error
       );
-    if (!team) {
-      if (logoPublicId) {
-        await deleteCloudinaryImage(
-          logoPublicId,
-          env
-        );
-      }
+
       return Response.json({
         success: false,
         message:
-          "Tournament not found or access denied."
+          error.message ||
+          "Failed to load team."
       }, {
-        status: 404
+        status: 500
       });
     }
-    return Response.json({
-      success: true,
-      team
-    }, {
-      status: 201
-    });
   }
+
+
   if (
-    request.method === "PATCH" &&
-    teamMatch
+    request.method === "POST" &&
+    pathname === "/teams/create"
   ) {
-    const teamId =
-      teamMatch[1];
-    const body =
-      await request.json();
-    const existing =
-      await getTeam(
-        env.DB,
-        teamId,
-        user.id
-      );
-    if (!existing) {
-      return Response.json({
-        success: false,
-        message:
-          "Team not found or access denied."
-      }, {
-        status: 404
-      });
-    }
-    const updates = {};
-    if (body.name !== undefined) {
+    try {
+      const body =
+        await request
+          .json()
+          .catch(() => ({}));
+
       const name =
-        String(body.name || "").trim();
+        String(
+          body.name || ""
+        ).trim();
+
       if (!name) {
         return Response.json({
           success: false,
           message:
-            "Team name cannot be empty."
+            "Team name is required."
         }, {
           status: 400
         });
       }
-      updates.name =
-        name;
-    }
-    if (
-      body.owner_uid !== undefined ||
-      body.ownerUid !== undefined
-    ) {
-      if (user.role !== "admin") {
-        return Response.json({
-          success: false,
-          message:
-            "Only the tournament admin can assign team ownership."
-        }, {
-          status: 403
-        });
-      }
-      const ownerUid =
-        body.owner_uid !== undefined
-          ? body.owner_uid
-          : body.ownerUid;
-      updates.owner_uid =
-        ownerUid
-          ? String(ownerUid).trim()
-          : null;
-    }
-    let oldLogoPublicId = null;
-    let newLogoPublicId = null;
-    if (body.logo !== undefined) {
+
+      const logo =
+        body.logo ||
+        body.team_logo ||
+        body.teamLogo ||
+        null;
+
       if (
-        body.logo !== null &&
+        logo !== null &&
         (
-          typeof body.logo !== "string" ||
-          !body.logo.startsWith("data:image/")
+          typeof logo !== "string" ||
+          !logo.startsWith(
+            "data:image/"
+          )
         )
       ) {
         return Response.json({
           success: false,
-          message: "Invalid team logo."
+          message:
+            "Invalid team logo."
         }, {
           status: 400
         });
       }
-      if (body.logo === null) {
-        updates.logo = null;
-      } else {
-        const image =
+
+      const id =
+        crypto.randomUUID();
+
+      let logoData = null;
+
+      if (logo) {
+        logoData =
           await uploadBase64Image(
-            body.logo,
+            logo,
             "teams",
-            teamId,
+            id,
             env
           );
-        updates.logo =
-          image?.url || null;
-        newLogoPublicId =
-          image?.publicId || null;
       }
-    }
-    updates.updated_at =
-      Date.now();
-    const team =
-      await updateTeam(
-        env.DB,
-        teamId,
-        updates,
-        user.id
-      );
-    if (!team) {
-      if (newLogoPublicId) {
-        await deleteCloudinaryImage(
-          newLogoPublicId,
-          env
+
+      const now =
+        Date.now();
+
+      const result =
+        await createTeam(
+          env.DB,
+          {
+            id,
+            name,
+            logo:
+              logoData?.url ||
+              null,
+            created_at:
+              now,
+            updated_at:
+              now
+          },
+          user.id,
+          user.role
+        );
+
+      if (!result?.success) {
+        if (
+          logoData?.publicId
+        ) {
+          await deleteCloudinaryImage(
+            logoData.publicId,
+            env
+          );
+        }
+
+        return Response.json(
+          result || {
+            success: false,
+            message:
+              "Failed to create team."
+          },
+          {
+            status: 400
+          }
         );
       }
+
+      return Response.json({
+        success: true,
+        team:
+          result.team
+      }, {
+        status: 201
+      });
+
+    } catch (error) {
+      console.error(
+        "Create team error:",
+        error
+      );
+
       return Response.json({
         success: false,
         message:
-          "Team not found or access denied."
+          error.message ||
+          "Failed to create team."
       }, {
-        status: 404
+        status: 500
       });
     }
-    if (
-      newLogoPublicId &&
-      existing.logo
-    ) {
-      const oldUrl =
-        existing.logo;
-      const match =
-        oldUrl.match(
-          /\/upload\/(?:v\d+\/)?(.+?)(?:\.[a-zA-Z0-9]+)?$/
-        );
-      if (match) {
-        oldLogoPublicId =
-          match[1];
-      }
-    }
-    if (oldLogoPublicId) {
-      try {
-        await deleteCloudinaryImage(
-          oldLogoPublicId,
-          env
-        );
-      } catch (error) {
-        console.error(
-          "Failed to delete old team logo:",
-          error
-        );
-      }
-    }
-    return Response.json({
-      success: true,
-      team
-    });
   }
+
+
+  if (
+    request.method === "PATCH" &&
+    teamMatch
+  ) {
+    try {
+      const teamId =
+        teamMatch[1];
+
+      const body =
+        await request
+          .json()
+          .catch(() => ({}));
+
+      const existing =
+        await getTeam(
+          env.DB,
+          teamId,
+          user.id
+        );
+
+      if (!existing) {
+        return Response.json({
+          success: false,
+          message:
+            "Team not found or access denied."
+        }, {
+          status: 404
+        });
+      }
+
+      const updates = {};
+
+      if (
+        body.name !== undefined
+      ) {
+        const name =
+          String(
+            body.name || ""
+          ).trim();
+
+        if (!name) {
+          return Response.json({
+            success: false,
+            message:
+              "Team name cannot be empty."
+          }, {
+            status: 400
+          });
+        }
+
+        updates.name =
+          name;
+      }
+
+      let oldLogoPublicId =
+        null;
+
+      let newLogoPublicId =
+        null;
+
+      if (
+        body.logo !== undefined
+      ) {
+        if (
+          body.logo !== null &&
+          (
+            typeof body.logo !== "string" ||
+            !body.logo.startsWith(
+              "data:image/"
+            )
+          )
+        ) {
+          return Response.json({
+            success: false,
+            message:
+              "Invalid team logo."
+          }, {
+            status: 400
+          });
+        }
+
+        if (
+          body.logo === null
+        ) {
+          updates.logo =
+            null;
+        } else {
+          const image =
+            await uploadBase64Image(
+              body.logo,
+              "teams",
+              teamId,
+              env
+            );
+
+          updates.logo =
+            image?.url ||
+            null;
+
+          newLogoPublicId =
+            image?.publicId ||
+            null;
+        }
+      }
+
+      updates.updated_at =
+        Date.now();
+
+      const team =
+        await updateTeam(
+          env.DB,
+          teamId,
+          updates,
+          user.id
+        );
+
+      if (!team) {
+        if (
+          newLogoPublicId
+        ) {
+          await deleteCloudinaryImage(
+            newLogoPublicId,
+            env
+          );
+        }
+
+        return Response.json({
+          success: false,
+          message:
+            "Team not found or access denied."
+        }, {
+          status: 404
+        });
+      }
+
+      if (
+        newLogoPublicId &&
+        existing.logo
+      ) {
+        const oldUrl =
+          existing.logo;
+
+        const match =
+          oldUrl.match(
+            /\/upload\/(?:v\d+\/)?(.+?)(?:\.[a-zA-Z0-9]+)?$/
+          );
+
+        if (match) {
+          oldLogoPublicId =
+            match[1];
+        }
+      }
+
+      if (
+        oldLogoPublicId
+      ) {
+        try {
+          await deleteCloudinaryImage(
+            oldLogoPublicId,
+            env
+          );
+        } catch (error) {
+          console.error(
+            "Failed to delete old team logo:",
+            error
+          );
+        }
+      }
+
+      return Response.json({
+        success: true,
+        team
+      });
+
+    } catch (error) {
+      console.error(
+        "Update team error:",
+        error
+      );
+
+      return Response.json({
+        success: false,
+        message:
+          error.message ||
+          "Failed to update team."
+      }, {
+        status: 500
+      });
+    }
+  }
+
+
   if (
     request.method === "DELETE" &&
     teamMatch
   ) {
-    const teamId =
-      teamMatch[1];
-    const existing =
-      await getTeam(
-        env.DB,
-        teamId,
-        user.id
+    try {
+      const teamId =
+        teamMatch[1];
+
+      const existing =
+        await getTeam(
+          env.DB,
+          teamId,
+          user.id
+        );
+
+      if (!existing) {
+        return Response.json({
+          success: false,
+          message:
+            "Team not found or access denied."
+        }, {
+          status: 404
+        });
+      }
+
+      const result =
+        await deleteTeam(
+          env.DB,
+          teamId,
+          user.id
+        );
+
+      if (!result?.success) {
+        return Response.json(
+          result || {
+            success: false,
+            message:
+              "Failed to delete team."
+          },
+          {
+            status: 400
+          }
+        );
+      }
+
+      return Response.json({
+        success: true,
+        message:
+          result.message ||
+          "Team deleted successfully."
+      });
+
+    } catch (error) {
+      console.error(
+        "Delete team error:",
+        error
       );
-    if (!existing) {
+
       return Response.json({
         success: false,
         message:
-          "Team not found or access denied."
+          error.message ||
+          "Failed to delete team."
       }, {
-        status: 404
+        status: 500
       });
     }
-    const deleted =
-      await deleteTeam(
-        env.DB,
-        teamId,
-        user.id
-      );
-    if (!deleted) {
-      return Response.json({
-        success: false,
-        message:
-          "Team not found or access denied."
-      }, {
-        status: 404
-      });
-    }
-    return Response.json({
-      success: true,
-      message:
-        "Team deleted successfully."
-    });
   }
+
+
   return null;
 }

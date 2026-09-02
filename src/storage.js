@@ -409,6 +409,29 @@ export async function deleteTournament(db, id) {
   return true;
 }
 
+export async function getMyTeams(
+  db,
+  userId
+) {
+  const result =
+    await db
+    .prepare(`
+        SELECT
+          id,
+          owner_uid,
+          name,
+          logo,
+          created_at,
+          updated_at
+        FROM teams
+        WHERE owner_uid = ?
+        ORDER BY created_at ASC
+      `)
+    .bind(userId)
+    .all();
+  
+  return result.results || [];
+}
 export async function getTeam(
   db,
   id,
