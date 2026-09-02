@@ -1582,3 +1582,24 @@ export async function updateMatchSubmission(
     submissionId
   );
 }
+
+export async function getAllCompetitions(db) {
+  const result = await db
+    .prepare(`
+      SELECT
+        id,
+        name,
+        owner_id,
+        logo_url,
+        logo_public_id,
+        tournament_count,
+        active_seasons,
+        created_at,
+        updated_at
+      FROM competitions
+      ORDER BY created_at DESC
+    `)
+    .all();
+  
+  return result.results || [];
+}

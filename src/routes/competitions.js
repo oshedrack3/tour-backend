@@ -1,6 +1,7 @@
 import {
   getCompetition,
   getCompetitionsByOwner,
+  getAllCompetitions,
   createCompetition
 } from "../storage.js";
 import {
@@ -174,20 +175,32 @@ async function getMyCompetitionsRoute(
   user
 ) {
   try {
-    const competitions =
-      await getCompetitionsByOwner(
-        env.DB,
-        user.id
-      );
+    let competitions;
+
+    if (user.role === "admin") {
+      competitions =
+        await getCompetitionsByOwner(
+          env.DB,
+          user.id
+        );
+    } else {
+      competitions =
+        await getAllCompetitions(
+          env.DB
+        );
+    }
+
     return Response.json({
       success: true,
       competitions
     });
+
   } catch (error) {
     console.error(
       "Get competitions error:",
       error
     );
+
     return Response.json({
       success: false,
       message:
@@ -198,6 +211,7 @@ async function getMyCompetitionsRoute(
     });
   }
 }
+
 async function getCompetitionRoute(
   env,
   id,
