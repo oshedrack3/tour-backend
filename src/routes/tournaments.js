@@ -19,7 +19,7 @@ import {
   createMatchSubmission,
   updateMatchSubmission,
   getTournamentsByOwnerAndCompetition,
-getTournamentsByCompetition
+  getTournamentsByCompetition
 } from "../storage.js";
 import {
   uploadBase64Image
@@ -154,15 +154,20 @@ export async function handleTournamentRequest(
     );
   }
   if (
-    request.method === "GET" &&
-    pathname === "/tournaments/my"
-  ) {
-    return await getMyTournamentsRoute(
-      env,
-      user
+  request.method === "GET" &&
+  pathname === "/tournaments/my"
+) {
+  const competitionId =
+    url.searchParams.get(
+      "competition_id"
     );
-  }
   
+  return await getMyTournamentsRoute(
+    env,
+    user,
+    competitionId
+  );
+}  
   if (
     request.method === "GET" &&
     /^\/tournaments\/[^/]+\/matches$/.test(pathname)
@@ -509,18 +514,11 @@ async function createTournamentRoute(
 }
 
 async function getMyTournamentsRoute(
-  request,
   env,
-  user
+  user,
+  competitionId
 ) {
   try {
-    const url = new URL(request.url);
-
-    const competitionId =
-      url.searchParams.get(
-        "competition_id"
-      );
-
     if (!competitionId) {
       return Response.json({
         success: false,
