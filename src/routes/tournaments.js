@@ -17,7 +17,9 @@ import {
   getMatchSubmissions,
   getPendingMatchSubmission,
   createMatchSubmission,
-  updateMatchSubmission
+  updateMatchSubmission,
+  getTournamentsByOwnerAndCompetition,
+getTournamentsByCompetition
 } from "../storage.js";
 import {
   uploadBase64Image
@@ -76,19 +78,19 @@ export async function handleTournamentRequest(
     );
   }
   if (
-  request.method === "PATCH" &&
-  /^\/tournaments\/[^/]+\/submission-deadline$/.test(pathname)
-) {
-  const tournamentId =
-    pathname.split("/")[2];
-  
-  return await updateSubmissionDeadlineRoute(
-    request,
-    env,
-    tournamentId,
-    user
-  );
-}
+    request.method === "PATCH" &&
+    /^\/tournaments\/[^/]+\/submission-deadline$/.test(pathname)
+  ) {
+    const tournamentId =
+      pathname.split("/")[2];
+    
+    return await updateSubmissionDeadlineRoute(
+      request,
+      env,
+      tournamentId,
+      user
+    );
+  }
   if (
     request.method === "PATCH" &&
     /^\/tournaments\/[^/]+\/match-submission\/[^/]+\/review$/.test(pathname)
@@ -507,50 +509,71 @@ async function createTournamentRoute(
 }
 
 async function getMyTournamentsRoute(
+  request,
   env,
   user
 ) {
   try {
+    const url = new URL(request.url);
+
+    const competitionId =
+      url.searchParams.get(
+        "competition_id"
+      );
+
+    if (!competitionId) {
+      return Response.json({
+        success: false,
+        message:
+          "Competition ID is required."
+      }, {
+        status: 400
+      });
+    }
+
     let tournaments;
-    
+
     if (user.role === "admin") {
       tournaments =
-        await getTournamentsByOwner(
+        await getTournamentsByOwnerAndCompetition(
           env.DB,
-          user.id
+          user.id,
+          competitionId
         );
     } else {
       tournaments =
-        await getTournamentsByPlayer(
+        await getTournamentsByCompetition(
           env.DB,
-          user.id
+          competitionId
         );
     }
-    
+
     tournaments =
       (tournaments || [])
       .map(parseTournament);
-    
+
     return Response.json({
       success: true,
       tournaments
     });
-    
+
   } catch (error) {
     console.error(
       "Get my tournaments error:",
       error
     );
-    
+
     return Response.json({
       success: false,
-      message: error.message ||
+      message:
+        error.message ||
         "Failed to load tournaments."
     }, {
       status: 500
     });
   }
 }
+
 async function getTournamentRoute(
   env,
   id,
@@ -2869,78 +2892,74 @@ async function updateSubmissionDeadlineRoute(
         env.DB,
         tournamentId
       );
-
+    
     if (!tournament) {
       return Response.json({
         success: false,
-        message:
-          "Tournament not found."
+        message: "Tournament not found."
       }, {
         status: 404
       });
     }
-
+    
     if (
       user.role !== "admin" ||
       String(tournament.admin_uid) !==
-        String(user.id)
+      String(user.id)
     ) {
       return Response.json({
         success: false,
-        message:
-          "Tournament not found."
+        message: "Tournament not found."
       }, {
         status: 404
       });
     }
-
+    
     const body =
       await request
-        .json()
-        .catch(() => ({}));
-
+      .json()
+      .catch(() => ({}));
+    
     const fromRound =
       Number(body.fromRound);
-
+    
     const toRound =
       Number(body.toRound);
-
+    
     const enabled =
       body.enabled === true;
-
+    
     const deadline =
       body.deadline === null ||
       body.deadline === undefined ||
-      body.deadline === ""
-        ? null
-        : Number(body.deadline);
-
+      body.deadline === "" ?
+      null :
+      Number(body.deadline);
+    
     if (
       !Number.isInteger(fromRound) ||
       fromRound < 1
     ) {
       return Response.json({
         success: false,
-        message:
-          "Invalid starting round."
+        message: "Invalid starting round."
       }, {
         status: 400
       });
     }
-
+    
     if (
       !Number.isInteger(toRound) ||
       toRound < fromRound
     ) {
       return Response.json({
         success: false,
-        message:
-          "Invalid ending round."
+        message: "Invalid ending round."
       }, {
         status: 400
       });
     }
-
+    
     if (
       deadline !== null &&
       (
@@ -2950,36 +2969,35 @@ async function updateSubmissionDeadlineRoute(
     ) {
       return Response.json({
         success: false,
-        message:
-          "Invalid deadline."
+        message: "Invalid deadline."
       }, {
         status: 400
       });
     }
-
+    
     let settings = {};
-
+    
     if (tournament.settings) {
       try {
         settings =
-          typeof tournament.settings === "string"
-            ? JSON.parse(tournament.settings)
-            : tournament.settings;
+          typeof tournament.settings === "string" ?
+          JSON.parse(tournament.settings) :
+          tournament.settings;
       } catch {
         settings = {};
       }
     }
-
+    
     settings.submissionDeadline = {
       fromRound,
       toRound,
       deadline,
       enabled
     };
-
+    
     const now =
       Date.now();
-
+    
     await env.DB
       .prepare(`
         UPDATE tournaments
@@ -2994,23 +3012,21 @@ async function updateSubmissionDeadlineRoute(
         tournamentId
       )
       .run();
-
+    
     return Response.json({
       success: true,
-      submissionDeadline:
-        settings.submissionDeadline
+      submissionDeadline: settings.submissionDeadline
     });
-
+    
   } catch (error) {
     console.error(
       "Update submission deadline error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to update submission deadline."
     }, {
       status: 500

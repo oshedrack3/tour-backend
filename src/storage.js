@@ -1603,3 +1603,42 @@ export async function getAllCompetitions(db) {
   
   return result.results || [];
 }
+
+export async function getTournamentsByOwnerAndCompetition(
+  db,
+  adminUid,
+  competitionId
+) {
+  const result = await db
+    .prepare(`
+      SELECT *
+      FROM tournaments
+      WHERE admin_uid = ?
+      AND competition_id = ?
+      ORDER BY created_at DESC
+    `)
+    .bind(
+      adminUid,
+      competitionId
+    )
+    .all();
+  
+  return result.results || [];
+}
+
+export async function getTournamentsByCompetition(
+  db,
+  competitionId
+) {
+  const result = await db
+    .prepare(`
+      SELECT *
+      FROM tournaments
+      WHERE competition_id = ?
+      ORDER BY created_at DESC
+    `)
+    .bind(competitionId)
+    .all();
+  
+  return result.results || [];
+}
