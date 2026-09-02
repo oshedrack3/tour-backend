@@ -1408,27 +1408,30 @@ async function createTeamRoute(
   try {
     const body =
       await request
-      .json()
-      .catch(() => ({}));
-    
+        .json()
+        .catch(() => ({}));
+
     const name =
-      String(body.name || "").trim();
-    
+      String(
+        body.name || ""
+      ).trim();
+
     const logo =
       body.logo ||
       body.team_logo ||
       body.teamLogo ||
       null;
-    
+
     if (!name) {
       return Response.json({
         success: false,
-        message: "Team name is required."
+        message:
+          "Team name is required."
       }, {
         status: 400
       });
     }
-    
+
     if (
       logo !== null &&
       (
@@ -1438,17 +1441,18 @@ async function createTeamRoute(
     ) {
       return Response.json({
         success: false,
-        message: "Invalid team logo."
+        message:
+          "Invalid team logo."
       }, {
         status: 400
       });
     }
-    
+
     const id =
       crypto.randomUUID();
-    
+
     let logoData = null;
-    
+
     if (logo) {
       logoData =
         await uploadBase64Image(
@@ -1458,56 +1462,55 @@ async function createTeamRoute(
           env
         );
     }
-    
+
     const now =
       Date.now();
-    
+
     const result =
       await createTeam(
         env.DB,
         {
           id,
-          owner_uid: user.id,
           name,
-          logo: logoData?.url || null,
+          logo:
+            logoData?.url || null,
           created_at: now,
           updated_at: now
         },
         user.id,
         user.role
       );
-    
+
     if (!result?.success) {
       return Response.json(
         result || {
           success: false,
-          message: "Failed to create team."
+          message:
+            "Failed to create team."
         },
         {
-          status: result?.message ===
-            "You can create only one team." ?
-            403 :
-            400
+          status: 400
         }
       );
     }
-    
+
     return Response.json({
       success: true,
       team: result.team
     }, {
       status: 201
     });
-    
+
   } catch (error) {
     console.error(
       "Create team error:",
       error
     );
-    
+
     return Response.json({
       success: false,
-      message: error.message ||
+      message:
+        error.message ||
         "Failed to create team."
     }, {
       status: 500

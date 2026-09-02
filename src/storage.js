@@ -431,13 +431,14 @@ export async function getTeams(
   db,
   userId
 ) {
-  const result = await db
+  const result =
+    await db
     .prepare(`
-      SELECT *
-      FROM teams
-      WHERE owner_uid = ?
-      ORDER BY created_at ASC
-    `)
+        SELECT *
+        FROM teams
+        WHERE owner_uid = ?
+        ORDER BY created_at ASC
+      `)
     .bind(userId)
     .all();
   
@@ -556,13 +557,6 @@ export async function updateTeam(
     values.push(updates.logo);
   }
   
-  if (updates.owner_uid !== undefined) {
-    fields.push("owner_uid = ?");
-    values.push(
-      updates.owner_uid || null
-    );
-  }
-  
   if (updates.updated_at !== undefined) {
     fields.push("updated_at = ?");
     values.push(updates.updated_at);
@@ -613,7 +607,8 @@ export async function deleteTeam(
   if (!team) {
     return {
       success: false,
-      message: "Team not found or access denied."
+      message:
+        "Team not found or access denied."
     };
   }
 
@@ -650,10 +645,10 @@ export async function deleteTeam(
 
   return {
     success: true,
-    message: "Team deleted successfully."
+    message:
+      "Team deleted successfully."
   };
 }
-
 
 export async function getMatch(db, id) {
   return await db
