@@ -18,6 +18,7 @@ import {
   getPendingMatchSubmission,
   createMatchSubmission,
   updateMatchSubmission,
+  getTournamentForUser,
   getTournamentsByOwnerAndCompetition,
   getTournamentsByCompetition
 } from "../storage.js";
@@ -154,20 +155,20 @@ export async function handleTournamentRequest(
     );
   }
   if (
-  request.method === "GET" &&
-  pathname === "/tournaments/my"
-) {
-  const competitionId =
-    url.searchParams.get(
-      "competition_id"
+    request.method === "GET" &&
+    pathname === "/tournaments/my"
+  ) {
+    const competitionId =
+      url.searchParams.get(
+        "competition_id"
+      );
+    
+    return await getMyTournamentsRoute(
+      env,
+      user,
+      competitionId
     );
-  
-  return await getMyTournamentsRoute(
-    env,
-    user,
-    competitionId
-  );
-}  
+  }
   if (
     request.method === "GET" &&
     /^\/tournaments\/[^/]+\/matches$/.test(pathname)
@@ -522,15 +523,14 @@ async function getMyTournamentsRoute(
     if (!competitionId) {
       return Response.json({
         success: false,
-        message:
-          "Competition ID is required."
+        message: "Competition ID is required."
       }, {
         status: 400
       });
     }
-
+    
     let tournaments;
-
+    
     if (user.role === "admin") {
       tournaments =
         await getTournamentsByOwnerAndCompetition(
@@ -545,26 +545,25 @@ async function getMyTournamentsRoute(
           competitionId
         );
     }
-
+    
     tournaments =
       (tournaments || [])
       .map(parseTournament);
-
+    
     return Response.json({
       success: true,
       tournaments
     });
-
+    
   } catch (error) {
     console.error(
       "Get my tournaments error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to load tournaments."
     }, {
       status: 500
