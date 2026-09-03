@@ -1374,9 +1374,12 @@ export async function getPlayerMatchSubmission(
   return await db.prepare(`
     SELECT
       ms.*,
+      u.username,
       t.name AS team_name,
       t.logo AS team_logo
     FROM match_submissions ms
+    LEFT JOIN users u
+      ON u.id = ms.submitted_by
     LEFT JOIN teams t
       ON t.id = ms.team_id
     WHERE ms.tournament_id = ?
@@ -1390,30 +1393,30 @@ export async function getPlayerMatchSubmission(
     userId
   ).first();
 }
-
 export async function getMatchSubmissions(
   db,
   tournamentId,
   matchId
 ) {
-  const result = await db.prepare(`
-    SELECT
-      ms.*,
-      u.username AS submitter_username,
-      t.name AS team_name,
-      t.logo AS team_logo
-    FROM match_submissions ms
-    LEFT JOIN users u
-      ON u.id = ms.submitted_by
-    LEFT JOIN teams t
-      ON t.id = ms.team_id
-    WHERE ms.tournament_id = ?
-    AND ms.match_id = ?
-    ORDER BY ms.created_at DESC
-  `).bind(
-    tournamentId,
-    matchId
-  ).all();
+  const result =
+    await db.prepare(`
+      SELECT
+        ms.*,
+        u.username,
+        t.name AS team_name,
+        t.logo AS team_logo
+      FROM match_submissions ms
+      LEFT JOIN users u
+        ON u.id = ms.submitted_by
+      LEFT JOIN teams t
+        ON t.id = ms.team_id
+      WHERE ms.tournament_id = ?
+      AND ms.match_id = ?
+      ORDER BY ms.created_at DESC
+    `).bind(
+      tournamentId,
+      matchId
+    ).all();
   
   return result.results || [];
 }
