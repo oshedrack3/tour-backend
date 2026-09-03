@@ -699,70 +699,21 @@ export async function getMatch(db, id) {
 
 export async function getMatches(
   db,
-  tournamentId,
-  userId,
-  isAdmin = false
+  tournamentId
 ) {
-  let query;
-  let bindings;
-  
-  if (isAdmin) {
-    query = `
-      SELECT
-        m.*,
-        CASE
-          WHEN EXISTS (
-            SELECT 1
-            FROM match_submissions ms
-            WHERE ms.tournament_id = m.tournament_id
-            AND ms.match_id = m.id
-            AND ms.status = 'pending'
-          )
-          THEN 'pending'
-          ELSE NULL
-        END AS submission_status
-      FROM matches m
-      WHERE m.tournament_id = ?
-      ORDER BY m.created_at ASC
-    `;
-    
-    bindings = [
-      tournamentId
-    ];
-  } else {
-    query = `
-      SELECT
-        m.*,
-        (
-          SELECT ms.status
-          FROM match_submissions ms
-          WHERE ms.tournament_id = m.tournament_id
-          AND ms.match_id = m.id
-          AND ms.submitted_by = ?
-          AND ms.status IN ('pending', 'rejected')
-          ORDER BY ms.created_at DESC
-          LIMIT 1
-        ) AS submission_status
-      FROM matches m
-      WHERE m.tournament_id = ?
-      ORDER BY m.created_at ASC
-    `;
-    
-    bindings = [
-      userId,
-      tournamentId
-    ];
-  }
-  
   const result =
     await db
-    .prepare(query)
-    .bind(...bindings)
+    .prepare(`
+        SELECT *
+        FROM matches
+        WHERE tournament_id = ?
+        ORDER BY created_at ASC
+      `)
+    .bind(tournamentId)
     .all();
   
   return result.results || [];
 }
-
 export async function createMatch(db, match) {
   await db
     .prepare(`
