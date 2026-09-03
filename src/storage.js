@@ -1751,3 +1751,55 @@ export async function deleteNotice(
 
   return true;
 }
+export async function getNoticeChanges(
+  db,
+  since
+) {
+  const result =
+    await db.prepare(`
+      SELECT
+        id,
+        notice_id,
+        action,
+        created_at
+      FROM notice_changes
+      WHERE id > ?
+      ORDER BY id ASC
+    `).bind(
+      since
+    ).all();
+  
+  return result.results || [];
+}
+export async function getNoticesByIds(
+  db,
+  ids
+) {
+  if (!ids.length) {
+    return [];
+  }
+
+  const placeholders =
+    ids.map(() => "?").join(",");
+
+  const result =
+    await db.prepare(`
+      SELECT *
+      FROM notices
+      WHERE id IN (${placeholders})
+    `).bind(
+      ...ids
+    ).all();
+
+  return (result.results || []).map(
+    notice => ({
+      ...notice,
+      published:
+        Number(notice.published) === 1,
+      images:
+        notice.images
+          ? JSON.parse(notice.images)
+          : []
+    })
+  );
+}

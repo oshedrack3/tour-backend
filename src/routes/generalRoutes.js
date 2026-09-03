@@ -3,7 +3,9 @@ import {
   getPublishedNotices,
   createNotice,
   updateNotice,
-  deleteNotice
+  deleteNotice,
+  getNoticeChanges,
+  getNoticesByIds
 } from "../storage.js";
 
 import {
@@ -19,6 +21,17 @@ export async function handleGeneralRequest(
 ) {
   if (
     request.method === "GET" &&
+    pathname === "/notices/sync"
+  ) {
+    return await syncNoticesRoute(
+      request,
+      env,
+      user
+    );
+  }
+
+  if (
+    request.method === "GET" &&
     pathname === "/notices"
   ) {
     return await getNoticesRoute(
@@ -26,7 +39,7 @@ export async function handleGeneralRequest(
       user
     );
   }
-  
+    
   if (
     request.method === "GET" &&
     /^\/notices\/[^/]+$/.test(pathname)
@@ -172,6 +185,109 @@ async function getNoticeRoute(
       success: false,
       message: error.message ||
         "Failed to load notice."
+    }, {
+      status: 500
+    });
+  }
+}
+async function syncNoticesRoute(
+  request,
+  env,
+  user
+) {
+  try {
+    const url =
+      new URL(request.url);
+    
+    const sinceParam =
+      url.searchParams.get("since");
+    
+    const since =
+      sinceParam === null ?
+      0 :
+      Number(sinceParam);
+    
+    if (
+      !Number.isInteger(since) ||
+      since < 0
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid sync value."
+      }, {
+        status: 400
+      });
+    }
+    
+    const changes =
+      await getNoticeChanges(
+        env.DB,
+        since
+      );
+    
+    if (!changes.length) {
+      return Response.json({
+        success: true,
+        notices: [],
+        deleted: [],
+        lastChangeId: since
+      });
+    }
+    
+    const noticeIds = [
+      ...new Set(
+        changes
+        .filter(
+          change =>
+          change.action !== "delete"
+        )
+        .map(
+          change =>
+          change.notice_id
+        )
+      )
+    ];
+    
+    const notices =
+      await getNoticesByIds(
+        env.DB,
+        noticeIds
+      );
+    
+    const deleted = [
+      ...new Set(
+        changes
+        .filter(
+          change =>
+          change.action === "delete"
+        )
+        .map(
+          change =>
+          change.notice_id
+        )
+      )
+    ];
+    
+    const lastChangeId =
+      changes[changes.length - 1].id;
+    
+    return Response.json({
+      success: true,
+      notices,
+      deleted,
+      lastChangeId
+    });
+    
+  } catch (error) {
+    console.error(
+      "Notice sync error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to synchronize notices."
     }, {
       status: 500
     });
@@ -489,8 +605,7 @@ async function updateNoticeRoute(
           category,
           images: uploadedImages,
           published: body.published !== undefined ?
-            body.published === true :
-            existing.published,
+            body.published === true : existing.published,
           expires_at: expiresAt,
           updated_at: Date.now()
         }
@@ -526,64 +641,60 @@ async function deleteNoticeRoute(
     if (user.role !== "admin") {
       return Response.json({
         success: false,
-        message:
-          "Only admins can delete notices."
+        message: "Only admins can delete notices."
       }, {
         status: 403
       });
     }
-
+    
     const existing =
       await getNotice(
         env.DB,
         noticeId
       );
-
+    
     if (!existing) {
       return Response.json({
         success: false,
-        message:
-          "Notice not found."
+        message: "Notice not found."
       }, {
         status: 404
       });
     }
-
+    
     const images =
       existing.images || [];
-
+    
     for (const image of images) {
       if (!image?.publicId) {
         continue;
       }
-
+      
       await deleteCloudinaryImage(
         image.publicId,
         env
       );
     }
-
+    
     await deleteNotice(
       env.DB,
       noticeId
     );
-
+    
     return Response.json({
       success: true,
-      message:
-        "Notice and its images deleted successfully."
+      message: "Notice and its images deleted successfully."
     });
-
+    
   } catch (error) {
     console.error(
       "Delete notice error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to delete notice."
     }, {
       status: 500
