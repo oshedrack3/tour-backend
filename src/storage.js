@@ -1872,3 +1872,46 @@ export async function getHallOfFameChanges(
   
   return result.results || [];
 }
+
+export async function getUserProfile(
+  db,
+  userId
+) {
+  const [
+    user,
+    teams
+  ] = await Promise.all([
+    db
+    .prepare(`
+        SELECT
+          username
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+      `)
+    .bind(userId)
+    .first(),
+    
+    db
+    .prepare(`
+        SELECT
+          id,
+          name,
+          logo
+        FROM teams
+        WHERE owner_uid = ?
+        ORDER BY created_at ASC
+      `)
+    .bind(userId)
+    .all()
+  ]);
+  
+  if (!user) {
+    return null;
+  }
+  
+  return {
+    username: user.username,
+    teams: teams.results || []
+  };
+}

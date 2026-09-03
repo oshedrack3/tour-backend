@@ -8,7 +8,8 @@ import {
   getNoticesByIds,
   getHallOfFame,
   getHallOfFameChanges,
-  updateHallOfFame
+  updateHallOfFame,
+  getUserProfile
 } from "../storage.js";
 
 import {
@@ -32,7 +33,16 @@ export async function handleGeneralRequest(
       user
     );
   }
-  
+  if (
+  request.method === "GET" &&
+  pathname === "/profile"
+) {
+  return await getProfileRoute(
+    request,
+    env,
+    user
+  );
+}
   if (
     request.method === "GET" &&
     pathname === "/hall-of-fame/sync"
@@ -79,15 +89,15 @@ export async function handleGeneralRequest(
     );
   }
   if (
-  request.method === "PATCH" &&
-  pathname === "/hall-of-fame"
-) {
-  return await updateHallOfFameRoute(
-    request,
-    env,
-    user
-  );
-}
+    request.method === "PATCH" &&
+    pathname === "/hall-of-fame"
+  ) {
+    return await updateHallOfFameRoute(
+      request,
+      env,
+      user
+    );
+  }
   
   if (
     request.method === "PATCH" &&
@@ -921,6 +931,49 @@ async function updateHallOfFameRoute(
       success: false,
       message: error.message ||
         "Failed to update Hall of Fame"
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+async function getProfileRoute(
+  request,
+  env,
+  user
+) {
+  try {
+    const profile =
+      await getUserProfile(
+        env.DB,
+        user.id
+      );
+
+    if (!profile) {
+      return Response.json({
+        success: false,
+        message: "User not found."
+      }, {
+        status: 404
+      });
+    }
+
+    return Response.json({
+      success: true,
+      profile
+    });
+  } catch (error) {
+    console.error(
+      "Profile error:",
+      error
+    );
+
+    return Response.json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to load profile."
     }, {
       status: 500
     });
