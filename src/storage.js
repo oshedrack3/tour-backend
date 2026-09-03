@@ -1596,3 +1596,158 @@ export async function getTournamentsByCompetition(
   
   return result.results || [];
 }
+
+
+export async function createNotice(
+  db,
+  notice
+) {
+  await db.prepare(`
+    INSERT INTO notices (
+      id,
+      title,
+      content,
+      category,
+      images,
+      published,
+      expires_at,
+      created_at,
+      updated_at,
+      created_by
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    notice.id,
+    notice.title,
+    notice.content,
+    notice.category,
+    JSON.stringify(notice.images || []),
+    notice.published ? 1 : 0,
+    notice.expires_at,
+    notice.created_at,
+    notice.updated_at,
+    notice.created_by
+  ).run();
+
+  return notice;
+}
+
+export async function getPublishedNotices(
+  db,
+  now
+) {
+  const result =
+    await db.prepare(`
+      SELECT *
+      FROM notices
+      WHERE published = 1
+      AND (
+        expires_at IS NULL
+        OR expires_at > ?
+      )
+      ORDER BY created_at DESC
+    `).bind(now).all();
+
+  return (result.results || []).map(
+    notice => ({
+      ...notice,
+      published:
+        Number(notice.published) === 1,
+      images:
+        notice.images
+          ? JSON.parse(notice.images)
+          : []
+    })
+  );
+}
+
+export async function getNotice(
+  db,
+  id
+) {
+  const notice =
+    await db.prepare(`
+      SELECT *
+      FROM notices
+      WHERE id = ?
+      LIMIT 1
+    `).bind(id).first();
+
+  if (!notice) return null;
+
+  return {
+    ...notice,
+    published:
+      Number(notice.published) === 1,
+    images:
+      notice.images
+        ? JSON.parse(notice.images)
+        : []
+  };
+}
+export async function updateNotice(
+  db,
+  id,
+  notice
+) {
+  await db.prepare(`
+    UPDATE notices
+    SET
+      title = ?,
+      content = ?,
+      category = ?,
+      images = ?,
+      published = ?,
+      expires_at = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).bind(
+    notice.title,
+    notice.content,
+    notice.category,
+    JSON.stringify(notice.images || []),
+    notice.published ? 1 : 0,
+    notice.expires_at,
+    notice.updated_at,
+    id
+  ).run();
+  
+  return await getNotice(db, id);
+}
+
+export async function getExpiredNotices(
+  db,
+  now
+) {
+  const result =
+    await db.prepare(`
+      SELECT *
+      FROM notices
+      WHERE expires_at IS NOT NULL
+      AND expires_at <= ?
+    `).bind(now).all();
+
+  return (result.results || []).map(
+    notice => ({
+      ...notice,
+      published:
+        Number(notice.published) === 1,
+      images:
+        notice.images
+          ? JSON.parse(notice.images)
+          : []
+    })
+  );
+}
+
+export async function deleteNotice(
+  db,
+  id
+) {
+  await db.prepare(`
+    DELETE FROM notices
+    WHERE id = ?
+  `).bind(id).run();
+
+  return true;
+}

@@ -7,4 +7,5 @@ binding = "DB"
 database_name = "champions"
 database_id = "bfea8a70-341a-44f2-92e4-7697a17cc592"
 
-# ends
+[triggers]
+crons = ["0 0 1 * *"]
