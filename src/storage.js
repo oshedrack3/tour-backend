@@ -1803,3 +1803,72 @@ export async function getNoticesByIds(
     })
   );
 }
+
+
+export async function getHallOfFame(db) {
+  const result =
+    await db.prepare(`
+      SELECT
+        id,
+        categories,
+        updated_at
+      FROM hall_of_fame
+      WHERE id = 1
+      LIMIT 1
+    `).first();
+  
+  if (!result) {
+    return {
+      categories: [],
+      updated_at: null
+    };
+  }
+  
+  return {
+    categories: result.categories ?
+      JSON.parse(result.categories) :
+      [],
+    updated_at: result.updated_at
+  };
+}
+export async function updateHallOfFame(
+  db,
+  categories,
+  updatedAt
+) {
+  await db.prepare(`
+    INSERT INTO hall_of_fame (
+      id,
+      categories,
+      updated_at
+    )
+    VALUES (1, ?, ?)
+    ON CONFLICT(id)
+    DO UPDATE SET
+      categories = excluded.categories,
+      updated_at = excluded.updated_at
+  `).bind(
+    JSON.stringify(categories),
+    updatedAt
+  ).run();
+  
+  return await getHallOfFame(db);
+}
+export async function getHallOfFameChanges(
+  db,
+  since
+) {
+  const result =
+    await db.prepare(`
+      SELECT
+        id,
+        updated_at
+      FROM hall_of_fame_changes
+      WHERE id > ?
+      ORDER BY id ASC
+    `).bind(
+      since
+    ).all();
+  
+  return result.results || [];
+}

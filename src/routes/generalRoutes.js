@@ -5,7 +5,10 @@ import {
   updateNotice,
   deleteNotice,
   getNoticeChanges,
-  getNoticesByIds
+  getNoticesByIds,
+  getHallOfFame,
+  getHallOfFameChanges,
+  updateHallOfFame
 } from "../storage.js";
 
 import {
@@ -29,7 +32,18 @@ export async function handleGeneralRequest(
       user
     );
   }
-
+  
+  if (
+    request.method === "GET" &&
+    pathname === "/hall-of-fame/sync"
+  ) {
+    return await syncHallOfFameRoute(
+      request,
+      env,
+      user
+    );
+  }
+  
   if (
     request.method === "GET" &&
     pathname === "/notices"
@@ -39,7 +53,7 @@ export async function handleGeneralRequest(
       user
     );
   }
-    
+  
   if (
     request.method === "GET" &&
     /^\/notices\/[^/]+$/.test(pathname)
@@ -64,6 +78,16 @@ export async function handleGeneralRequest(
       user
     );
   }
+  if (
+  request.method === "PATCH" &&
+  pathname === "/hall-of-fame"
+) {
+  return await updateHallOfFameRoute(
+    request,
+    env,
+    user
+  );
+}
   
   if (
     request.method === "PATCH" &&
@@ -303,18 +327,17 @@ async function createNoticeRoute(
     if (user.role !== "admin") {
       return Response.json({
         success: false,
-        message:
-          "Only admins can create notices."
+        message: "Only admins can create notices."
       }, {
         status: 403
       });
     }
-
+    
     const body =
       await request
-        .json()
-        .catch(() => ({}));
-
+      .json()
+      .catch(() => ({}));
+    
     const {
       title,
       content,
@@ -323,33 +346,31 @@ async function createNoticeRoute(
       published,
       expiresAt
     } = body;
-
+    
     if (
       !title ||
       !String(title).trim()
     ) {
       return Response.json({
         success: false,
-        message:
-          "Notice title is required."
+        message: "Notice title is required."
       }, {
         status: 400
       });
     }
-
+    
     if (
       !content ||
       !String(content).trim()
     ) {
       return Response.json({
         success: false,
-        message:
-          "Notice content is required."
+        message: "Notice content is required."
       }, {
         status: 400
       });
     }
-
+    
     if (
       expiresAt !== null &&
       expiresAt !== undefined &&
@@ -358,50 +379,46 @@ async function createNoticeRoute(
           Number(expiresAt)
         ) ||
         Number(expiresAt) <=
-          Date.now()
+        Date.now()
       )
     ) {
       return Response.json({
         success: false,
-        message:
-          "Expiry date must be in the future."
+        message: "Expiry date must be in the future."
       }, {
         status: 400
       });
     }
-
+    
     if (
       images !== undefined &&
       !Array.isArray(images)
     ) {
       return Response.json({
         success: false,
-        message:
-          "Images must be an array."
+        message: "Images must be an array."
       }, {
         status: 400
       });
     }
-
+    
     const noticeId =
       crypto.randomUUID();
-
+    
     const now =
       Date.now();
-
+    
     const uploadedImages = [];
-
+    
     if (Array.isArray(images)) {
       for (
-        let i = 0;
-        i < images.length;
-        i++
+        let i = 0; i < images.length; i++
       ) {
         const image =
           images[i];
-
+        
         if (!image) continue;
-
+        
         const uploaded =
           await uploadBase64Image(
             image,
@@ -409,49 +426,38 @@ async function createNoticeRoute(
             `${noticeId}_${i + 1}`,
             env
           );
-
+        
         uploadedImages.push({
           url: uploaded.url,
-          publicId:
-            uploaded.public_id ||
+          publicId: uploaded.public_id ||
             uploaded.publicId
         });
       }
     }
-
+    
     const notice = {
       id: noticeId,
-      title:
-        String(title).trim(),
-      content:
-        String(content).trim(),
-      category:
-        category || "general",
-      images:
-        uploadedImages,
-      published:
-        published !== false,
-      expires_at:
-        expiresAt === null ||
-        expiresAt === undefined
-          ? null
-          : Number(expiresAt),
-      created_at:
-        now,
-      updated_at:
-        now,
-      created_by:
-        user.id
+      title: String(title).trim(),
+      content: String(content).trim(),
+      category: category || "general",
+      images: uploadedImages,
+      published: published !== false,
+      expires_at: expiresAt === null ||
+        expiresAt === undefined ?
+        null : Number(expiresAt),
+      created_at: now,
+      updated_at: now,
+      created_by: user.id
     };
-
+    
     await createNotice(
       env.DB,
       notice
     );
-
+    
     const change =
       await env.DB
-        .prepare(`
+      .prepare(`
           SELECT id
           FROM notice_changes
           WHERE notice_id = ?
@@ -459,30 +465,27 @@ async function createNoticeRoute(
           ORDER BY id DESC
           LIMIT 1
         `)
-        .bind(noticeId)
-        .first();
-
+      .bind(noticeId)
+      .first();
+    
     return Response.json({
       success: true,
-      message:
-        "Notice created successfully.",
+      message: "Notice created successfully.",
       notice,
-      changeId:
-        change?.id || null
+      changeId: change?.id || null
     }, {
       status: 201
     });
-
+    
   } catch (error) {
     console.error(
       "Create notice error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to create notice."
     }, {
       status: 500
@@ -733,6 +736,191 @@ async function deleteNoticeRoute(
       success: false,
       message: error.message ||
         "Failed to delete notice."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+async function syncHallOfFameRoute(
+  request,
+  env,
+  user
+) {
+  try {
+    const url =
+      new URL(request.url);
+    
+    const sinceParam =
+      url.searchParams.get("since");
+    
+    const since =
+      sinceParam === null ?
+      0 :
+      Number(sinceParam);
+    
+    if (
+      !Number.isInteger(since) ||
+      since < 0
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid sync value."
+      }, {
+        status: 400
+      });
+    }
+    
+    const changes =
+      await getHallOfFameChanges(
+        env.DB,
+        since
+      );
+    
+    if (!changes.length) {
+      return Response.json({
+        success: true,
+        changed: false,
+        hallOfFame: null,
+        lastChangeId: since
+      });
+    }
+    
+    const hallOfFame =
+      await getHallOfFame(
+        env.DB
+      );
+    
+    const lastChangeId =
+      changes[
+        changes.length - 1
+      ].id;
+    
+    return Response.json({
+      success: true,
+      changed: true,
+      hallOfFame,
+      lastChangeId
+    });
+    
+  } catch (error) {
+    console.error(
+      "Hall of Fame sync error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to synchronize Hall of Fame."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function updateHallOfFameRoute(
+  request,
+  env,
+  user
+) {
+  try {
+    if (user.role !== "admin") {
+      return Response.json({
+        success: false,
+        message: "Only administrators can update the Hall of Fame"
+      }, {
+        status: 403
+      });
+    }
+    
+    const body =
+      await request.json();
+    
+    const {
+      categories
+    } = body;
+    
+    if (!Array.isArray(categories)) {
+      return Response.json({
+        success: false,
+        message: "Invalid Hall of Fame categories"
+      }, {
+        status: 400
+      });
+    }
+    
+    for (const category of categories) {
+      if (
+        !category.id ||
+        !category.title ||
+        !Array.isArray(category.winners)
+      ) {
+        return Response.json({
+          success: false,
+          message: "Invalid Hall of Fame category"
+        }, {
+          status: 400
+        });
+      }
+      
+      for (const winner of category.winners) {
+        if (
+          !winner.name ||
+          typeof winner.wins !== "number" ||
+          winner.wins < 0
+        ) {
+          return Response.json({
+            success: false,
+            message: "Invalid Hall of Fame winner"
+          }, {
+            status: 400
+          });
+        }
+      }
+    }
+    
+    const updatedAt =
+      Date.now();
+    
+    const hallOfFame =
+      await updateHallOfFame(
+        env.DB,
+        categories,
+        updatedAt
+      );
+    
+    const change =
+      await env.DB
+      .prepare(`
+          SELECT id
+          FROM hall_of_fame_changes
+          WHERE updated_at = ?
+          ORDER BY id DESC
+          LIMIT 1
+        `)
+      .bind(
+        updatedAt
+      )
+      .first();
+    
+    return Response.json({
+      success: true,
+      hallOfFame,
+      changeId: change?.id || null
+    });
+    
+  } catch (error) {
+    console.error(
+      "Failed to update Hall of Fame:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to update Hall of Fame"
     }, {
       status: 500
     });
