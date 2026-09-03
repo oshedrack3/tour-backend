@@ -1,5 +1,6 @@
 import {
   getTournament,
+  deleteTournament,
   getTournamentsByOwner,
   getTournamentsByPlayer,
   createTournament,
@@ -57,6 +58,19 @@ export async function handleTournamentRequest(
       user
     );
   }
+  if (
+  request.method === "DELETE" &&
+  /^\/tournaments\/[^/]+$/.test(pathname)
+) {
+  const tournamentId =
+    pathname.split("/")[2];
+  
+  return await deleteTournamentRoute(
+    env,
+    tournamentId,
+    user
+  );
+}
   if (
     request.method === "POST" &&
     /^\/tournaments\/[^/]+\/matches\/[^/]+\/submission$/.test(pathname)
@@ -3028,5 +3042,96 @@ async function updateSubmissionDeadlineRoute(
     }, {
       status: 500
     });
+  }
+}
+async function deleteTournamentRoute(
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournament(
+        env.DB,
+        tournamentId
+      );
+
+    if (!tournament) {
+      return Response.json(
+        {
+          success: false,
+          message: "Tournament not found."
+        },
+        {
+          status: 404
+        }
+      );
+    }
+
+    if (
+      user.role !== "admin" ||
+      String(tournament.admin_uid) !==
+        String(user.id)
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message: "Access denied."
+        },
+        {
+          status: 403
+        }
+      );
+    }
+
+    await deleteTournament(
+      env.DB,
+      tournamentId
+    );
+
+    if (tournament.competition_id) {
+      await env.DB
+        .prepare(`
+          UPDATE competitions
+          SET
+            tournament_count =
+              CASE
+                WHEN tournament_count > 0
+                THEN tournament_count - 1
+                ELSE 0
+              END,
+            updated_at = ?
+          WHERE id = ?
+        `)
+        .bind(
+          Date.now(),
+          tournament.competition_id
+        )
+        .run();
+    }
+
+    return Response.json({
+      success: true,
+      message:
+        "Tournament deleted successfully."
+    });
+
+  } catch (error) {
+    console.error(
+      "Delete tournament error:",
+      error
+    );
+
+    return Response.json(
+      {
+        success: false,
+        message:
+          error.message ||
+          "Failed to delete tournament."
+      },
+      {
+        status: 500
+      }
+    );
   }
 }
