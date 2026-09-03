@@ -9,7 +9,8 @@ import {
   getHallOfFame,
   getHallOfFameChanges,
   updateHallOfFame,
-  getUserProfile
+  getUserProfile,
+  updateUserProfile
 } from "../storage.js";
 
 import {
@@ -34,15 +35,25 @@ export async function handleGeneralRequest(
     );
   }
   if (
-  request.method === "GET" &&
-  pathname === "/profile"
-) {
-  return await getProfileRoute(
-    request,
-    env,
-    user
-  );
-}
+    request.method === "GET" &&
+    pathname === "/profile"
+  ) {
+    return await getProfileRoute(
+      request,
+      env,
+      user
+    );
+  }
+  if (
+    request.method === "PUT" &&
+    pathname === "/profile"
+  ) {
+    return await updateProfileRoute(
+      request,
+      env,
+      user
+    );
+  }
   if (
     request.method === "GET" &&
     pathname === "/hall-of-fame/sync"
@@ -53,7 +64,6 @@ export async function handleGeneralRequest(
       user
     );
   }
-  
   if (
     request.method === "GET" &&
     pathname === "/notices"
@@ -63,21 +73,18 @@ export async function handleGeneralRequest(
       user
     );
   }
-  
   if (
     request.method === "GET" &&
     /^\/notices\/[^/]+$/.test(pathname)
   ) {
     const noticeId =
       pathname.split("/")[2];
-    
     return await getNoticeRoute(
       env,
       noticeId,
       user
     );
   }
-  
   if (
     request.method === "POST" &&
     pathname === "/notices"
@@ -98,14 +105,12 @@ export async function handleGeneralRequest(
       user
     );
   }
-  
   if (
     request.method === "PATCH" &&
     /^\/notices\/[^/]+$/.test(pathname)
   ) {
     const noticeId =
       pathname.split("/")[2];
-    
     return await updateNoticeRoute(
       request,
       env,
@@ -113,24 +118,20 @@ export async function handleGeneralRequest(
       user
     );
   }
-  
   if (
     request.method === "DELETE" &&
     /^\/notices\/[^/]+$/.test(pathname)
   ) {
     const noticeId =
       pathname.split("/")[2];
-    
     return await deleteNoticeRoute(
       env,
       noticeId,
       user
     );
   }
-  
   return null;
 }
-
 
 
 async function getNoticesRoute(
@@ -949,7 +950,7 @@ async function getProfileRoute(
         env.DB,
         user.id
       );
-
+    
     if (!profile) {
       return Response.json({
         success: false,
@@ -958,7 +959,7 @@ async function getProfileRoute(
         status: 404
       });
     }
-
+    
     return Response.json({
       success: true,
       profile
@@ -968,12 +969,75 @@ async function getProfileRoute(
       "Profile error:",
       error
     );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to load profile."
+    }, {
+      status: 500
+    });
+  }
+}
 
+
+async function updateProfileRoute(
+  request,
+  env,
+  user
+) {
+  try {
+    const body =
+      await request.json();
+    const updates = {
+      username:
+        body.username,
+      phone:
+        body.phone
+    };
+    const result =
+      await updateUserProfile(
+        env.DB,
+        user.id,
+        updates
+      );
+    if (!result) {
+      return Response.json({
+        success: false,
+        message: "User not found."
+      }, {
+        status: 404
+      });
+    }
+    if (!result.success) {
+      return Response.json({
+        success: false,
+        message: result.message
+      }, {
+        status: 400
+      });
+    }
+    const profile =
+      await getUserProfile(
+        env.DB,
+        user.id
+      );
+    return Response.json({
+      success: true,
+      message:
+        "Profile updated successfully.",
+      profile
+    });
+  } catch (error) {
+    console.error(
+      "Update profile error:",
+      error
+    );
     return Response.json({
       success: false,
       message:
         error.message ||
-        "Failed to load profile."
+        "Failed to update profile."
     }, {
       status: 500
     });

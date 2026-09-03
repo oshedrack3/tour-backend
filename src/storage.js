@@ -1919,14 +1919,14 @@ export async function getUserProfile(
     db
     .prepare(`
         SELECT
-          username
+          username,
+          phone
         FROM users
         WHERE id = ?
         LIMIT 1
       `)
     .bind(userId)
     .first(),
-    
     db
     .prepare(`
         SELECT
@@ -1940,14 +1940,103 @@ export async function getUserProfile(
     .bind(userId)
     .all()
   ]);
-  
   if (!user) {
     return null;
   }
-  
   return {
     username: user.username,
+    phone: user.phone || "",
     teams: teams.results || []
+  };
+}
+
+export async function updateUserProfile(
+  db,
+  userId,
+  updates
+) {
+  const user =
+    await getUserById(
+      db,
+      userId
+    );
+  if (!user) {
+    return null;
+  }
+  const fields = [];
+  const values = [];
+  if (updates.username !== undefined) {
+    const username =
+      String(updates.username || "")
+        .trim();
+    if (!username) {
+      return {
+        success: false,
+        message:
+          "Username is required."
+      };
+    }
+    const existingUser =
+      await db
+        .prepare(`
+          SELECT id
+          FROM users
+          WHERE LOWER(username) =
+                LOWER(?)
+          AND id != ?
+          LIMIT 1
+        `)
+        .bind(
+          username,
+          userId
+        )
+        .first();
+    if (existingUser) {
+      return {
+        success: false,
+        message:
+          "Username is already taken."
+      };
+    }
+    fields.push(
+      "username = ?"
+    );
+    values.push(username);
+  }
+  if (updates.phone !== undefined) {
+    const phone =
+      String(updates.phone || "")
+        .trim();
+    fields.push(
+      "phone = ?"
+    );
+    values.push(
+      phone || null
+    );
+  }
+  if (!fields.length) {
+    return {
+      success: true,
+      user
+    };
+  }
+  values.push(userId);
+  await db
+    .prepare(`
+      UPDATE users
+      SET ${fields.join(", ")}
+      WHERE id = ?
+    `)
+    .bind(...values)
+    .run();
+  const updatedUser =
+    await getUserById(
+      db,
+      userId
+    );
+  return {
+    success: true,
+    user: updatedUser
   };
 }
 

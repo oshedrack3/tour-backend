@@ -59,18 +59,18 @@ export async function handleTournamentRequest(
     );
   }
   if (
-  request.method === "DELETE" &&
-  /^\/tournaments\/[^/]+$/.test(pathname)
-) {
-  const tournamentId =
-    pathname.split("/")[2];
-  
-  return await deleteTournamentRoute(
-    env,
-    tournamentId,
-    user
-  );
-}
+    request.method === "DELETE" &&
+    /^\/tournaments\/[^/]+$/.test(pathname)
+  ) {
+    const tournamentId =
+      pathname.split("/")[2];
+    
+    return await deleteTournamentRoute(
+      env,
+      tournamentId,
+      user
+    );
+  }
   if (
     request.method === "POST" &&
     /^\/tournaments\/[^/]+\/matches\/[^/]+\/submission$/.test(pathname)
@@ -1796,6 +1796,28 @@ async function joinTournamentRoute(
       });
     }
     
+    const playedMatch =
+  await env.DB
+  .prepare(`
+    SELECT 1
+    FROM matches
+    WHERE tournament_id = ?
+    AND played = 1
+    LIMIT 1
+  `)
+  .bind(tournamentId)
+  .first();
+
+if (playedMatch) {
+  return Response.json({
+    success: false,
+    message:
+      "You cannot join this tournament because it has already started."
+  }, {
+    status: 409
+  });
+}
+
     const body =
       await request
       .json()
@@ -3055,40 +3077,38 @@ async function deleteTournamentRoute(
         env.DB,
         tournamentId
       );
-
+    
     if (!tournament) {
       return Response.json(
-        {
-          success: false,
-          message: "Tournament not found."
-        },
-        {
-          status: 404
-        }
-      );
+      {
+        success: false,
+        message: "Tournament not found."
+      },
+      {
+        status: 404
+      });
     }
-
+    
     if (
       user.role !== "admin" ||
       String(tournament.admin_uid) !==
-        String(user.id)
+      String(user.id)
     ) {
       return Response.json(
-        {
-          success: false,
-          message: "Access denied."
-        },
-        {
-          status: 403
-        }
-      );
+      {
+        success: false,
+        message: "Access denied."
+      },
+      {
+        status: 403
+      });
     }
-
+    
     await deleteTournament(
       env.DB,
       tournamentId
     );
-
+    
     if (tournament.competition_id) {
       await env.DB
         .prepare(`
@@ -3109,29 +3129,26 @@ async function deleteTournamentRoute(
         )
         .run();
     }
-
+    
     return Response.json({
       success: true,
-      message:
-        "Tournament deleted successfully."
+      message: "Tournament deleted successfully."
     });
-
+    
   } catch (error) {
     console.error(
       "Delete tournament error:",
       error
     );
-
+    
     return Response.json(
-      {
-        success: false,
-        message:
-          error.message ||
-          "Failed to delete tournament."
-      },
-      {
-        status: 500
-      }
-    );
+    {
+      success: false,
+      message: error.message ||
+        "Failed to delete tournament."
+    },
+    {
+      status: 500
+    });
   }
 }
