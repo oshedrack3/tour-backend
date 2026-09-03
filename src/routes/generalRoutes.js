@@ -303,17 +303,18 @@ async function createNoticeRoute(
     if (user.role !== "admin") {
       return Response.json({
         success: false,
-        message: "Only admins can create notices."
+        message:
+          "Only admins can create notices."
       }, {
         status: 403
       });
     }
-    
+
     const body =
       await request
-      .json()
-      .catch(() => ({}));
-    
+        .json()
+        .catch(() => ({}));
+
     const {
       title,
       content,
@@ -322,31 +323,33 @@ async function createNoticeRoute(
       published,
       expiresAt
     } = body;
-    
+
     if (
       !title ||
       !String(title).trim()
     ) {
       return Response.json({
         success: false,
-        message: "Notice title is required."
+        message:
+          "Notice title is required."
       }, {
         status: 400
       });
     }
-    
+
     if (
       !content ||
       !String(content).trim()
     ) {
       return Response.json({
         success: false,
-        message: "Notice content is required."
+        message:
+          "Notice content is required."
       }, {
         status: 400
       });
     }
-    
+
     if (
       expiresAt !== null &&
       expiresAt !== undefined &&
@@ -354,46 +357,51 @@ async function createNoticeRoute(
         !Number.isFinite(
           Number(expiresAt)
         ) ||
-        Number(expiresAt) <= Date.now()
+        Number(expiresAt) <=
+          Date.now()
       )
     ) {
       return Response.json({
         success: false,
-        message: "Expiry date must be in the future."
+        message:
+          "Expiry date must be in the future."
       }, {
         status: 400
       });
     }
-    
+
     if (
       images !== undefined &&
       !Array.isArray(images)
     ) {
       return Response.json({
         success: false,
-        message: "Images must be an array."
+        message:
+          "Images must be an array."
       }, {
         status: 400
       });
     }
-    
+
     const noticeId =
       crypto.randomUUID();
-    
+
     const now =
       Date.now();
-    
+
     const uploadedImages = [];
-    
+
     if (Array.isArray(images)) {
       for (
-        let i = 0; i < images.length; i++
+        let i = 0;
+        i < images.length;
+        i++
       ) {
         const image =
           images[i];
-        
+
         if (!image) continue;
-        
+
         const uploaded =
           await uploadBase64Image(
             image,
@@ -401,58 +409,87 @@ async function createNoticeRoute(
             `${noticeId}_${i + 1}`,
             env
           );
-        
+
         uploadedImages.push({
           url: uploaded.url,
-          publicId: uploaded.public_id ||
+          publicId:
+            uploaded.public_id ||
             uploaded.publicId
         });
       }
     }
-    
+
     const notice = {
       id: noticeId,
-      title: String(title).trim(),
-      content: String(content).trim(),
-      category: category || "general",
-      images: uploadedImages,
-      published: published !== false,
-      expires_at: expiresAt === null ||
-        expiresAt === undefined ?
-        null : Number(expiresAt),
-      created_at: now,
-      updated_at: now,
-      created_by: user.id
+      title:
+        String(title).trim(),
+      content:
+        String(content).trim(),
+      category:
+        category || "general",
+      images:
+        uploadedImages,
+      published:
+        published !== false,
+      expires_at:
+        expiresAt === null ||
+        expiresAt === undefined
+          ? null
+          : Number(expiresAt),
+      created_at:
+        now,
+      updated_at:
+        now,
+      created_by:
+        user.id
     };
-    
+
     await createNotice(
       env.DB,
       notice
     );
-    
+
+    const change =
+      await env.DB
+        .prepare(`
+          SELECT id
+          FROM notice_changes
+          WHERE notice_id = ?
+          AND action = 'create'
+          ORDER BY id DESC
+          LIMIT 1
+        `)
+        .bind(noticeId)
+        .first();
+
     return Response.json({
       success: true,
-      message: "Notice created successfully.",
-      notice
+      message:
+        "Notice created successfully.",
+      notice,
+      changeId:
+        change?.id || null
     }, {
       status: 201
     });
-    
+
   } catch (error) {
     console.error(
       "Create notice error:",
       error
     );
-    
+
     return Response.json({
       success: false,
-      message: error.message ||
+      message:
+        error.message ||
         "Failed to create notice."
     }, {
       status: 500
     });
   }
 }
+
 async function updateNoticeRoute(
   request,
   env,
