@@ -12,7 +12,6 @@ import {
   deleteCloudinaryImage
 } from "./cloudinary.js";
 
-
 export async function handleTeamRequest(
   request,
   env,
@@ -33,7 +32,6 @@ export async function handleTeamRequest(
     pathname.match(
       /^\/teams\/([^/]+)$/
     );
-
 
   if (
     request.method === "GET" &&
@@ -67,7 +65,6 @@ export async function handleTeamRequest(
       });
     }
   }
-
 
   if (
     request.method === "GET" &&
@@ -104,7 +101,6 @@ export async function handleTeamRequest(
       });
     }
   }
-
 
   if (
     request.method === "GET" &&
@@ -152,7 +148,6 @@ export async function handleTeamRequest(
       });
     }
   }
-
 
   if (
     request.method === "POST" &&
@@ -286,7 +281,6 @@ export async function handleTeamRequest(
     }
   }
 
-
   if (
     request.method === "PATCH" &&
     teamMatch
@@ -341,12 +335,6 @@ export async function handleTeamRequest(
           name;
       }
 
-      let oldLogoPublicId =
-        null;
-
-      let newLogoPublicId =
-        null;
-
       if (
         body.logo !== undefined
       ) {
@@ -371,8 +359,7 @@ export async function handleTeamRequest(
         if (
           body.logo === null
         ) {
-          updates.logo =
-            null;
+          updates.logo = null;
         } else {
           const image =
             await uploadBase64Image(
@@ -382,13 +369,18 @@ export async function handleTeamRequest(
               env
             );
 
-          updates.logo =
-            image?.url ||
-            null;
+          if (!image?.url) {
+            return Response.json({
+              success: false,
+              message:
+                "Failed to upload team logo."
+            }, {
+              status: 500
+            });
+          }
 
-          newLogoPublicId =
-            image?.publicId ||
-            null;
+          updates.logo =
+            image.url;
         }
       }
 
@@ -404,15 +396,6 @@ export async function handleTeamRequest(
         );
 
       if (!team) {
-        if (
-          newLogoPublicId
-        ) {
-          await deleteCloudinaryImage(
-            newLogoPublicId,
-            env
-          );
-        }
-
         return Response.json({
           success: false,
           message:
@@ -420,40 +403,6 @@ export async function handleTeamRequest(
         }, {
           status: 404
         });
-      }
-
-      if (
-        newLogoPublicId &&
-        existing.logo
-      ) {
-        const oldUrl =
-          existing.logo;
-
-        const match =
-          oldUrl.match(
-            /\/upload\/(?:v\d+\/)?(.+?)(?:\.[a-zA-Z0-9]+)?$/
-          );
-
-        if (match) {
-          oldLogoPublicId =
-            match[1];
-        }
-      }
-
-      if (
-        oldLogoPublicId
-      ) {
-        try {
-          await deleteCloudinaryImage(
-            oldLogoPublicId,
-            env
-          );
-        } catch (error) {
-          console.error(
-            "Failed to delete old team logo:",
-            error
-          );
-        }
       }
 
       return Response.json({
@@ -477,7 +426,6 @@ export async function handleTeamRequest(
       });
     }
   }
-
 
   if (
     request.method === "DELETE" &&
@@ -547,7 +495,6 @@ export async function handleTeamRequest(
       });
     }
   }
-
 
   return null;
 }
