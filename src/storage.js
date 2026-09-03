@@ -436,6 +436,26 @@ export async function getTeams(
   
   return result.results || [];
 }
+export async function getTeamOwnerContact(
+  db,
+  teamId
+) {
+  return await db
+    .prepare(`
+      SELECT
+        t.id AS team_id,
+        t.name AS team_name,
+        u.username,
+        u.phone
+      FROM teams t
+      LEFT JOIN users u
+        ON u.id = t.owner_uid
+      WHERE t.id = ?
+      LIMIT 1
+    `)
+    .bind(teamId)
+    .first();
+}
 export async function createTeam(
   db,
   team,
@@ -1930,3 +1950,4 @@ export async function getUserProfile(
     teams: teams.results || []
   };
 }
+

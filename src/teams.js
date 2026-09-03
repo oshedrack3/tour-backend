@@ -2,6 +2,7 @@ import {
   getTeam,
   getTeams,
   getTeamsByTournament,
+  getTeamOwnerContact,
   createTeam,
   updateTeam,
   deleteTeam
@@ -32,6 +33,56 @@ export async function handleTeamRequest(
     pathname.match(
       /^\/teams\/([^/]+)$/
     );
+  
+    const teamContactMatch =
+    pathname.match(
+      /^\/teams\/([^/]+)\/contact$/
+    );
+
+  if (
+    request.method === "GET" &&
+    teamContactMatch
+  ) {
+    try {
+      const teamId =
+        teamContactMatch[1];
+
+      const contact =
+        await getTeamOwnerContact(
+          env.DB,
+          teamId
+        );
+
+      if (!contact) {
+        return Response.json({
+          success: false,
+          message: "Team not found."
+        }, {
+          status: 404
+        });
+      }
+
+      return Response.json({
+        success: true,
+        contact
+      });
+
+    } catch (error) {
+      console.error(
+        "Get team owner contact error:",
+        error
+      );
+
+      return Response.json({
+        success: false,
+        message:
+          error.message ||
+          "Failed to get team contact."
+      }, {
+        status: 500
+      });
+    }
+  }
   
   if (
     request.method === "GET" &&
@@ -270,61 +321,59 @@ export async function handleTeamRequest(
   }
   
   if (
-  request.method === "PATCH" &&
-  teamMatch
-) {
-  try {
-    const teamId =
-      teamMatch[1];
-
-    const body =
-      await request
+    request.method === "PATCH" &&
+    teamMatch
+  ) {
+    try {
+      const teamId =
+        teamMatch[1];
+      
+      const body =
+        await request
         .json()
         .catch(() => ({}));
-
-    const existing =
-      await getTeam(
-        env.DB,
-        teamId,
-        user.id
-      );
-
-    if (!existing) {
-      return Response.json({
-        success: false,
-        message:
-          "Team not found or access denied."
-      }, {
-        status: 404
-      });
-    }
-
-    const now =
-      Date.now();
-
-    const oneYear =
-      365 * 24 * 60 * 60 * 1000;
-
-    if (
-      existing.last_edited_at &&
-      now -
+      
+      const existing =
+        await getTeam(
+          env.DB,
+          teamId,
+          user.id
+        );
+      
+      if (!existing) {
+        return Response.json({
+          success: false,
+          message: "Team not found or access denied."
+        }, {
+          status: 404
+        });
+      }
+      
+      const now =
+        Date.now();
+      
+      const oneYear =
+        365 * 24 * 60 * 60 * 1000;
+      
+      if (
+        existing.last_edited_at &&
+        now -
         Number(
           existing.last_edited_at
         ) <
         oneYear
-    ) {
-      const nextEditDate =
-        new Date(
-          Number(
-            existing.last_edited_at
-          ) +
-          oneYear
-        );
-
-      return Response.json({
-        success: false,
-        message:
-          `This team cannot be edited again until ${nextEditDate.toLocaleDateString(
+      ) {
+        const nextEditDate =
+          new Date(
+            Number(
+              existing.last_edited_at
+            ) +
+            oneYear
+          );
+        
+        return Response.json({
+          success: false,
+          message: `This team cannot be edited again until ${nextEditDate.toLocaleDateString(
             "en-NG",
             {
               day: "numeric",
@@ -332,141 +381,135 @@ export async function handleTeamRequest(
               year: "numeric"
             }
           )}.`
-      }, {
-        status: 403
-      });
-    }
-
-    const updates = {};
-
-    if (
-      body.name !== undefined
-    ) {
-      const name =
-        String(
-          body.name || ""
-        ).trim();
-
-      if (!name) {
-        return Response.json({
-          success: false,
-          message:
-            "Team name cannot be empty."
         }, {
-          status: 400
+          status: 403
         });
       }
-
-      updates.name =
-        name;
-    }
-
-    if (
-      body.logo !== undefined
-    ) {
+      
+      const updates = {};
+      
       if (
-        body.logo !== null &&
-        (
-          typeof body.logo !== "string" ||
-          !body.logo.startsWith(
-            "data:image/"
-          )
-        )
+        body.name !== undefined
       ) {
-        return Response.json({
-          success: false,
-          message:
-            "Invalid team logo."
-        }, {
-          status: 400
-        });
-      }
-
-      if (
-        body.logo === null
-      ) {
-        updates.logo = null;
-      } else {
-        const image =
-          await uploadBase64Image(
-            body.logo,
-            "teams",
-            teamId,
-            env
-          );
-
-        if (!image?.url) {
+        const name =
+          String(
+            body.name || ""
+          ).trim();
+        
+        if (!name) {
           return Response.json({
             success: false,
-            message:
-              "Failed to upload team logo."
+            message: "Team name cannot be empty."
           }, {
-            status: 500
+            status: 400
           });
         }
-
-        updates.logo =
-          image.url;
+        
+        updates.name =
+          name;
       }
-    }
-
-    if (
-      Object.keys(updates).length === 0
-    ) {
+      
+      if (
+        body.logo !== undefined
+      ) {
+        if (
+          body.logo !== null &&
+          (
+            typeof body.logo !== "string" ||
+            !body.logo.startsWith(
+              "data:image/"
+            )
+          )
+        ) {
+          return Response.json({
+            success: false,
+            message: "Invalid team logo."
+          }, {
+            status: 400
+          });
+        }
+        
+        if (
+          body.logo === null
+        ) {
+          updates.logo = null;
+        } else {
+          const image =
+            await uploadBase64Image(
+              body.logo,
+              "teams",
+              teamId,
+              env
+            );
+          
+          if (!image?.url) {
+            return Response.json({
+              success: false,
+              message: "Failed to upload team logo."
+            }, {
+              status: 500
+            });
+          }
+          
+          updates.logo =
+            image.url;
+        }
+      }
+      
+      if (
+        Object.keys(updates).length === 0
+      ) {
+        return Response.json({
+          success: false,
+          message: "No changes provided."
+        }, {
+          status: 400
+        });
+      }
+      
+      updates.updated_at =
+        now;
+      
+      updates.last_edited_at =
+        now;
+      
+      const team =
+        await updateTeam(
+          env.DB,
+          teamId,
+          updates,
+          user.id
+        );
+      
+      if (!team) {
+        return Response.json({
+          success: false,
+          message: "Team not found or access denied."
+        }, {
+          status: 404
+        });
+      }
+      
       return Response.json({
-        success: false,
-        message:
-          "No changes provided."
-      }, {
-        status: 400
+        success: true,
+        team
       });
-    }
-
-    updates.updated_at =
-      now;
-
-    updates.last_edited_at =
-      now;
-
-    const team =
-      await updateTeam(
-        env.DB,
-        teamId,
-        updates,
-        user.id
+      
+    } catch (error) {
+      console.error(
+        "Update team error:",
+        error
       );
-
-    if (!team) {
+      
       return Response.json({
         success: false,
-        message:
-          "Team not found or access denied."
+        message: error.message ||
+          "Failed to update team."
       }, {
-        status: 404
+        status: 500
       });
     }
-
-    return Response.json({
-      success: true,
-      team
-    });
-
-  } catch (error) {
-    console.error(
-      "Update team error:",
-      error
-    );
-
-    return Response.json({
-      success: false,
-      message:
-        error.message ||
-        "Failed to update team."
-    }, {
-      status: 500
-    });
   }
-}  
   if (
     request.method === "DELETE" &&
     teamMatch
