@@ -586,19 +586,34 @@ export async function updateTeam(
   const fields = [];
   const values = [];
   
-  if (updates.name !== undefined) {
+  if (
+    updates.name !== undefined
+  ) {
     fields.push("name = ?");
     values.push(updates.name);
   }
   
-  if (updates.logo !== undefined) {
+  if (
+    updates.logo !== undefined
+  ) {
     fields.push("logo = ?");
     values.push(updates.logo);
   }
   
-  if (updates.updated_at !== undefined) {
+  if (
+    updates.updated_at !== undefined
+  ) {
     fields.push("updated_at = ?");
     values.push(updates.updated_at);
+  }
+  
+  if (
+    updates.last_edited_at !== undefined
+  ) {
+    fields.push("last_edited_at = ?");
+    values.push(
+      updates.last_edited_at
+    );
   }
   
   if (!fields.length) {
