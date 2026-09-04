@@ -2526,25 +2526,25 @@ function checkMatchSubmissionDeadline(
 ) {
   const deadline =
     tournament.settings?.submissionDeadline;
-  
+
   if (!deadline) {
     return {
       allowed: true
     };
   }
-  
+
   const fromRound =
     Number(deadline.fromRound);
-  
+
   const toRound =
     Number(deadline.toRound);
-  
+
   const matchRound =
     Number(
       match.round ??
       match.round_index
     );
-  
+
   if (
     !Number.isFinite(fromRound) ||
     !Number.isFinite(toRound) ||
@@ -2552,36 +2552,40 @@ function checkMatchSubmissionDeadline(
   ) {
     return {
       allowed: false,
-      message: "This match does not have a valid round."
+      message:
+        "This match does not have a valid round."
     };
   }
-  
+
   if (matchRound < fromRound) {
     return {
       allowed: false,
-      message: "Submission is not open for this round yet."
+      message:
+        "Submission no longer available for this round."
     };
   }
-  
+
   if (matchRound > toRound) {
     return {
       allowed: false,
-      message: "Submission is no longer open for this round."
+      message:
+        "Submission is not yet available for this round."
     };
   }
-  
+
   if (
     deadline.enabled === true &&
     deadline.deadline &&
     Date.now() >
-    Number(deadline.deadline)
+      Number(deadline.deadline)
   ) {
     return {
       allowed: false,
-      message: "The submission deadline has passed."
+      message:
+        "Submission deadline has passed."
     };
   }
-  
+
   return {
     allowed: true
   };
