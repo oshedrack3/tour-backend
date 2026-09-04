@@ -31,50 +31,98 @@ export async function handleAuthRequest(request, env) {
 
 async function register(request, env) {
   try {
-    const body = await request.json();
+    const body =
+      await request.json();
 
-    const username = String(body.username || "").trim();
-    const email = String(body.email || "").trim().toLowerCase();
-    const password = String(body.password || "");
-    const role = String(body.role || "player").trim().toLowerCase();
+    const username =
+      String(
+        body.username || ""
+      ).trim();
 
-    if (!username || !email || !password) {
+    const email =
+      String(
+        body.email || ""
+      )
+        .trim()
+        .toLowerCase();
+
+    const phone =
+      String(
+        body.phone || ""
+      ).trim();
+
+    const password =
+      String(
+        body.password || ""
+      );
+
+    const role =
+      String(
+        body.role || "player"
+      )
+        .trim()
+        .toLowerCase();
+
+    if (
+      !username ||
+      !email ||
+      !phone ||
+      !password
+    ) {
       return Response.json(
         {
           success: false,
           message:
-            "Username, email and password are required."
+            "Username, email, phone and password are required."
         },
-        { status: 400 }
+        {
+          status: 400
+        }
       );
     }
 
-    if (!["admin", "player"].includes(role)) {
+    if (
+      !["admin", "player"].includes(
+        role
+      )
+    ) {
       return Response.json(
         {
           success: false,
-          message: "Invalid role."
+          message:
+            "Invalid role."
         },
-        { status: 400 }
+        {
+          status: 400
+        }
       );
     }
 
-    if (password.length < 6) {
+    if (
+      password.length < 6
+    ) {
       return Response.json(
         {
           success: false,
           message:
             "Password must be at least 6 characters."
         },
-        { status: 400 }
+        {
+          status: 400
+        }
       );
     }
 
-    const id = uuid();
-    const createdAt = Date.now();
+    const id =
+      uuid();
+
+    const createdAt =
+      Date.now();
 
     const passwordHash =
-      await hashPassword(password);
+      await hashPassword(
+        password
+      );
 
     try {
       await env.DB
@@ -83,16 +131,18 @@ async function register(request, env) {
             id,
             username,
             email,
+            phone,
             password_hash,
             role,
             created_at
           )
-          VALUES (?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
         `)
         .bind(
           id,
           username,
           email,
+          phone,
           passwordHash,
           role,
           createdAt
@@ -101,7 +151,9 @@ async function register(request, env) {
 
     } catch (error) {
       const message =
-        String(error?.message || "").toLowerCase();
+        String(
+          error?.message || ""
+        ).toLowerCase();
 
       console.error(
         "Registration database error:",
@@ -109,8 +161,12 @@ async function register(request, env) {
       );
 
       if (
-        message.includes("unique constraint") &&
-        message.includes("users.username")
+        message.includes(
+          "unique constraint"
+        ) &&
+        message.includes(
+          "users.username"
+        )
       ) {
         return Response.json(
           {
@@ -118,13 +174,19 @@ async function register(request, env) {
             message:
               "Username already exists."
           },
-          { status: 409 }
+          {
+            status: 409
+          }
         );
       }
 
       if (
-        message.includes("unique constraint") &&
-        message.includes("users.email")
+        message.includes(
+          "unique constraint"
+        ) &&
+        message.includes(
+          "users.email"
+        )
       ) {
         return Response.json(
           {
@@ -132,7 +194,9 @@ async function register(request, env) {
             message:
               "Email already exists."
           },
-          { status: 409 }
+          {
+            status: 409
+          }
         );
       }
 
@@ -142,7 +206,9 @@ async function register(request, env) {
           message:
             "Unable to create account. Please try again."
         },
-        { status: 500 }
+        {
+          status: 500
+        }
       );
     }
 
@@ -155,11 +221,15 @@ async function register(request, env) {
           id,
           username,
           email,
+          phone,
           role,
-          created_at: createdAt
+          created_at:
+            createdAt
         }
       },
-      { status: 201 }
+      {
+        status: 201
+      }
     );
 
   } catch (error) {
@@ -174,10 +244,13 @@ async function register(request, env) {
         message:
           "Registration failed. Please try again."
       },
-      { status: 500 }
+      {
+        status: 500
+      }
     );
   }
 }
+
 
 async function login(request, env) {
   try {
