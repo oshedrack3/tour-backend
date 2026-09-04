@@ -346,14 +346,20 @@ async function createTournamentRoute(
       body.champion_name || null;
     
     const start_date =
-      body.start_date || null;
-    
-    const end_date =
-      body.end_date || null;
-    
-    const match_days =
-      body.match_days ?? "[]";
-    
+  body.start_date ??
+  body.startDate ??
+  null;
+
+const end_date =
+  body.end_date ??
+  body.endDate ??
+  null;
+
+const match_days =
+  body.match_days ??
+  body.matchDays ??
+  "[]";
+  
     const access_type =
       body.access_type || null;
     
@@ -1797,27 +1803,26 @@ async function joinTournamentRoute(
     }
     
     const playedMatch =
-  await env.DB
-  .prepare(`
+      await env.DB
+      .prepare(`
     SELECT 1
     FROM matches
     WHERE tournament_id = ?
     AND played = 1
     LIMIT 1
   `)
-  .bind(tournamentId)
-  .first();
-
-if (playedMatch) {
-  return Response.json({
-    success: false,
-    message:
-      "You cannot join this tournament because it has already started."
-  }, {
-    status: 409
-  });
-}
-
+      .bind(tournamentId)
+      .first();
+    
+    if (playedMatch) {
+      return Response.json({
+        success: false,
+        message: "You cannot join this tournament because it has already started."
+      }, {
+        status: 409
+      });
+    }
+    
     const body =
       await request
       .json()
@@ -2247,11 +2252,12 @@ async function createMatchSubmissionRoute(
 ) {
   try {
     const tournament =
-      await getTournament(
-        env.DB,
-        tournamentId
-      );
-    
+  parseTournament(
+    await getTournament(
+      env.DB,
+      tournamentId
+    )
+  );    
     if (!tournament) {
       return Response.json({
         success: false,
@@ -2519,7 +2525,7 @@ function checkMatchSubmissionDeadline(
   match
 ) {
   const deadline =
-    tournament.settings?.submissionDeadline || null;
+    tournament.settings?.submissionDeadline;
   
   if (!deadline) {
     return {
@@ -2553,14 +2559,14 @@ function checkMatchSubmissionDeadline(
   if (matchRound < fromRound) {
     return {
       allowed: false,
-      message: "This round has not started."
+      message: "Submission is not open for this round yet."
     };
   }
   
   if (matchRound > toRound) {
     return {
       allowed: false,
-      message: "This round has not started."
+      message: "Submission is no longer open for this round."
     };
   }
   
@@ -2572,7 +2578,7 @@ function checkMatchSubmissionDeadline(
   ) {
     return {
       allowed: false,
-      message: "This round deadline has passed."
+      message: "The submission deadline has passed."
     };
   }
   
