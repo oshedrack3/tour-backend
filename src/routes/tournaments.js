@@ -3630,6 +3630,21 @@ async function generateCupRoute(
         !enableGroups
     };
 
+    await env.DB.prepare(`
+      UPDATE tournament_players
+      SET
+        played = 0,
+        wins = 0,
+        draws = 0,
+        losses = 0,
+        gf = 0,
+        ga = 0,
+        points = 0
+      WHERE tournament_id = ?
+    `).bind(
+      tournamentId
+    ).run();
+
     await deleteTournamentCupData(
       env.DB,
       tournamentId
@@ -3697,6 +3712,7 @@ async function generateCupRoute(
     });
   }
 }
+
 
 function createGroupName(index) {
   return `Group ${String.fromCharCode(65 + index)}`;
