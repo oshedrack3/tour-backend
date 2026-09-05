@@ -9,7 +9,7 @@ import {
   getMatches,
   getMatch,
   createGroupsBatch,
-deleteTournamentCupData,
+  deleteTournamentCupData,
   updateMatchResultAtomic,
   getTournamentPlayerByTeam,
   getTournamentPlayers,
@@ -266,19 +266,19 @@ export async function handleTournamentRequest(
   }
   
   if (
-  request.method === "POST" &&
-  /^\/tournaments\/[^/]+\/generate-cup$/.test(pathname)
-) {
-  const id = pathname.split("/")[2];
+    request.method === "POST" &&
+    /^\/tournaments\/[^/]+\/generate-cup$/.test(pathname)
+  ) {
+    const id = pathname.split("/")[2];
+    
+    return await generateCupRoute(
+      request,
+      env,
+      id,
+      user
+    );
+  }
   
-  return await generateCupRoute(
-    request,
-    env,
-    id,
-    user
-  );
-}
-
   
   if (
     request.method === "PUT" &&
@@ -1145,17 +1145,16 @@ async function updateMatchResultRoute(
         tournamentId,
         user.id
       );
-
+    
     if (!tournament) {
       return Response.json({
         success: false,
-        message:
-          "Tournament not found or access denied."
+        message: "Tournament not found or access denied."
       }, {
         status: 404
       });
     }
-
+    
     if (user.role !== "admin") {
       return Response.json({
         success: false,
@@ -1164,17 +1163,17 @@ async function updateMatchResultRoute(
         status: 403
       });
     }
-
+    
     const match =
       await getMatch(
         env.DB,
         matchId
       );
-
+    
     if (
       !match ||
       String(match.tournament_id) !==
-        String(tournamentId)
+      String(tournamentId)
     ) {
       return Response.json({
         success: false,
@@ -1183,10 +1182,10 @@ async function updateMatchResultRoute(
         status: 404
       });
     }
-
+    
     const homeTeam =
       await env.DB
-        .prepare(`
+      .prepare(`
           SELECT
             t.id,
             t.name,
@@ -1198,15 +1197,15 @@ async function updateMatchResultRoute(
           AND tp.tournament_id = ?
           LIMIT 1
         `)
-        .bind(
-          match.home_team_id,
-          tournamentId
-        )
-        .first();
-
+      .bind(
+        match.home_team_id,
+        tournamentId
+      )
+      .first();
+    
     const awayTeam =
       await env.DB
-        .prepare(`
+      .prepare(`
           SELECT
             t.id,
             t.name,
@@ -1218,36 +1217,35 @@ async function updateMatchResultRoute(
           AND tp.tournament_id = ?
           LIMIT 1
         `)
-        .bind(
-          match.away_team_id,
-          tournamentId
-        )
-        .first();
-
+      .bind(
+        match.away_team_id,
+        tournamentId
+      )
+      .first();
+    
     if (
       !homeTeam ||
       !awayTeam
     ) {
       return Response.json({
         success: false,
-        message:
-          "One or both teams are not registered in this tournament."
+        message: "One or both teams are not registered in this tournament."
       }, {
         status: 400
       });
     }
-
+    
     const body =
       await request
-        .json()
-        .catch(() => ({}));
-
+      .json()
+      .catch(() => ({}));
+    
     const homeScore =
       Number(body.home_score);
-
+    
     const awayScore =
       Number(body.away_score);
-
+    
     if (
       !Number.isInteger(homeScore) ||
       !Number.isInteger(awayScore) ||
@@ -1261,77 +1259,62 @@ async function updateMatchResultRoute(
         status: 400
       });
     }
-
+    
     const homePlayer =
       await getTournamentPlayerByTeam(
         env.DB,
         tournamentId,
         match.home_team_id
       );
-
+    
     const awayPlayer =
       await getTournamentPlayerByTeam(
         env.DB,
         tournamentId,
         match.away_team_id
       );
-
+    
     if (
       !homePlayer ||
       !awayPlayer
     ) {
       return Response.json({
         success: false,
-        message:
-          "One or both teams do not have tournament player records."
+        message: "One or both teams do not have tournament player records."
       }, {
         status: 400
       });
     }
-
+    
     let currentHome = {
-      played:
-        Number(homePlayer.played) || 0,
-      wins:
-        Number(homePlayer.wins) || 0,
-      draws:
-        Number(homePlayer.draws) || 0,
-      losses:
-        Number(homePlayer.losses) || 0,
-      gf:
-        Number(homePlayer.gf) || 0,
-      ga:
-        Number(homePlayer.ga) || 0,
-      points:
-        Number(homePlayer.points) || 0
+      played: Number(homePlayer.played) || 0,
+      wins: Number(homePlayer.wins) || 0,
+      draws: Number(homePlayer.draws) || 0,
+      losses: Number(homePlayer.losses) || 0,
+      gf: Number(homePlayer.gf) || 0,
+      ga: Number(homePlayer.ga) || 0,
+      points: Number(homePlayer.points) || 0
     };
-
+    
     let currentAway = {
-      played:
-        Number(awayPlayer.played) || 0,
-      wins:
-        Number(awayPlayer.wins) || 0,
-      draws:
-        Number(awayPlayer.draws) || 0,
-      losses:
-        Number(awayPlayer.losses) || 0,
-      gf:
-        Number(awayPlayer.gf) || 0,
-      ga:
-        Number(awayPlayer.ga) || 0,
-      points:
-        Number(awayPlayer.points) || 0
+      played: Number(awayPlayer.played) || 0,
+      wins: Number(awayPlayer.wins) || 0,
+      draws: Number(awayPlayer.draws) || 0,
+      losses: Number(awayPlayer.losses) || 0,
+      gf: Number(awayPlayer.gf) || 0,
+      ga: Number(awayPlayer.ga) || 0,
+      points: Number(awayPlayer.points) || 0
     };
-
+    
     if (
       Number(match.played) === 1
     ) {
       const oldHomeScore =
         Number(match.home_score);
-
+      
       const oldAwayScore =
         Number(match.away_score);
-
+      
       if (
         Number.isInteger(oldHomeScore) &&
         Number.isInteger(oldAwayScore)
@@ -1341,14 +1324,14 @@ async function updateMatchResultRoute(
             oldHomeScore,
             oldAwayScore
           );
-
+        
         currentHome =
           applyStats(
             currentHome,
             oldStats.home,
             -1
           );
-
+        
         currentAway =
           applyStats(
             currentAway,
@@ -1357,30 +1340,30 @@ async function updateMatchResultRoute(
           );
       }
     }
-
+    
     const newStats =
       getResultStats(
         homeScore,
         awayScore
       );
-
+    
     const newHomeStats =
       applyStats(
         currentHome,
         newStats.home,
         1
       );
-
+    
     const newAwayStats =
       applyStats(
         currentAway,
         newStats.away,
         1
       );
-
+    
     let winnerTeamId =
       null;
-
+    
     if (
       homeScore > awayScore
     ) {
@@ -1392,13 +1375,13 @@ async function updateMatchResultRoute(
       winnerTeamId =
         match.away_team_id;
     }
-
+    
     const playedAt =
       Number(match.played) === 1 &&
-      match.played_at
-        ? match.played_at
-        : Date.now();
-
+      match.played_at ?
+      match.played_at :
+      Date.now();
+    
     const result =
       await updateMatchResultAtomic(
         env.DB,
@@ -1408,8 +1391,7 @@ async function updateMatchResultRoute(
           away_score: awayScore,
           played: 1,
           played_at: playedAt,
-          winner_team_id:
-            winnerTeamId
+          winner_team_id: winnerTeamId
         },
         match.home_team_id,
         match.away_team_id,
@@ -1417,13 +1399,13 @@ async function updateMatchResultRoute(
         newAwayStats,
         tournamentId
       );
-
+    
     let groupStageResult =
       null;
-
+    
     let knockoutResult =
       null;
-
+    
     if (
       match.match_type ===
       "group"
@@ -1435,7 +1417,7 @@ async function updateMatchResultRoute(
           tournament
         );
     }
-
+    
     if (
       match.match_type === "knockout" ||
       match.match_type === "third_place"
@@ -1447,27 +1429,24 @@ async function updateMatchResultRoute(
           matchId
         );
     }
-
+    
     return Response.json({
       success: true,
       match: result.match,
       players: result.players,
-      groupStage:
-        groupStageResult,
-      knockout:
-        knockoutResult
+      groupStage: groupStageResult,
+      knockout: knockoutResult
     });
-
+    
   } catch (error) {
     console.error(
       "Update match result error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to save match result."
     }, {
       status: 500
@@ -2669,7 +2648,7 @@ async function reviewMatchSubmissionRoute(
         env.DB,
         tournamentId
       );
-
+    
     if (!tournament) {
       return Response.json({
         success: false,
@@ -2678,11 +2657,11 @@ async function reviewMatchSubmissionRoute(
         status: 404
       });
     }
-
+    
     if (
       user.role !== "admin" ||
       String(tournament.admin_uid) !==
-        String(user.id)
+      String(user.id)
     ) {
       return Response.json({
         success: false,
@@ -2691,14 +2670,14 @@ async function reviewMatchSubmissionRoute(
         status: 404
       });
     }
-
+    
     const submission =
       await getMatchSubmission(
         env.DB,
         tournamentId,
         submissionId
       );
-
+    
     if (!submission) {
       return Response.json({
         success: false,
@@ -2707,48 +2686,46 @@ async function reviewMatchSubmissionRoute(
         status: 404
       });
     }
-
+    
     if (
       submission.status !== "pending"
     ) {
       return Response.json({
         success: false,
-        message:
-          "This submission has already been reviewed."
+        message: "This submission has already been reviewed."
       }, {
         status: 409
       });
     }
-
+    
     const body =
       await request
-        .json()
-        .catch(() => ({}));
-
+      .json()
+      .catch(() => ({}));
+    
     const approved =
       body.approved === true ||
       body.status === "approved";
-
+    
     const rejected =
       body.approved === false ||
       body.status === "rejected";
-
+    
     if (
       !approved &&
       !rejected
     ) {
       return Response.json({
         success: false,
-        message:
-          "Specify whether the submission is approved or rejected."
+        message: "Specify whether the submission is approved or rejected."
       }, {
         status: 400
       });
     }
-
+    
     const now =
       Date.now();
-
+    
     if (rejected) {
       const rejectionReason =
         String(
@@ -2756,7 +2733,7 @@ async function reviewMatchSubmissionRoute(
           body.reason ||
           ""
         ).trim();
-
+      
       const updatedSubmission =
         await updateMatchSubmission(
           env.DB,
@@ -2766,11 +2743,10 @@ async function reviewMatchSubmissionRoute(
             status: "rejected",
             reviewed_at: now,
             reviewed_by: user.id,
-            rejection_reason:
-              rejectionReason || null
+            rejection_reason: rejectionReason || null
           }
         );
-
+      
       await env.DB
         .prepare(`
           UPDATE tournaments
@@ -2782,24 +2758,24 @@ async function reviewMatchSubmissionRoute(
           tournamentId
         )
         .run();
-
+      
       return Response.json({
         success: true,
         message: "Submission rejected.",
         submission: updatedSubmission
       });
     }
-
+    
     const match =
       await getMatch(
         env.DB,
         submission.match_id
       );
-
+    
     if (
       !match ||
       String(match.tournament_id) !==
-        String(tournamentId)
+      String(tournamentId)
     ) {
       return Response.json({
         success: false,
@@ -2808,29 +2784,28 @@ async function reviewMatchSubmissionRoute(
         status: 404
       });
     }
-
+    
     if (
       Number(match.played) === 1
     ) {
       return Response.json({
         success: false,
-        message:
-          "This match has already been played."
+        message: "This match has already been played."
       }, {
         status: 409
       });
     }
-
+    
     const homeScore =
       Number(
         submission.home_goals
       );
-
+    
     const awayScore =
       Number(
         submission.away_goals
       );
-
+    
     if (
       !Number.isInteger(homeScore) ||
       !Number.isInteger(awayScore) ||
@@ -2839,97 +2814,81 @@ async function reviewMatchSubmissionRoute(
     ) {
       return Response.json({
         success: false,
-        message:
-          "Submission contains an invalid score."
+        message: "Submission contains an invalid score."
       }, {
         status: 400
       });
     }
-
+    
     const homePlayer =
       await getTournamentPlayerByTeam(
         env.DB,
         tournamentId,
         match.home_team_id
       );
-
+    
     const awayPlayer =
       await getTournamentPlayerByTeam(
         env.DB,
         tournamentId,
         match.away_team_id
       );
-
+    
     if (
       !homePlayer ||
       !awayPlayer
     ) {
       return Response.json({
         success: false,
-        message:
-          "One or both teams do not have tournament player records."
+        message: "One or both teams do not have tournament player records."
       }, {
         status: 400
       });
     }
-
+    
     const currentHome = {
-      played:
-        Number(homePlayer.played) || 0,
-      wins:
-        Number(homePlayer.wins) || 0,
-      draws:
-        Number(homePlayer.draws) || 0,
-      losses:
-        Number(homePlayer.losses) || 0,
-      gf:
-        Number(homePlayer.gf) || 0,
-      ga:
-        Number(homePlayer.ga) || 0,
-      points:
-        Number(homePlayer.points) || 0
+      played: Number(homePlayer.played) || 0,
+      wins: Number(homePlayer.wins) || 0,
+      draws: Number(homePlayer.draws) || 0,
+      losses: Number(homePlayer.losses) || 0,
+      gf: Number(homePlayer.gf) || 0,
+      ga: Number(homePlayer.ga) || 0,
+      points: Number(homePlayer.points) || 0
     };
-
+    
     const currentAway = {
-      played:
-        Number(awayPlayer.played) || 0,
-      wins:
-        Number(awayPlayer.wins) || 0,
-      draws:
-        Number(awayPlayer.draws) || 0,
-      losses:
-        Number(awayPlayer.losses) || 0,
-      gf:
-        Number(awayPlayer.gf) || 0,
-      ga:
-        Number(awayPlayer.ga) || 0,
-      points:
-        Number(awayPlayer.points) || 0
+      played: Number(awayPlayer.played) || 0,
+      wins: Number(awayPlayer.wins) || 0,
+      draws: Number(awayPlayer.draws) || 0,
+      losses: Number(awayPlayer.losses) || 0,
+      gf: Number(awayPlayer.gf) || 0,
+      ga: Number(awayPlayer.ga) || 0,
+      points: Number(awayPlayer.points) || 0
     };
-
+    
     const newStats =
       getResultStats(
         homeScore,
         awayScore
       );
-
+    
     const newHomeStats =
       applyStats(
         currentHome,
         newStats.home,
         1
       );
-
+    
     const newAwayStats =
       applyStats(
         currentAway,
         newStats.away,
         1
       );
-
+    
     let winnerTeamId =
       null;
-
+    
     if (
       homeScore > awayScore
     ) {
@@ -2941,7 +2900,7 @@ async function reviewMatchSubmissionRoute(
       winnerTeamId =
         match.away_team_id;
     }
-
+    
     const result =
       await updateMatchResultAtomic(
         env.DB,
@@ -2951,8 +2910,7 @@ async function reviewMatchSubmissionRoute(
           away_score: awayScore,
           played: 1,
           played_at: now,
-          winner_team_id:
-            winnerTeamId
+          winner_team_id: winnerTeamId
         },
         match.home_team_id,
         match.away_team_id,
@@ -2960,7 +2918,7 @@ async function reviewMatchSubmissionRoute(
         newAwayStats,
         tournamentId
       );
-
+    
     const updatedSubmission =
       await updateMatchSubmission(
         env.DB,
@@ -2973,7 +2931,7 @@ async function reviewMatchSubmissionRoute(
           rejection_reason: null
         }
       );
-
+    
     await env.DB
       .prepare(`
         UPDATE tournaments
@@ -2985,13 +2943,13 @@ async function reviewMatchSubmissionRoute(
         tournamentId
       )
       .run();
-
+    
     let groupStageResult =
       null;
-
+    
     let knockoutResult =
       null;
-
+    
     if (
       match.match_type ===
       "group"
@@ -3003,7 +2961,7 @@ async function reviewMatchSubmissionRoute(
           tournament
         );
     }
-
+    
     if (
       match.match_type === "knockout" ||
       match.match_type === "third_place"
@@ -3015,33 +2973,26 @@ async function reviewMatchSubmissionRoute(
           match.id
         );
     }
-
+    
     return Response.json({
       success: true,
-      message:
-        "Submission approved.",
-      submission:
-        updatedSubmission,
-      match:
-        result.match,
-      players:
-        result.players,
-      groupStage:
-        groupStageResult,
-      knockout:
-        knockoutResult
+      message: "Submission approved.",
+      submission: updatedSubmission,
+      match: result.match,
+      players: result.players,
+      groupStage: groupStageResult,
+      knockout: knockoutResult
     });
-
+    
   } catch (error) {
     console.error(
       "Review match submission error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to review match submission."
     }, {
       status: 500
@@ -3313,7 +3264,10 @@ async function generateCupRoute(
       });
     }
 
-    if (tournament.admin_uid !== user.id) {
+    if (
+      tournament.admin_uid !==
+      user.id
+    ) {
       return Response.json({
         success: false,
         message:
@@ -3326,40 +3280,108 @@ async function generateCupRoute(
     const body =
       await request.json();
 
+    const settings =
+      body.settings &&
+      typeof body.settings === "object"
+        ? body.settings
+        : body;
+
     const enableGroups =
-      body.enableGroups === true;
+      settings.enableGroups === true;
 
     const groupingMode =
-      body.groupingMode === "manual"
+      settings.groupingMode === "manual"
         ? "manual"
         : "auto";
 
     const groupRoundMode =
-      body.groupRoundMode === "double"
+      settings.groupRoundMode === "double"
         ? "double"
         : "single";
 
     const knockoutPairingMode =
-      body.knockoutPairingMode === "manual"
+      settings.knockoutPairingMode === "manual"
         ? "manual"
         : "auto";
 
     const knockoutRoundMode =
-      body.knockoutRoundMode === "double"
+      settings.knockoutRoundMode === "double"
         ? "double"
         : "single";
 
     const thirdPlaceMatch =
-      body.thirdPlaceMatch === true;
+      settings.thirdPlaceMatch === true;
 
     const teamsPerGroup =
-      Number(body.teamsPerGroup);
+      Number(settings.teamsPerGroup);
 
     const teamsQualify =
-      Number(body.teamsQualify);
+      Number(settings.teamsQualify);
 
-    const knockoutSize =
-      Number(body.knockoutSize);
+    const teams =
+      await getTeamsByTournament(
+        env.DB,
+        tournamentId
+      );
+
+    if (
+      !teams ||
+      teams.length < 2
+    ) {
+      return Response.json({
+        success: false,
+        message:
+          "At least 2 teams are required."
+      }, {
+        status: 400
+      });
+    }
+
+    let knockoutSize =
+      Number(settings.knockoutSize);
+
+    if (
+      enableGroups &&
+      settings.startFrom === "group"
+    ) {
+      const groupCount =
+        groupingMode === "manual" &&
+        Array.isArray(body.groups) &&
+        body.groups.length
+          ? body.groups.length
+          : Math.ceil(
+              teams.length /
+              teamsPerGroup
+            );
+
+      knockoutSize =
+        groupCount *
+        teamsQualify;
+    }
+
+    if (
+      enableGroups &&
+      !Number.isInteger(knockoutSize)
+    ) {
+      if (
+        Number.isInteger(
+          teamsPerGroup
+        ) &&
+        Number.isInteger(
+          teamsQualify
+        )
+      ) {
+        const groupCount =
+          Math.ceil(
+            teams.length /
+            teamsPerGroup
+          );
+
+        knockoutSize =
+          groupCount *
+          teamsQualify;
+      }
+    }
 
     if (
       !Number.isInteger(knockoutSize) ||
@@ -3398,25 +3420,6 @@ async function generateCupRoute(
         success: false,
         message:
           "A third-place match requires at least 4 teams."
-      }, {
-        status: 400
-      });
-    }
-
-    const teams =
-      await getTeamsByTournament(
-        env.DB,
-        tournamentId
-      );
-
-    if (
-      !teams ||
-      teams.length < 2
-    ) {
-      return Response.json({
-        success: false,
-        message:
-          "At least 2 teams are required."
       }, {
         status: 400
       });
@@ -3530,6 +3533,9 @@ async function generateCupRoute(
       ) {
         match.tournament_id =
           tournamentId;
+
+        match.created_at =
+          now;
       }
     } else {
       if (
@@ -3554,7 +3560,7 @@ async function generateCupRoute(
             knockoutPairingMode,
             knockoutRoundMode,
             thirdPlaceMatch,
-            body.knockoutPairs
+            body.manualKnockoutPairs
           );
       } catch (error) {
         return Response.json({
@@ -3618,7 +3624,10 @@ async function generateCupRoute(
       thirdPlaceMatch,
       teamsPerGroup,
       teamsQualify,
-      knockoutSize
+      knockoutSize,
+      groupStageComplete: false,
+      knockoutGenerated:
+        !enableGroups
     };
 
     await deleteTournamentCupData(
@@ -3666,8 +3675,7 @@ async function generateCupRoute(
           ? "Cup group stage generated successfully."
           : "Direct knockout tournament generated successfully.",
       tournamentId,
-      settings:
-        updatedSettings,
+      settings: updatedSettings,
       groups,
       groupMatches,
       knockoutMatches
@@ -3689,9 +3697,11 @@ async function generateCupRoute(
     });
   }
 }
+
 function createGroupName(index) {
   return `Group ${String.fromCharCode(65 + index)}`;
 }
+
 function generateAutoGroups(
   teams,
   teamsPerGroup,
@@ -3699,25 +3709,25 @@ function generateAutoGroups(
 ) {
   const totalGroups =
     Math.ceil(teams.length / teamsPerGroup);
-
+  
   const groups = [];
-
+  
   for (let i = 0; i < totalGroups; i++) {
     const start =
       i * teamsPerGroup;
-
+    
     const groupTeams =
       teams.slice(
         start,
         start + teamsPerGroup
       );
-
+    
     if (groupTeams.length < teamsQualify) {
       throw new Error(
         `${createGroupName(i)} does not have enough teams for ${teamsQualify} qualifiers.`
       );
     }
-
+    
     groups.push({
       id: crypto.randomUUID(),
       name: createGroupName(i),
@@ -3726,9 +3736,10 @@ function generateAutoGroups(
       )
     });
   }
-
+  
   return groups;
 }
+
 function validateManualGroups(
   teams,
   groups,
@@ -3740,15 +3751,15 @@ function validateManualGroups(
       "Manual groups are required."
     );
   }
-
+  
   const registeredTeamIds =
     new Set(
       teams.map(team => team.id)
     );
-
+  
   const assignedTeamIds =
     new Set();
-
+  
   for (const group of groups) {
     if (
       !group ||
@@ -3758,7 +3769,7 @@ function validateManualGroups(
         "Invalid manual group data."
       );
     }
-
+    
     if (
       group.teamIds.length > teamsPerGroup
     ) {
@@ -3766,7 +3777,7 @@ function validateManualGroups(
         `${group.name || "A group"} has more than ${teamsPerGroup} teams.`
       );
     }
-
+    
     if (
       group.teamIds.length < teamsQualify
     ) {
@@ -3774,24 +3785,24 @@ function validateManualGroups(
         `${group.name || "A group"} does not have enough teams for ${teamsQualify} qualifiers.`
       );
     }
-
+    
     for (const teamId of group.teamIds) {
       if (!registeredTeamIds.has(teamId)) {
         throw new Error(
           "A manual group contains a team that is not registered in this tournament."
         );
       }
-
+      
       if (assignedTeamIds.has(teamId)) {
         throw new Error(
           "A team cannot belong to more than one group."
         );
       }
-
+      
       assignedTeamIds.add(teamId);
     }
   }
-
+  
   if (
     assignedTeamIds.size !==
     registeredTeamIds.size
@@ -3800,61 +3811,58 @@ function validateManualGroups(
       "Every registered team must be assigned to exactly one group."
     );
   }
-
+  
   return groups.map(
     (group, index) => ({
-      id:
-        group.id ||
+      id: group.id ||
         crypto.randomUUID(),
-
-      name:
-        group.name ||
+      
+      name: group.name ||
         createGroupName(index),
-
+      
       teamIds: [...group.teamIds]
     })
   );
 }
+
 function generateCupGroupMatches(
   groups,
   groupRoundMode
 ) {
   const matches = [];
-
+  
   for (const group of groups) {
     let teams = [...group.teamIds];
-
+    
     if (teams.length < 2) {
       continue;
     }
-
+    
     const hasBye =
       teams.length % 2 !== 0;
-
+    
     if (hasBye) {
       teams.push(null);
     }
-
+    
     const totalTeams = teams.length;
     const rounds = totalTeams - 1;
     const matchesPerRound = totalTeams / 2;
-
+    
     const firstLegFixtures = [];
-
+    
     for (let round = 0; round < rounds; round++) {
       const roundFixtures = [];
-
+      
       for (
-        let i = 0;
-        i < matchesPerRound;
-        i++
+        let i = 0; i < matchesPerRound; i++
       ) {
         const home =
           teams[i];
-
+        
         const away =
           teams[totalTeams - 1 - i];
-
+        
         if (home && away) {
           roundFixtures.push({
             home_team_id: home,
@@ -3862,60 +3870,52 @@ function generateCupGroupMatches(
           });
         }
       }
-
+      
       firstLegFixtures.push(
         roundFixtures
       );
-
+      
       const fixedTeam =
         teams[0];
-
+      
       const rotatingTeams =
         teams.slice(1);
-
+      
       rotatingTeams.unshift(
         rotatingTeams.pop()
       );
-
+      
       teams = [
         fixedTeam,
         ...rotatingTeams
       ];
     }
-
+    
     for (
-      let roundIndex = 0;
-      roundIndex < firstLegFixtures.length;
-      roundIndex++
+      let roundIndex = 0; roundIndex < firstLegFixtures.length; roundIndex++
     ) {
       const fixtures =
         firstLegFixtures[roundIndex];
-
+      
       for (
-        let slot = 0;
-        slot < fixtures.length;
-        slot++
+        let slot = 0; slot < fixtures.length; slot++
       ) {
         const fixture =
           fixtures[slot];
-
+        
         matches.push({
           id: crypto.randomUUID(),
           tournament_id: null,
-          home_team_id:
-            fixture.home_team_id,
-          away_team_id:
-            fixture.away_team_id,
+          home_team_id: fixture.home_team_id,
+          away_team_id: fixture.away_team_id,
           home_score: null,
           away_score: null,
           played: 0,
           played_at: null,
           match_type: "group",
           group_id: group.id,
-          round:
-            `Group ${group.name} - Round ${roundIndex + 1}`,
-          round_index:
-            roundIndex + 1,
+          round: `Group ${group.name} - Round ${roundIndex + 1}`,
+          round_index: roundIndex + 1,
           slot,
           winner_team_id: null,
           scheduled_at: null,
@@ -3925,44 +3925,36 @@ function generateCupGroupMatches(
         });
       }
     }
-
+    
     if (groupRoundMode === "double") {
       const firstLegRoundCount =
         firstLegFixtures.length;
-
+      
       for (
-        let roundIndex = 0;
-        roundIndex < firstLegFixtures.length;
-        roundIndex++
+        let roundIndex = 0; roundIndex < firstLegFixtures.length; roundIndex++
       ) {
         const fixtures =
           firstLegFixtures[roundIndex];
-
+        
         for (
-          let slot = 0;
-          slot < fixtures.length;
-          slot++
+          let slot = 0; slot < fixtures.length; slot++
         ) {
           const fixture =
             fixtures[slot];
-
+          
           matches.push({
             id: crypto.randomUUID(),
             tournament_id: null,
-            home_team_id:
-              fixture.away_team_id,
-            away_team_id:
-              fixture.home_team_id,
+            home_team_id: fixture.away_team_id,
+            away_team_id: fixture.home_team_id,
             home_score: null,
             away_score: null,
             played: 0,
             played_at: null,
             match_type: "group",
             group_id: group.id,
-            round:
-              `Group ${group.name} - Round ${firstLegRoundCount + roundIndex + 1}`,
-            round_index:
-              firstLegRoundCount +
+            round: `Group ${group.name} - Round ${firstLegRoundCount + roundIndex + 1}`,
+            round_index: firstLegRoundCount +
               roundIndex +
               1,
             slot,
@@ -3976,7 +3968,7 @@ function generateCupGroupMatches(
       }
     }
   }
-
+  
   return matches;
 }
 
@@ -3987,7 +3979,7 @@ function getKnockoutRoundName(size) {
   if (size === 8) return "Quarter Final";
   if (size === 4) return "Semi Final";
   if (size === 2) return "Final";
-
+  
   return "Knockout";
 }
 
@@ -4036,7 +4028,7 @@ function generateDirectKnockoutMatches(
       "Invalid team data."
     );
   }
-
+  
   if (
     ![2, 4, 8, 16, 32].includes(
       knockoutSize
@@ -4046,13 +4038,13 @@ function generateDirectKnockoutMatches(
       "Invalid knockout bracket size."
     );
   }
-
+  
   if (teams.length !== knockoutSize) {
     throw new Error(
       `This knockout requires exactly ${knockoutSize} teams, but ${teams.length} teams are registered.`
     );
   }
-
+  
   if (
     !["auto", "manual"].includes(
       knockoutPairingMode
@@ -4062,7 +4054,7 @@ function generateDirectKnockoutMatches(
       "Invalid knockout pairing mode."
     );
   }
-
+  
   if (
     !["single", "double"].includes(
       knockoutRoundMode
@@ -4072,7 +4064,7 @@ function generateDirectKnockoutMatches(
       "Invalid knockout round mode."
     );
   }
-
+  
   if (
     thirdPlaceMatch &&
     knockoutSize < 4
@@ -4081,14 +4073,14 @@ function generateDirectKnockoutMatches(
       "A third-place match requires at least 4 teams."
     );
   }
-
+  
   const registeredTeamIds =
     new Set(
       teams.map(team => team.id)
     );
-
+  
   let pairs = [];
-
+  
   if (
     knockoutPairingMode === "manual"
   ) {
@@ -4099,10 +4091,10 @@ function generateDirectKnockoutMatches(
         "Manual knockout pairings are required."
       );
     }
-
+    
     const expectedPairs =
       knockoutSize / 2;
-
+    
     if (
       knockoutPairs.length !==
       expectedPairs
@@ -4111,10 +4103,10 @@ function generateDirectKnockoutMatches(
         `Exactly ${expectedPairs} knockout pairings are required.`
       );
     }
-
+    
     const pairedTeams =
       new Set();
-
+    
     for (
       const pair of knockoutPairs
     ) {
@@ -4126,13 +4118,13 @@ function generateDirectKnockoutMatches(
           "Each knockout pairing must contain exactly two teams."
         );
       }
-
+      
       const homeTeamId =
         pair[0];
-
+      
       const awayTeamId =
         pair[1];
-
+      
       if (
         !registeredTeamIds.has(
           homeTeamId
@@ -4145,7 +4137,7 @@ function generateDirectKnockoutMatches(
           "A knockout pairing contains a team that is not registered in this tournament."
         );
       }
-
+      
       if (
         homeTeamId === awayTeamId
       ) {
@@ -4153,7 +4145,7 @@ function generateDirectKnockoutMatches(
           "A team cannot play against itself."
         );
       }
-
+      
       if (
         pairedTeams.has(
           homeTeamId
@@ -4166,21 +4158,21 @@ function generateDirectKnockoutMatches(
           "A team cannot appear in more than one knockout pairing."
         );
       }
-
+      
       pairedTeams.add(
         homeTeamId
       );
-
+      
       pairedTeams.add(
         awayTeamId
       );
-
+      
       pairs.push([
         homeTeamId,
         awayTeamId
       ]);
     }
-
+    
     if (
       pairedTeams.size !==
       registeredTeamIds.size
@@ -4190,21 +4182,18 @@ function generateDirectKnockoutMatches(
       );
     }
   } else {
-    const shuffledTeams =
-      [...teams];
-
+    const shuffledTeams = [...teams];
+    
     for (
       let i =
-        shuffledTeams.length - 1;
-      i > 0;
-      i--
+        shuffledTeams.length - 1; i > 0; i--
     ) {
       const j =
         Math.floor(
           Math.random() *
           (i + 1)
         );
-
+      
       [
         shuffledTeams[i],
         shuffledTeams[j]
@@ -4213,11 +4202,9 @@ function generateDirectKnockoutMatches(
         shuffledTeams[i]
       ];
     }
-
+    
     for (
-      let i = 0;
-      i < shuffledTeams.length;
-      i += 2
+      let i = 0; i < shuffledTeams.length; i += 2
     ) {
       pairs.push([
         shuffledTeams[i].id,
@@ -4225,14 +4212,14 @@ function generateDirectKnockoutMatches(
       ]);
     }
   }
-
+  
   const matches = [];
-
+  
   let currentSize =
     knockoutSize;
-
+  
   let roundIndex = 1;
-
+  
   while (
     currentSize >= 2
   ) {
@@ -4240,28 +4227,26 @@ function generateDirectKnockoutMatches(
       getKnockoutRoundName(
         currentSize
       );
-
+    
     const matchCount =
       currentSize / 2;
-
+    
     for (
-      let slot = 0;
-      slot < matchCount;
-      slot++
+      let slot = 0; slot < matchCount; slot++
     ) {
       let homeTeamId = null;
       let awayTeamId = null;
-
+      
       if (
         roundIndex === 1
       ) {
         homeTeamId =
           pairs[slot][0];
-
+        
         awayTeamId =
           pairs[slot][1];
       }
-
+      
       matches.push(
         createKnockoutMatch(
           homeTeamId,
@@ -4272,7 +4257,7 @@ function generateDirectKnockoutMatches(
           1
         )
       );
-
+      
       if (
         knockoutRoundMode ===
         "double"
@@ -4289,13 +4274,13 @@ function generateDirectKnockoutMatches(
         );
       }
     }
-
+    
     currentSize =
       currentSize / 2;
-
+    
     roundIndex++;
   }
-
+  
   if (thirdPlaceMatch) {
     matches.push(
       createKnockoutMatch(
@@ -4309,7 +4294,7 @@ function generateDirectKnockoutMatches(
       )
     );
   }
-
+  
   return matches;
 }
 
@@ -4330,10 +4315,10 @@ function pairByGroupRules(
       `Invalid number of qualified teams. Expected ${knockoutSize}.`
     );
   }
-
+  
   const groupedTeams =
     new Map();
-
+  
   for (const team of teams) {
     if (
       !team.groupId
@@ -4342,7 +4327,7 @@ function pairByGroupRules(
         "Qualified team is missing group information."
       );
     }
-
+    
     if (
       !groupedTeams.has(
         team.groupId
@@ -4357,24 +4342,23 @@ function pairByGroupRules(
         }
       );
     }
-
+    
     groupedTeams
       .get(team.groupId)
       .teams.push(team);
   }
-
-  const groupList =
-    [...groupedTeams.values()]
-      .sort(
-        (a, b) =>
-          String(a.name).localeCompare(
-            String(b.name)
-          )
-      );
-
+  
+  const groupList = [...groupedTeams.values()]
+    .sort(
+      (a, b) =>
+      String(a.name).localeCompare(
+        String(b.name)
+      )
+    );
+  
   const groupCount =
     groupList.length;
-
+  
   if (
     groupCount < 2
   ) {
@@ -4382,7 +4366,7 @@ function pairByGroupRules(
       "At least two groups are required for automatic group-based knockout pairing."
     );
   }
-
+  
   if (
     groupCount % 2 !== 0
   ) {
@@ -4390,41 +4374,39 @@ function pairByGroupRules(
       "The number of groups must be even for automatic group-based knockout pairing."
     );
   }
-
+  
   for (const group of groupList) {
     group.teams.sort(
       (a, b) =>
-        Number(a.pos) -
-        Number(b.pos)
+      Number(a.pos) -
+      Number(b.pos)
     );
   }
-
+  
   const result = [];
-
+  
   const offset =
     groupCount / 2;
-
+  
   const maxQualifiers =
     Math.max(
       ...groupList.map(
         group =>
-          group.teams.length
+        group.teams.length
       )
     );
-
+  
   for (
-    let position = 0;
-    position < maxQualifiers;
-    position++
+    let position = 0; position < maxQualifiers; position++
   ) {
     const positionTeams =
       groupList
-        .map(
-          group =>
-            group.teams[position]
-        )
-        .filter(Boolean);
-
+      .map(
+        group =>
+        group.teams[position]
+      )
+      .filter(Boolean);
+    
     if (
       positionTeams.length !==
       groupCount
@@ -4433,37 +4415,35 @@ function pairByGroupRules(
         "All groups must contain the same number of qualified teams."
       );
     }
-
+    
     for (
-      let i = 0;
-      i < groupCount / 2;
-      i++
+      let i = 0; i < groupCount / 2; i++
     ) {
       const first =
         positionTeams[i];
-
+      
       const second =
         positionTeams[
           (i + offset) %
-            groupCount
+          groupCount
         ];
-
+      
       if (
         !first ||
         !second ||
         first.groupId ===
-          second.groupId
+        second.groupId
       ) {
         throw new Error(
           "Unable to create valid knockout pairings using the group pairing rules."
         );
       }
-
+      
       result.push(first);
       result.push(second);
     }
   }
-
+  
   if (
     result.length !==
     knockoutSize
@@ -4472,7 +4452,7 @@ function pairByGroupRules(
       `Invalid knockout pairing count. Expected ${knockoutSize}, got ${result.length}.`
     );
   }
-
+  
   return result;
 }
 async function getCupQualifiedTeams(
@@ -4488,7 +4468,7 @@ async function getCupQualifiedTeams(
       "Invalid number of qualifying teams."
     );
   }
-
+  
   const result =
     await db.prepare(`
       SELECT
@@ -4519,15 +4499,15 @@ async function getCupQualifiedTeams(
         tp.gf DESC,
         t.name ASC
     `)
-      .bind(tournamentId)
-      .all();
-
+    .bind(tournamentId)
+    .all();
+  
   const rows =
     result.results || [];
-
+  
   const groups =
     new Map();
-
+  
   for (const row of rows) {
     if (!groups.has(row.group_id)) {
       groups.set(row.group_id, {
@@ -4536,32 +4516,24 @@ async function getCupQualifiedTeams(
         teams: []
       });
     }
-
+    
     groups.get(row.group_id).teams.push({
       id: row.team_id,
       name: row.team_name,
-      played:
-        Number(row.played) || 0,
-      wins:
-        Number(row.wins) || 0,
-      draws:
-        Number(row.draws) || 0,
-      losses:
-        Number(row.losses) || 0,
-      gf:
-        Number(row.gf) || 0,
-      ga:
-        Number(row.ga) || 0,
-      gd:
-        (Number(row.gf) || 0) -
+      played: Number(row.played) || 0,
+      wins: Number(row.wins) || 0,
+      draws: Number(row.draws) || 0,
+      losses: Number(row.losses) || 0,
+      gf: Number(row.gf) || 0,
+      ga: Number(row.ga) || 0,
+      gd: (Number(row.gf) || 0) -
         (Number(row.ga) || 0),
-      points:
-        Number(row.points) || 0
+      points: Number(row.points) || 0
     });
   }
-
+  
   const qualifiedTeams = [];
-
+  
   for (const group of groups.values()) {
     if (
       group.teams.length <
@@ -4571,39 +4543,39 @@ async function getCupQualifiedTeams(
         `${group.name} does not have enough teams for ${teamsQualify} qualifiers.`
       );
     }
-
+    
     group.teams.sort(
       (a, b) => {
         if (b.points !== a.points) {
           return b.points - a.points;
         }
-
+        
         if (b.gd !== a.gd) {
           return b.gd - a.gd;
         }
-
+        
         if (b.gf !== a.gf) {
           return b.gf - a.gf;
         }
-
+        
         return a.name.localeCompare(
           b.name
         );
       }
     );
-
+    
     group.teams.forEach(
       (team, index) => {
         team.pos = index + 1;
       }
     );
-
+    
     const qualifiers =
       group.teams.slice(
         0,
         teamsQualify
       );
-
+    
     for (const team of qualifiers) {
       qualifiedTeams.push({
         id: team.id,
@@ -4614,7 +4586,7 @@ async function getCupQualifiedTeams(
       });
     }
   }
-
+  
   return {
     groups: [...groups.values()],
     qualifiedTeams
@@ -4631,9 +4603,9 @@ async function checkGroupStageCompletion(
         complete: false
       };
     }
-
+    
     let settings = {};
-
+    
     try {
       if (
         typeof tournament.settings ===
@@ -4646,7 +4618,7 @@ async function checkGroupStageCompletion(
       } else if (
         tournament.settings &&
         typeof tournament.settings ===
-          "object"
+        "object"
       ) {
         settings = {
           ...tournament.settings
@@ -4655,7 +4627,7 @@ async function checkGroupStageCompletion(
     } catch {
       settings = {};
     }
-
+    
     if (
       settings.enableGroups !== true
     ) {
@@ -4663,7 +4635,7 @@ async function checkGroupStageCompletion(
         complete: false
       };
     }
-
+    
     if (
       settings.groupStageComplete ===
       true
@@ -4673,7 +4645,7 @@ async function checkGroupStageCompletion(
         alreadyComplete: true
       };
     }
-
+    
     const remainingResult =
       await db.prepare(`
         SELECT COUNT(*) AS remaining
@@ -4684,12 +4656,12 @@ async function checkGroupStageCompletion(
       `).bind(
         tournamentId
       ).first();
-
+    
     const remaining =
       Number(
         remainingResult?.remaining
       ) || 0;
-
+    
     if (
       remaining > 0
     ) {
@@ -4698,17 +4670,17 @@ async function checkGroupStageCompletion(
         remaining
       };
     }
-
+    
     const teamsQualify =
       Number(
         settings.teamsQualify
       );
-
+    
     const knockoutSize =
       Number(
         settings.knockoutSize
       );
-
+    
     if (
       !Number.isInteger(
         teamsQualify
@@ -4719,7 +4691,7 @@ async function checkGroupStageCompletion(
         "Invalid number of qualifying teams."
       );
     }
-
+    
     if (
       !Number.isInteger(
         knockoutSize
@@ -4732,17 +4704,17 @@ async function checkGroupStageCompletion(
         "Invalid knockout bracket size."
       );
     }
-
+    
     const qualification =
       await getCupQualifiedTeams(
         db,
         tournamentId,
         teamsQualify
       );
-
+    
     const qualifiedTeams =
       qualification.qualifiedTeams;
-
+    
     if (
       qualifiedTeams.length !==
       knockoutSize
@@ -4751,7 +4723,7 @@ async function checkGroupStageCompletion(
         `The group stage produced ${qualifiedTeams.length} qualified teams, but the knockout requires ${knockoutSize}.`
       );
     }
-
+    
     if (
       settings.knockoutPairingMode ===
       "manual"
@@ -4770,43 +4742,41 @@ async function checkGroupStageCompletion(
         Date.now(),
         tournamentId
       ).run();
-
+      
       return {
         complete: true,
         knockoutGenerated: false,
         manualPairingRequired: true
       };
     }
-
+    
     const pairedTeams =
       pairByGroupRules(
         qualifiedTeams,
         knockoutSize
       );
-
+    
     const knockoutPairs = [];
-
+    
     for (
-      let i = 0;
-      i < pairedTeams.length;
-      i += 2
+      let i = 0; i < pairedTeams.length; i += 2
     ) {
       knockoutPairs.push([
         pairedTeams[i].id,
         pairedTeams[i + 1].id
       ]);
     }
-
+    
     const knockoutRoundMode =
       settings.knockoutRoundMode ===
-      "double"
-        ? "double"
-        : "single";
-
+      "double" ?
+      "double" :
+      "single";
+    
     const thirdPlaceMatch =
       settings.thirdPlaceMatch ===
       true;
-
+    
     const knockoutMatches =
       generateDirectKnockoutMatches(
         pairedTeams.map(
@@ -4821,25 +4791,25 @@ async function checkGroupStageCompletion(
         thirdPlaceMatch,
         knockoutPairs
       );
-
+    
     const now =
       Date.now();
-
+    
     for (
       const match of knockoutMatches
     ) {
       match.tournament_id =
         tournamentId;
-
+      
       match.created_at =
         now;
     }
-
+    
     await createMatchesBatch(
       db,
       knockoutMatches
     );
-
+    
     await db.prepare(`
       UPDATE tournaments
       SET
@@ -4855,19 +4825,19 @@ async function checkGroupStageCompletion(
       now,
       tournamentId
     ).run();
-
+    
     return {
       complete: true,
       knockoutGenerated: true,
       knockoutMatches
     };
-
+    
   } catch (error) {
     console.error(
       "checkGroupStageCompletion error:",
       error
     );
-
+    
     throw error;
   }
 }
@@ -4882,13 +4852,13 @@ async function processKnockoutResult(
       db,
       matchId
     );
-
+  
   if (!match) {
     throw new Error(
       "Match not found."
     );
   }
-
+  
   if (
     String(match.tournament_id) !==
     String(tournamentId)
@@ -4897,7 +4867,7 @@ async function processKnockoutResult(
       "Match does not belong to this tournament."
     );
   }
-
+  
   if (
     match.match_type !== "knockout" &&
     match.match_type !== "third_place"
@@ -4907,7 +4877,7 @@ async function processKnockoutResult(
       reason: "Not a knockout match."
     };
   }
-
+  
   if (
     Number(match.played) !== 1
   ) {
@@ -4916,17 +4886,17 @@ async function processKnockoutResult(
       reason: "Match has not been played."
     };
   }
-
+  
   if (
     match.match_type ===
     "third_place"
   ) {
     const homeScore =
       Number(match.home_score);
-
+    
     const awayScore =
       Number(match.away_score);
-
+    
     if (
       !Number.isInteger(homeScore) ||
       !Number.isInteger(awayScore)
@@ -4936,22 +4906,21 @@ async function processKnockoutResult(
         reason: "Invalid third-place score."
       };
     }
-
+    
     if (
       homeScore === awayScore
     ) {
       return {
         processed: false,
-        reason:
-          "Third-place match is tied."
+        reason: "Third-place match is tied."
       };
     }
-
+    
     const winnerTeamId =
-      homeScore > awayScore
-        ? match.home_team_id
-        : match.away_team_id;
-
+      homeScore > awayScore ?
+      match.home_team_id :
+      match.away_team_id;
+    
     await db.prepare(`
       UPDATE matches
       SET
@@ -4963,14 +4932,14 @@ async function processKnockoutResult(
       Date.now(),
       matchId
     ).run();
-
+    
     return {
       processed: true,
       winnerTeamId,
       thirdPlace: true
     };
   }
-
+  
   const tournament =
     await db.prepare(`
       SELECT settings
@@ -4979,9 +4948,9 @@ async function processKnockoutResult(
     `).bind(
       tournamentId
     ).first();
-
+  
   let settings = {};
-
+  
   try {
     if (
       typeof tournament?.settings ===
@@ -4994,7 +4963,7 @@ async function processKnockoutResult(
     } else if (
       tournament?.settings &&
       typeof tournament.settings ===
-        "object"
+      "object"
     ) {
       settings =
         tournament.settings;
@@ -5002,16 +4971,16 @@ async function processKnockoutResult(
   } catch {
     settings = {};
   }
-
+  
   const isDoubleLeg =
     settings.knockoutRoundMode ===
     "double";
-
+  
   const knockoutSize =
     Number(
       settings.knockoutSize
     );
-
+  
   if (
     !Number.isInteger(knockoutSize) ||
     ![2, 4, 8, 16, 32].includes(
@@ -5022,16 +4991,16 @@ async function processKnockoutResult(
       "Invalid knockout bracket size."
     );
   }
-
+  
   const roundIndex =
     Number(match.round_index);
-
+  
   const slot =
     Number(match.slot);
-
+  
   let winnerTeamId =
     null;
-
+  
   if (isDoubleLeg) {
     const legsResult =
       await db.prepare(`
@@ -5055,44 +5024,42 @@ async function processKnockoutResult(
         roundIndex,
         slot
       ).all();
-
+    
     const legs =
       legsResult.results || [];
-
+    
     const firstLeg =
       legs.find(
         item =>
-          Number(item.leg) === 1
+        Number(item.leg) === 1
       );
-
+    
     const secondLeg =
       legs.find(
         item =>
-          Number(item.leg) === 2
+        Number(item.leg) === 2
       );
-
+    
     if (
       !firstLeg ||
       !secondLeg
     ) {
       return {
         processed: false,
-        reason:
-          "Both knockout legs have not been generated."
+        reason: "Both knockout legs have not been generated."
       };
     }
-
+    
     if (
       Number(firstLeg.played) !== 1 ||
       Number(secondLeg.played) !== 1
     ) {
       return {
         processed: false,
-        reason:
-          "Waiting for both knockout legs."
+        reason: "Waiting for both knockout legs."
       };
     }
-
+    
     if (
       !firstLeg.home_team_id ||
       !firstLeg.away_team_id ||
@@ -5101,42 +5068,41 @@ async function processKnockoutResult(
     ) {
       return {
         processed: false,
-        reason:
-          "Knockout teams are not fully assigned."
+        reason: "Knockout teams are not fully assigned."
       };
     }
-
+    
     const teamA =
       firstLeg.home_team_id;
-
+    
     const teamB =
       firstLeg.away_team_id;
-
+    
     let teamAScore = 0;
     let teamBScore = 0;
-
+    
     if (
       firstLeg.home_team_id === teamA
     ) {
       teamAScore +=
         Number(firstLeg.home_score) || 0;
-
+      
       teamBScore +=
         Number(firstLeg.away_score) || 0;
     } else {
       teamAScore +=
         Number(firstLeg.away_score) || 0;
-
+      
       teamBScore +=
         Number(firstLeg.home_score) || 0;
     }
-
+    
     if (
       secondLeg.home_team_id === teamA
     ) {
       teamAScore +=
         Number(secondLeg.home_score) || 0;
-
+      
       teamBScore +=
         Number(secondLeg.away_score) || 0;
     } else if (
@@ -5144,66 +5110,62 @@ async function processKnockoutResult(
     ) {
       teamAScore +=
         Number(secondLeg.away_score) || 0;
-
+      
       teamBScore +=
         Number(secondLeg.home_score) || 0;
     } else {
       return {
         processed: false,
-        reason:
-          "Second leg does not contain the correct teams."
+        reason: "Second leg does not contain the correct teams."
       };
     }
-
+    
     if (
       teamAScore === teamBScore
     ) {
       return {
         processed: false,
-        reason:
-          "Aggregate score is tied."
+        reason: "Aggregate score is tied."
       };
     }
-
+    
     winnerTeamId =
-      teamAScore > teamBScore
-        ? teamA
-        : teamB;
-
+      teamAScore > teamBScore ?
+      teamA :
+      teamB;
+    
   } else {
     const homeScore =
       Number(match.home_score);
-
+    
     const awayScore =
       Number(match.away_score);
-
+    
     if (
       !Number.isInteger(homeScore) ||
       !Number.isInteger(awayScore)
     ) {
       return {
         processed: false,
-        reason:
-          "Invalid knockout score."
+        reason: "Invalid knockout score."
       };
     }
-
+    
     if (
       homeScore === awayScore
     ) {
       return {
         processed: false,
-        reason:
-          "Knockout match is tied."
+        reason: "Knockout match is tied."
       };
     }
-
+    
     winnerTeamId =
-      homeScore > awayScore
-        ? match.home_team_id
-        : match.away_team_id;
+      homeScore > awayScore ?
+      match.home_team_id :
+      match.away_team_id;
   }
-
+  
   await db.prepare(`
     UPDATE matches
     SET
@@ -5215,12 +5177,12 @@ async function processKnockoutResult(
     Date.now(),
     matchId
   ).run();
-
+  
   const finalRoundIndex =
     Math.log2(
       knockoutSize
     );
-
+  
   if (
     roundIndex ===
     finalRoundIndex
@@ -5233,7 +5195,7 @@ async function processKnockoutResult(
       `).bind(
         winnerTeamId
       ).first();
-
+    
     await db.prepare(`
       UPDATE tournaments
       SET
@@ -5247,17 +5209,17 @@ async function processKnockoutResult(
       Date.now(),
       tournamentId
     ).run();
-
+    
     return {
       processed: true,
       winnerTeamId,
       champion: true
     };
   }
-
+  
   const semifinalRoundIndex =
     finalRoundIndex - 1;
-
+  
   if (
     roundIndex ===
     semifinalRoundIndex
@@ -5268,24 +5230,24 @@ async function processKnockoutResult(
       roundIndex
     );
   }
-
+  
   const nextRoundIndex =
     roundIndex + 1;
-
+  
   const nextSlot =
     Math.ceil(
       slot / 2
     );
-
+  
   const nextRound =
     getKnockoutRoundName(
       knockoutSize /
-        Math.pow(
-          2,
-          nextRoundIndex
-        )
+      Math.pow(
+        2,
+        nextRoundIndex
+      )
     );
-
+  
   const nextMatchesResult =
     await db.prepare(`
       SELECT *
@@ -5300,26 +5262,25 @@ async function processKnockoutResult(
       nextRoundIndex,
       nextSlot
     ).all();
-
+  
   const nextMatches =
     nextMatchesResult.results || [];
-
+  
   if (!nextMatches.length) {
     return {
       processed: true,
       winnerTeamId,
       advanced: false,
-      reason:
-        "Winner determined, but next-round match does not exist yet."
+      reason: "Winner determined, but next-round match does not exist yet."
     };
   }
-
+  
   const now =
     Date.now();
-
+  
   const isFirstSlot =
     slot % 2 === 1;
-
+  
   if (isFirstSlot) {
     await db.prepare(`
       UPDATE matches
@@ -5338,7 +5299,7 @@ async function processKnockoutResult(
       nextRoundIndex,
       nextSlot
     ).run();
-
+    
     if (isDoubleLeg) {
       await db.prepare(`
         UPDATE matches
@@ -5358,7 +5319,7 @@ async function processKnockoutResult(
         nextSlot
       ).run();
     }
-
+    
   } else {
     await db.prepare(`
       UPDATE matches
@@ -5377,7 +5338,7 @@ async function processKnockoutResult(
       nextRoundIndex,
       nextSlot
     ).run();
-
+    
     if (isDoubleLeg) {
       await db.prepare(`
         UPDATE matches
@@ -5398,7 +5359,7 @@ async function processKnockoutResult(
       ).run();
     }
   }
-
+  
   return {
     processed: true,
     winnerTeamId,
@@ -5437,129 +5398,123 @@ async function prepareThirdPlaceMatch(
       tournamentId,
       completedRound
     ).all();
-
+  
   const semifinalMatches =
     semifinalResult.results || [];
-
+  
   if (
     semifinalMatches.length !== 2 &&
     semifinalMatches.length !== 4
   ) {
     return {
       prepared: false,
-      reason:
-        "Invalid semifinal match count."
+      reason: "Invalid semifinal match count."
     };
   }
-
-  const slots =
-    [
-      ...new Set(
-        semifinalMatches.map(
-          item =>
-            Number(item.slot)
-        )
+  
+  const slots = [
+    ...new Set(
+      semifinalMatches.map(
+        item =>
+        Number(item.slot)
       )
-    ];
-
+    )
+  ];
+  
   if (
     slots.length !== 2
   ) {
     return {
       prepared: false,
-      reason:
-        "Both semifinal ties are not available."
+      reason: "Both semifinal ties are not available."
     };
   }
-
+  
   const losers = [];
-
+  
   for (
     const slot of slots
   ) {
     const tie =
       semifinalMatches.filter(
         item =>
-          Number(item.slot) ===
-          slot
+        Number(item.slot) ===
+        slot
       );
-
+    
     if (
       tie.length !== 1 &&
       tie.length !== 2
     ) {
       return {
         prepared: false,
-        reason:
-          "Invalid semifinal tie."
+        reason: "Invalid semifinal tie."
       };
     }
-
+    
     if (
       tie.some(
         item =>
-          Number(item.played) !== 1
+        Number(item.played) !== 1
       )
     ) {
       return {
         prepared: false,
-        reason:
-          "Both semifinal ties are not completed."
+        reason: "Both semifinal ties are not completed."
       };
     }
-
+    
     let winnerTeamId =
       null;
-
+    
     if (tie.length === 2) {
       const leg1 =
         tie.find(
           item =>
-            Number(item.leg) === 1
+          Number(item.leg) === 1
         );
-
+      
       const leg2 =
         tie.find(
           item =>
-            Number(item.leg) === 2
+          Number(item.leg) === 2
         );
-
+      
       if (
         !leg1 ||
         !leg2
       ) {
         return {
           prepared: false,
-          reason:
-            "Invalid semifinal legs."
+          reason: "Invalid semifinal legs."
         };
       }
-
+      
       const teamA =
         leg1.home_team_id;
-
+      
       const teamB =
         leg1.away_team_id;
-
+      
       let teamAScore = 0;
       let teamBScore = 0;
-
+      
       if (
         leg1.home_team_id === teamA
       ) {
         teamAScore +=
           Number(leg1.home_score) || 0;
-
+        
         teamBScore +=
           Number(leg1.away_score) || 0;
       }
-
+      
       if (
         leg2.home_team_id === teamA
       ) {
         teamAScore +=
           Number(leg2.home_score) || 0;
-
+        
         teamBScore +=
           Number(leg2.away_score) || 0;
       } else if (
@@ -5567,100 +5522,94 @@ async function prepareThirdPlaceMatch(
       ) {
         teamAScore +=
           Number(leg2.away_score) || 0;
-
+        
         teamBScore +=
           Number(leg2.home_score) || 0;
       } else {
         return {
           prepared: false,
-          reason:
-            "Semifinal second leg has incorrect teams."
+          reason: "Semifinal second leg has incorrect teams."
         };
       }
-
+      
       if (
         teamAScore === teamBScore
       ) {
         return {
           prepared: false,
-          reason:
-            "A semifinal aggregate score is tied."
+          reason: "A semifinal aggregate score is tied."
         };
       }
-
+      
       winnerTeamId =
-        teamAScore > teamBScore
-          ? teamA
-          : teamB;
-
+        teamAScore > teamBScore ?
+        teamA :
+        teamB;
+      
     } else {
       const semifinal =
         tie[0];
-
+      
       if (
         Number(semifinal.home_score) ===
         Number(semifinal.away_score)
       ) {
         return {
           prepared: false,
-          reason:
-            "A semifinal is tied."
+          reason: "A semifinal is tied."
         };
       }
-
+      
       winnerTeamId =
         Number(semifinal.home_score) >
-        Number(semifinal.away_score)
-          ? semifinal.home_team_id
-          : semifinal.away_team_id;
+        Number(semifinal.away_score) ?
+        semifinal.home_team_id :
+        semifinal.away_team_id;
     }
-
+    
     const teams =
       new Set();
-
+    
     for (const item of tie) {
       if (item.home_team_id) {
         teams.add(
           item.home_team_id
         );
       }
-
+      
       if (item.away_team_id) {
         teams.add(
           item.away_team_id
         );
       }
     }
-
-    const loserTeamId =
-      [...teams].find(
-        teamId =>
-          teamId !== winnerTeamId
-      );
-
+    
+    const loserTeamId = [...teams].find(
+      teamId =>
+      teamId !== winnerTeamId
+    );
+    
     if (!loserTeamId) {
       return {
         prepared: false,
-        reason:
-          "Unable to determine semifinal loser."
+        reason: "Unable to determine semifinal loser."
       };
     }
-
+    
     losers.push(
       loserTeamId
     );
   }
-
+  
   if (
     losers.length !== 2
   ) {
     return {
       prepared: false,
-      reason:
-        "Both semifinal losers are required."
+      reason: "Both semifinal losers are required."
     };
   }
-
+  
   const thirdPlace =
     await db.prepare(`
       SELECT *
@@ -5671,15 +5620,14 @@ async function prepareThirdPlaceMatch(
     `).bind(
       tournamentId
     ).first();
-
+  
   if (!thirdPlace) {
     return {
       prepared: false,
-      reason:
-        "Third-place match was not generated."
+      reason: "Third-place match was not generated."
     };
   }
-
+  
   if (
     thirdPlace.home_team_id &&
     thirdPlace.away_team_id
@@ -5689,7 +5637,7 @@ async function prepareThirdPlaceMatch(
       alreadyPrepared: true
     };
   }
-
+  
   await db.prepare(`
     UPDATE matches
     SET
@@ -5703,14 +5651,11 @@ async function prepareThirdPlaceMatch(
     Date.now(),
     thirdPlace.id
   ).run();
-
+  
   return {
     prepared: true,
-    thirdPlaceMatchId:
-      thirdPlace.id,
-    homeTeamId:
-      losers[0],
-    awayTeamId:
-      losers[1]
+    thirdPlaceMatchId: thirdPlace.id,
+    homeTeamId: losers[0],
+    awayTeamId: losers[1]
   };
 }
