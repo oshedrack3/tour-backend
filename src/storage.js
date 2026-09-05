@@ -749,7 +749,10 @@ export async function getMatches(
   
   return result.results || [];
 }
-export async function createMatch(db, match) {
+export async function createMatch(
+  db,
+  match
+) {
   await db
     .prepare(`
       INSERT INTO matches (
@@ -769,9 +772,11 @@ export async function createMatch(db, match) {
         winner_team_id,
         scheduled_at,
         created_at,
-        updated_at
+        updated_at,
+        submission_status,
+        leg
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .bind(
       match.id,
@@ -790,9 +795,12 @@ export async function createMatch(db, match) {
       match.winner_team_id || null,
       match.scheduled_at || null,
       match.created_at,
-      match.updated_at || null
+      match.updated_at || null,
+      match.submission_status || null,
+      match.leg ?? 1
     )
     .run();
+  
   return match;
 }
 
@@ -899,7 +907,69 @@ export async function getTeamsByTournament(
   
   return result.results || [];
 }
-
+export async function createMatchesBatch(
+  db,
+  matches
+) {
+  if (
+    !Array.isArray(matches) ||
+    !matches.length
+  ) {
+    return;
+  }
+  
+  const statements =
+    matches.map(match =>
+      db
+      .prepare(`
+          INSERT INTO matches (
+            id,
+            tournament_id,
+            home_team_id,
+            away_team_id,
+            home_score,
+            away_score,
+            played,
+            played_at,
+            match_type,
+            group_id,
+            round,
+            round_index,
+            slot,
+            winner_team_id,
+            scheduled_at,
+            created_at,
+            updated_at,
+            submission_status,
+            leg
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+      .bind(
+        match.id,
+        match.tournament_id,
+        match.home_team_id || null,
+        match.away_team_id || null,
+        match.home_score ?? null,
+        match.away_score ?? null,
+        match.played ?? 0,
+        match.played_at || null,
+        match.match_type,
+        match.group_id || null,
+        match.round || null,
+        match.round_index ?? null,
+        match.slot ?? null,
+        match.winner_team_id || null,
+        match.scheduled_at || null,
+        match.created_at,
+        match.updated_at || null,
+        match.submission_status || null,
+        match.leg ?? 1
+      )
+    );
+  
+  await db.batch(statements);
+}
 
 export async function getTournamentPlayer(
   db,
