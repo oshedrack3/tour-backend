@@ -4372,135 +4372,113 @@ function pairByGroupRules(
       `Invalid number of qualified teams. Expected ${knockoutSize}.`
     );
   }
-  
-  const groupedTeams =
-    new Map();
-  
+
+  const groupedTeams = new Map();
+
   for (const team of teams) {
-    if (
-      !team.groupId
-    ) {
+    if (!team.groupId) {
       throw new Error(
         "Qualified team is missing group information."
       );
     }
-    
-    if (
-      !groupedTeams.has(
-        team.groupId
-      )
-    ) {
-      groupedTeams.set(
-        team.groupId,
-        {
-          id: team.groupId,
-          name: team.group,
-          teams: []
-        }
-      );
+
+    if (!groupedTeams.has(team.groupId)) {
+      groupedTeams.set(team.groupId, {
+        id: team.groupId,
+        name: team.group,
+        teams: []
+      });
     }
-    
+
     groupedTeams
       .get(team.groupId)
       .teams.push(team);
   }
-  
+
   const groupList = [...groupedTeams.values()]
-    .sort(
-      (a, b) =>
+    .sort((a, b) =>
       String(a.name).localeCompare(
         String(b.name)
       )
     );
-  
+
   const groupCount =
     groupList.length;
-  
-  if (
-    groupCount < 2
-  ) {
+
+  if (groupCount < 2) {
     throw new Error(
       "At least two groups are required for automatic group-based knockout pairing."
     );
   }
-  
-  if (
-    groupCount % 2 !== 0
-  ) {
-    throw new Error(
-      "The number of groups must be even for automatic group-based knockout pairing."
-    );
-  }
-  
+
   for (const group of groupList) {
     group.teams.sort(
       (a, b) =>
-      Number(a.pos) -
-      Number(b.pos)
+        Number(a.pos) -
+        Number(b.pos)
     );
   }
-  
-  const result = [];
-  
-  const offset =
-    groupCount / 2;
-  
-  const maxQualifiers =
-    Math.max(
-      ...groupList.map(
-        group =>
-        group.teams.length
-      )
-    );
-  
-  for (
-    let position = 0; position < maxQualifiers; position++
-  ) {
-    const positionTeams =
-      groupList
-      .map(
-        group =>
-        group.teams[position]
-      )
-      .filter(Boolean);
-    
+
+  const qualifiersPerGroup =
+    groupList[0].teams.length;
+
+  for (const group of groupList) {
     if (
-      positionTeams.length !==
-      groupCount
+      group.teams.length !==
+      qualifiersPerGroup
     ) {
       throw new Error(
         "All groups must contain the same number of qualified teams."
       );
     }
-    
+  }
+
+  const result = [];
+
+  for (
+    let position = 0;
+    position < qualifiersPerGroup;
+    position++
+  ) {
+    const oppositePosition =
+      qualifiersPerGroup -
+      1 -
+      position;
+
     for (
-      let i = 0; i < groupCount / 2; i++
+      let i = 0;
+      i < groupCount;
+      i++
     ) {
       const first =
-        positionTeams[i];
-      
+        groupList[i].teams[position];
+
+      const opponentGroupIndex =
+        groupCount -
+        1 -
+        i;
+
       const second =
-        positionTeams[
-          (i + offset) %
-          groupCount
-        ];
-      
+        groupList[
+          opponentGroupIndex
+        ].teams[oppositePosition];
+
       if (
         !first ||
         !second ||
         first.groupId ===
-        second.groupId
+          second.groupId
       ) {
         throw new Error(
           "Unable to create valid knockout pairings using the group pairing rules."
         );
       }
-      
+
       result.push(first);
       result.push(second);
     }
   }
-  
+
   if (
     result.length !==
     knockoutSize
@@ -4509,9 +4487,10 @@ function pairByGroupRules(
       `Invalid knockout pairing count. Expected ${knockoutSize}, got ${result.length}.`
     );
   }
-  
+
   return result;
 }
+
 async function getCupQualifiedTeams(
   db,
   tournamentId,
