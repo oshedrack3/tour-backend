@@ -2040,3 +2040,53 @@ export async function updateUserProfile(
   };
 }
 
+
+export async function createGroupsBatch(
+  db,
+  groups
+) {
+  if (!groups?.length) {
+    return;
+  }
+  
+  const statements = groups.map(group =>
+    db.prepare(`
+      INSERT INTO groups (
+        id,
+        tournament_id,
+        name,
+        created_at
+      )
+      VALUES (?, ?, ?, ?)
+    `).bind(
+      group.id,
+      group.tournament_id,
+      group.name,
+      group.created_at
+    )
+  );
+  
+  await db.batch(statements);
+}
+export async function deleteTournamentCupData(
+  db,
+  tournamentId
+) {
+  await db.batch([
+    db.prepare(`
+      DELETE FROM matches
+      WHERE tournament_id = ?
+      AND match_type IN (
+        'group',
+        'knockout',
+        'third_place',
+        'final'
+      )
+    `).bind(tournamentId),
+    
+    db.prepare(`
+      DELETE FROM groups
+      WHERE tournament_id = ?
+    `).bind(tournamentId)
+  ]);
+}
