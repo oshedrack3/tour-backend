@@ -795,62 +795,6 @@ export async function createMatch(db, match) {
     .run();
   return match;
 }
-export async function createMatchesBatch(db, matches) {
-  if (!Array.isArray(matches) || !matches.length) {
-    return;
-  }
-  
-  const statements = matches.map(match =>
-    db
-    .prepare(`
-        INSERT INTO matches (
-          id,
-          tournament_id,
-          home_team_id,
-          away_team_id,
-          home_score,
-          away_score,
-          played,
-          played_at,
-          match_type,
-          group_id,
-          round,
-          round_index,
-          slot,
-          leg,
-          winner_team_id,
-          scheduled_at,
-          created_at,
-          updated_at,
-          submission_status
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-    .bind(
-      match.id,
-      match.tournament_id,
-      match.home_team_id || null,
-      match.away_team_id || null,
-      match.home_score ?? null,
-      match.away_score ?? null,
-      match.played ?? 0,
-      match.played_at || null,
-      match.match_type,
-      match.group_id || null,
-      match.round || null,
-      match.round_index ?? null,
-      match.slot ?? null,
-      match.leg ?? 1,
-      match.winner_team_id || null,
-      match.scheduled_at || null,
-      match.created_at ?? Date.now(),
-      match.updated_at || null,
-      match.submission_status || null
-    )
-  );
-  
-  await db.batch(statements);
-}
 
 export async function updateMatch(db, id, updates) {
   const fields = [];

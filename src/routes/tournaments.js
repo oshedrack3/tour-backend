@@ -4468,13 +4468,35 @@ async function getCupQualifiedTeams(
       "Invalid number of qualifying teams."
     );
   }
-  
+
   const result =
     await db.prepare(`
+      WITH group_members AS (
+        SELECT
+          group_id,
+          home_team_id AS team_id
+        FROM matches
+        WHERE tournament_id = ?
+          AND match_type = 'group'
+          AND group_id IS NOT NULL
+          AND home_team_id IS NOT NULL
+
+        UNION
+
+        SELECT
+          group_id,
+          away_team_id AS team_id
+        FROM matches
+        WHERE tournament_id = ?
+          AND match_type = 'group'
+          AND group_id IS NOT NULL
+          AND away_team_id IS NOT NULL
+      )
+
       SELECT
         g.id AS group_id,
         g.name AS group_name,
-        gt.team_id,
+        gm.team_id,
         t.name AS team_name,
         COALESCE(tp.played, 0) AS played,
         COALESCE(tp.wins, 0) AS wins,
@@ -4484,13 +4506,13 @@ async function getCupQualifiedTeams(
         COALESCE(tp.ga, 0) AS ga,
         COALESCE(tp.points, 0) AS points
       FROM groups g
-      INNER JOIN group_teams gt
-        ON gt.group_id = g.id
+      INNER JOIN group_members gm
+        ON gm.group_id = g.id
       INNER JOIN teams t
-        ON t.id = gt.team_id
+        ON t.id = gm.team_id
       INNER JOIN tournament_players tp
-        ON tp.tournament_id = g.tournament_id
-        AND tp.team_id = gt.team_id
+        ON tp.tournament_id = ?
+        AND tp.team_id = gm.team_id
       WHERE g.tournament_id = ?
       ORDER BY
         g.id,
@@ -4499,41 +4521,53 @@ async function getCupQualifiedTeams(
         tp.gf DESC,
         t.name ASC
     `)
-    .bind(tournamentId)
+    .bind(
+      tournamentId,
+      tournamentId,
+      tournamentId,
+      tournamentId
+    )
     .all();
-  
+
   const rows =
     result.results || [];
-  
+
   const groups =
     new Map();
-  
+
   for (const row of rows) {
     if (!groups.has(row.group_id)) {
-      groups.set(row.group_id, {
-        id: row.group_id,
-        name: row.group_name,
-        teams: []
-      });
+      groups.set(
+        row.group_id,
+        {
+          id: row.group_id,
+          name: row.group_name,
+          teams: []
+        }
+      );
     }
-    
-    groups.get(row.group_id).teams.push({
-      id: row.team_id,
-      name: row.team_name,
-      played: Number(row.played) || 0,
-      wins: Number(row.wins) || 0,
-      draws: Number(row.draws) || 0,
-      losses: Number(row.losses) || 0,
-      gf: Number(row.gf) || 0,
-      ga: Number(row.ga) || 0,
-      gd: (Number(row.gf) || 0) -
-        (Number(row.ga) || 0),
-      points: Number(row.points) || 0
-    });
+
+    groups
+      .get(row.group_id)
+      .teams.push({
+        id: row.team_id,
+        name: row.team_name,
+        played: Number(row.played) || 0,
+        wins: Number(row.wins) || 0,
+        draws: Number(row.draws) || 0,
+        losses: Number(row.losses) || 0,
+        gf: Number(row.gf) || 0,
+        ga: Number(row.ga) || 0,
+        gd:
+          (Number(row.gf) || 0) -
+          (Number(row.ga) || 0),
+        points:
+          Number(row.points) || 0
+      });
   }
-  
+
   const qualifiedTeams = [];
-  
+
   for (const group of groups.values()) {
     if (
       group.teams.length <
@@ -4543,39 +4577,39 @@ async function getCupQualifiedTeams(
         `${group.name} does not have enough teams for ${teamsQualify} qualifiers.`
       );
     }
-    
+
     group.teams.sort(
       (a, b) => {
         if (b.points !== a.points) {
           return b.points - a.points;
         }
-        
+
         if (b.gd !== a.gd) {
           return b.gd - a.gd;
         }
-        
+
         if (b.gf !== a.gf) {
           return b.gf - a.gf;
         }
-        
+
         return a.name.localeCompare(
           b.name
         );
       }
     );
-    
+
     group.teams.forEach(
       (team, index) => {
         team.pos = index + 1;
       }
     );
-    
+
     const qualifiers =
       group.teams.slice(
         0,
         teamsQualify
       );
-    
+
     for (const team of qualifiers) {
       qualifiedTeams.push({
         id: team.id,
@@ -4586,7 +4620,7 @@ async function getCupQualifiedTeams(
       });
     }
   }
-  
+
   return {
     groups: [...groups.values()],
     qualifiedTeams
