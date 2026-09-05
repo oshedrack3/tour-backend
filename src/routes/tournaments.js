@@ -4316,6 +4316,8 @@ function generateDirectKnockoutMatches(
 
 
 
+
+
 function pairByGroupRules(
   teams,
   knockoutSize
@@ -4473,6 +4475,10 @@ function pairByGroupRules(
 
   return result;
 }
+async function getCupQualifiedTeams(
+  db,
+  tournamentId,
+  teamsQualify
 ) {
   if (
     !Number.isInteger(teamsQualify) ||
