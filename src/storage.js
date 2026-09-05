@@ -796,7 +796,10 @@ export async function createMatch(db, match) {
   return match;
 }
 export async function createMatchesBatch(db, matches) {
-  if (!matches.length) return;
+  if (!Array.isArray(matches) || !matches.length) {
+    return;
+  }
+  
   const statements = matches.map(match =>
     db
     .prepare(`
@@ -814,12 +817,14 @@ export async function createMatchesBatch(db, matches) {
           round,
           round_index,
           slot,
+          leg,
           winner_team_id,
           scheduled_at,
           created_at,
-          updated_at
+          updated_at,
+          submission_status
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
     .bind(
       match.id,
@@ -835,12 +840,15 @@ export async function createMatchesBatch(db, matches) {
       match.round || null,
       match.round_index ?? null,
       match.slot ?? null,
+      match.leg ?? 1,
       match.winner_team_id || null,
       match.scheduled_at || null,
-      match.created_at,
-      match.updated_at || null
+      match.created_at ?? Date.now(),
+      match.updated_at || null,
+      match.submission_status || null
     )
   );
+  
   await db.batch(statements);
 }
 
