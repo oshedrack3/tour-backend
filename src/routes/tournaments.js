@@ -3830,93 +3830,108 @@ function generateCupGroupMatches(
   groupRoundMode
 ) {
   const matches = [];
-  
+
   for (const group of groups) {
     let teams = [...group.teamIds];
-    
+
     if (teams.length < 2) {
       continue;
     }
-    
-    const hasBye =
-      teams.length % 2 !== 0;
-    
-    if (hasBye) {
+
+    if (teams.length % 2 !== 0) {
       teams.push(null);
     }
-    
+
     const totalTeams = teams.length;
-    const rounds = totalTeams - 1;
+    const roundsPerLeg = totalTeams - 1;
     const matchesPerRound = totalTeams / 2;
-    
+
     const firstLegFixtures = [];
-    
-    for (let round = 0; round < rounds; round++) {
+
+    for (
+      let roundIndex = 0;
+      roundIndex < roundsPerLeg;
+      roundIndex++
+    ) {
       const roundFixtures = [];
-      
+
       for (
-        let i = 0; i < matchesPerRound; i++
+        let slot = 0;
+        slot < matchesPerRound;
+        slot++
       ) {
         const home =
-          teams[i];
-        
+          teams[slot];
+
         const away =
-          teams[totalTeams - 1 - i];
-        
+          teams[
+            totalTeams - 1 - slot
+          ];
+
         if (home && away) {
           roundFixtures.push({
             home_team_id: home,
-            away_team_id: away
+            away_team_id: away,
+            slot
           });
         }
       }
-      
+
       firstLegFixtures.push(
         roundFixtures
       );
-      
+
       const fixedTeam =
         teams[0];
-      
+
       const rotatingTeams =
         teams.slice(1);
-      
+
       rotatingTeams.unshift(
         rotatingTeams.pop()
       );
-      
+
       teams = [
         fixedTeam,
         ...rotatingTeams
       ];
     }
-    
+
     for (
-      let roundIndex = 0; roundIndex < firstLegFixtures.length; roundIndex++
+      let roundIndex = 0;
+      roundIndex < firstLegFixtures.length;
+      roundIndex++
     ) {
       const fixtures =
         firstLegFixtures[roundIndex];
-      
+
       for (
-        let slot = 0; slot < fixtures.length; slot++
+        let slot = 0;
+        slot < fixtures.length;
+        slot++
       ) {
         const fixture =
           fixtures[slot];
-        
+
         matches.push({
           id: crypto.randomUUID(),
           tournament_id: null,
-          home_team_id: fixture.home_team_id,
-          away_team_id: fixture.away_team_id,
+          home_team_id:
+            fixture.home_team_id,
+          away_team_id:
+            fixture.away_team_id,
           home_score: null,
           away_score: null,
           played: 0,
           played_at: null,
           match_type: "group",
           group_id: group.id,
-          round: `Group ${group.name} - Round ${roundIndex + 1}`,
-          round_index: roundIndex + 1,
+          round:
+            `Group ${group.name} - Round ${roundIndex + 1}`,
+          round_index:
+            roundIndex + 1,
           slot,
+          leg: 1,
           winner_team_id: null,
           scheduled_at: null,
           created_at: Date.now(),
@@ -3925,39 +3940,49 @@ function generateCupGroupMatches(
         });
       }
     }
-    
+
     if (groupRoundMode === "double") {
-      const firstLegRoundCount =
-        firstLegFixtures.length;
-      
       for (
-        let roundIndex = 0; roundIndex < firstLegFixtures.length; roundIndex++
+        let roundIndex = 0;
+        roundIndex < firstLegFixtures.length;
+        roundIndex++
       ) {
         const fixtures =
           firstLegFixtures[roundIndex];
-        
+
         for (
-          let slot = 0; slot < fixtures.length; slot++
+          let slot = 0;
+          slot < fixtures.length;
+          slot++
         ) {
           const fixture =
             fixtures[slot];
-          
+
           matches.push({
             id: crypto.randomUUID(),
             tournament_id: null,
-            home_team_id: fixture.away_team_id,
-            away_team_id: fixture.home_team_id,
+            home_team_id:
+              fixture.away_team_id,
+            away_team_id:
+              fixture.home_team_id,
             home_score: null,
             away_score: null,
             played: 0,
             played_at: null,
             match_type: "group",
             group_id: group.id,
-            round: `Group ${group.name} - Round ${firstLegRoundCount + roundIndex + 1}`,
-            round_index: firstLegRoundCount +
+            round:
+              `Group ${group.name} - Round ${
+                roundsPerLeg +
+                roundIndex +
+                1
+              }`,
+            round_index:
+              roundsPerLeg +
               roundIndex +
               1,
             slot,
+            leg: 2,
             winner_team_id: null,
             scheduled_at: null,
             created_at: Date.now(),
@@ -3968,7 +3993,7 @@ function generateCupGroupMatches(
       }
     }
   }
-  
+
   return matches;
 }
 
@@ -4028,7 +4053,7 @@ function generateDirectKnockoutMatches(
       "Invalid team data."
     );
   }
-  
+
   if (
     ![2, 4, 8, 16, 32].includes(
       knockoutSize
@@ -4038,13 +4063,13 @@ function generateDirectKnockoutMatches(
       "Invalid knockout bracket size."
     );
   }
-  
+
   if (teams.length !== knockoutSize) {
     throw new Error(
       `This knockout requires exactly ${knockoutSize} teams, but ${teams.length} teams are registered.`
     );
   }
-  
+
   if (
     !["auto", "manual"].includes(
       knockoutPairingMode
@@ -4054,7 +4079,7 @@ function generateDirectKnockoutMatches(
       "Invalid knockout pairing mode."
     );
   }
-  
+
   if (
     !["single", "double"].includes(
       knockoutRoundMode
@@ -4064,7 +4089,7 @@ function generateDirectKnockoutMatches(
       "Invalid knockout round mode."
     );
   }
-  
+
   if (
     thirdPlaceMatch &&
     knockoutSize < 4
@@ -4073,28 +4098,26 @@ function generateDirectKnockoutMatches(
       "A third-place match requires at least 4 teams."
     );
   }
-  
+
   const registeredTeamIds =
     new Set(
       teams.map(team => team.id)
     );
-  
+
   let pairs = [];
-  
+
   if (
     knockoutPairingMode === "manual"
   ) {
-    if (
-      !Array.isArray(knockoutPairs)
-    ) {
+    if (!Array.isArray(knockoutPairs)) {
       throw new Error(
         "Manual knockout pairings are required."
       );
     }
-    
+
     const expectedPairs =
       knockoutSize / 2;
-    
+
     if (
       knockoutPairs.length !==
       expectedPairs
@@ -4103,10 +4126,10 @@ function generateDirectKnockoutMatches(
         `Exactly ${expectedPairs} knockout pairings are required.`
       );
     }
-    
+
     const pairedTeams =
       new Set();
-    
+
     for (
       const pair of knockoutPairs
     ) {
@@ -4118,13 +4141,13 @@ function generateDirectKnockoutMatches(
           "Each knockout pairing must contain exactly two teams."
         );
       }
-      
+
       const homeTeamId =
         pair[0];
-      
+
       const awayTeamId =
         pair[1];
-      
+
       if (
         !registeredTeamIds.has(
           homeTeamId
@@ -4137,15 +4160,16 @@ function generateDirectKnockoutMatches(
           "A knockout pairing contains a team that is not registered in this tournament."
         );
       }
-      
+
       if (
-        homeTeamId === awayTeamId
+        homeTeamId ===
+        awayTeamId
       ) {
         throw new Error(
           "A team cannot play against itself."
         );
       }
-      
+
       if (
         pairedTeams.has(
           homeTeamId
@@ -4158,21 +4182,21 @@ function generateDirectKnockoutMatches(
           "A team cannot appear in more than one knockout pairing."
         );
       }
-      
+
       pairedTeams.add(
         homeTeamId
       );
-      
+
       pairedTeams.add(
         awayTeamId
       );
-      
+
       pairs.push([
         homeTeamId,
         awayTeamId
       ]);
     }
-    
+
     if (
       pairedTeams.size !==
       registeredTeamIds.size
@@ -4182,18 +4206,21 @@ function generateDirectKnockoutMatches(
       );
     }
   } else {
-    const shuffledTeams = [...teams];
-    
+    const shuffledTeams =
+      [...teams];
+
     for (
       let i =
-        shuffledTeams.length - 1; i > 0; i--
+        shuffledTeams.length - 1;
+      i > 0;
+      i--
     ) {
       const j =
         Math.floor(
           Math.random() *
           (i + 1)
         );
-      
+
       [
         shuffledTeams[i],
         shuffledTeams[j]
@@ -4202,9 +4229,11 @@ function generateDirectKnockoutMatches(
         shuffledTeams[i]
       ];
     }
-    
+
     for (
-      let i = 0; i < shuffledTeams.length; i += 2
+      let i = 0;
+      i < shuffledTeams.length;
+      i += 2
     ) {
       pairs.push([
         shuffledTeams[i].id,
@@ -4212,14 +4241,17 @@ function generateDirectKnockoutMatches(
       ]);
     }
   }
-  
+
   const matches = [];
-  
+
   let currentSize =
     knockoutSize;
-  
+
   let roundIndex = 1;
-  
+
+  const finalRoundIndex =
+    Math.log2(knockoutSize);
+
   while (
     currentSize >= 2
   ) {
@@ -4227,26 +4259,32 @@ function generateDirectKnockoutMatches(
       getKnockoutRoundName(
         currentSize
       );
-    
+
     const matchCount =
       currentSize / 2;
-    
+
+    const isFinal =
+      roundIndex ===
+      finalRoundIndex;
+
     for (
-      let slot = 0; slot < matchCount; slot++
+      let slot = 0;
+      slot < matchCount;
+      slot++
     ) {
       let homeTeamId = null;
       let awayTeamId = null;
-      
+
       if (
         roundIndex === 1
       ) {
         homeTeamId =
           pairs[slot][0];
-        
+
         awayTeamId =
           pairs[slot][1];
       }
-      
+
       matches.push(
         createKnockoutMatch(
           homeTeamId,
@@ -4257,15 +4295,20 @@ function generateDirectKnockoutMatches(
           1
         )
       );
-      
+
       if (
         knockoutRoundMode ===
-        "double"
+          "double" &&
+        !isFinal
       ) {
         matches.push(
           createKnockoutMatch(
-            awayTeamId,
-            homeTeamId,
+            roundIndex === 1
+              ? awayTeamId
+              : null,
+            roundIndex === 1
+              ? homeTeamId
+              : null,
             round,
             roundIndex,
             slot,
@@ -4274,31 +4317,29 @@ function generateDirectKnockoutMatches(
         );
       }
     }
-    
+
     currentSize =
       currentSize / 2;
-    
+
     roundIndex++;
   }
-  
+
   if (thirdPlaceMatch) {
     matches.push(
       createKnockoutMatch(
         null,
         null,
         "Third Place",
-        Math.log2(knockoutSize),
+        finalRoundIndex,
         0,
         1,
         "third_place"
       )
     );
   }
-  
+
   return matches;
 }
-
-
 
 
 
@@ -4886,13 +4927,13 @@ async function processKnockoutResult(
       db,
       matchId
     );
-  
+
   if (!match) {
     throw new Error(
       "Match not found."
     );
   }
-  
+
   if (
     String(match.tournament_id) !==
     String(tournamentId)
@@ -4901,7 +4942,7 @@ async function processKnockoutResult(
       "Match does not belong to this tournament."
     );
   }
-  
+
   if (
     match.match_type !== "knockout" &&
     match.match_type !== "third_place"
@@ -4911,7 +4952,7 @@ async function processKnockoutResult(
       reason: "Not a knockout match."
     };
   }
-  
+
   if (
     Number(match.played) !== 1
   ) {
@@ -4920,41 +4961,43 @@ async function processKnockoutResult(
       reason: "Match has not been played."
     };
   }
-  
+
   if (
     match.match_type ===
     "third_place"
   ) {
     const homeScore =
       Number(match.home_score);
-    
+
     const awayScore =
       Number(match.away_score);
-    
+
     if (
       !Number.isInteger(homeScore) ||
       !Number.isInteger(awayScore)
     ) {
       return {
         processed: false,
-        reason: "Invalid third-place score."
+        reason:
+          "Invalid third-place score."
       };
     }
-    
+
     if (
       homeScore === awayScore
     ) {
       return {
         processed: false,
-        reason: "Third-place match is tied."
+        reason:
+          "Third-place match is tied."
       };
     }
-    
+
     const winnerTeamId =
-      homeScore > awayScore ?
-      match.home_team_id :
-      match.away_team_id;
-    
+      homeScore > awayScore
+        ? match.home_team_id
+        : match.away_team_id;
+
     await db.prepare(`
       UPDATE matches
       SET
@@ -4966,14 +5009,14 @@ async function processKnockoutResult(
       Date.now(),
       matchId
     ).run();
-    
+
     return {
       processed: true,
       winnerTeamId,
       thirdPlace: true
     };
   }
-  
+
   const tournament =
     await db.prepare(`
       SELECT settings
@@ -4982,9 +5025,9 @@ async function processKnockoutResult(
     `).bind(
       tournamentId
     ).first();
-  
+
   let settings = {};
-  
+
   try {
     if (
       typeof tournament?.settings ===
@@ -5005,16 +5048,16 @@ async function processKnockoutResult(
   } catch {
     settings = {};
   }
-  
+
   const isDoubleLeg =
     settings.knockoutRoundMode ===
     "double";
-  
+
   const knockoutSize =
     Number(
       settings.knockoutSize
     );
-  
+
   if (
     !Number.isInteger(knockoutSize) ||
     ![2, 4, 8, 16, 32].includes(
@@ -5025,17 +5068,27 @@ async function processKnockoutResult(
       "Invalid knockout bracket size."
     );
   }
-  
+
   const roundIndex =
     Number(match.round_index);
-  
+
   const slot =
     Number(match.slot);
-  
+
+  const finalRoundIndex =
+    Math.log2(knockoutSize);
+
+  const isFinal =
+    roundIndex === finalRoundIndex;
+
+  const isDoubleLegRound =
+    isDoubleLeg &&
+    !isFinal;
+
   let winnerTeamId =
     null;
-  
-  if (isDoubleLeg) {
+
+  if (isDoubleLegRound) {
     const legsResult =
       await db.prepare(`
         SELECT
@@ -5058,42 +5111,44 @@ async function processKnockoutResult(
         roundIndex,
         slot
       ).all();
-    
+
     const legs =
       legsResult.results || [];
-    
+
     const firstLeg =
       legs.find(
         item =>
-        Number(item.leg) === 1
+          Number(item.leg) === 1
       );
-    
+
     const secondLeg =
       legs.find(
         item =>
-        Number(item.leg) === 2
+          Number(item.leg) === 2
       );
-    
+
     if (
       !firstLeg ||
       !secondLeg
     ) {
       return {
         processed: false,
-        reason: "Both knockout legs have not been generated."
+        reason:
+          "Both knockout legs have not been generated."
       };
     }
-    
+
     if (
       Number(firstLeg.played) !== 1 ||
       Number(secondLeg.played) !== 1
     ) {
       return {
         processed: false,
-        reason: "Waiting for both knockout legs."
+        reason:
+          "Waiting for both knockout legs."
       };
     }
-    
+
     if (
       !firstLeg.home_team_id ||
       !firstLeg.away_team_id ||
@@ -5102,104 +5157,125 @@ async function processKnockoutResult(
     ) {
       return {
         processed: false,
-        reason: "Knockout teams are not fully assigned."
+        reason:
+          "Knockout teams are not fully assigned."
       };
     }
-    
+
     const teamA =
       firstLeg.home_team_id;
-    
+
     const teamB =
       firstLeg.away_team_id;
-    
+
+    if (
+      ![
+        firstLeg.home_team_id,
+        firstLeg.away_team_id
+      ].includes(teamA) ||
+      ![
+        secondLeg.home_team_id,
+        secondLeg.away_team_id
+      ].includes(teamA) ||
+      ![
+        secondLeg.home_team_id,
+        secondLeg.away_team_id
+      ].includes(teamB)
+    ) {
+      return {
+        processed: false,
+        reason:
+          "The two knockout legs do not contain the same teams."
+      };
+    }
+
     let teamAScore = 0;
     let teamBScore = 0;
-    
+
     if (
-      firstLeg.home_team_id === teamA
+      firstLeg.home_team_id ===
+      teamA
     ) {
       teamAScore +=
         Number(firstLeg.home_score) || 0;
-      
+
       teamBScore +=
         Number(firstLeg.away_score) || 0;
     } else {
       teamAScore +=
         Number(firstLeg.away_score) || 0;
-      
+
       teamBScore +=
         Number(firstLeg.home_score) || 0;
     }
-    
+
     if (
-      secondLeg.home_team_id === teamA
+      secondLeg.home_team_id ===
+      teamA
     ) {
       teamAScore +=
         Number(secondLeg.home_score) || 0;
-      
+
       teamBScore +=
         Number(secondLeg.away_score) || 0;
-    } else if (
-      secondLeg.away_team_id === teamA
-    ) {
-      teamAScore +=
-        Number(secondLeg.away_score) || 0;
-      
-      teamBScore +=
-        Number(secondLeg.home_score) || 0;
     } else {
-      return {
-        processed: false,
-        reason: "Second leg does not contain the correct teams."
-      };
+      teamAScore +=
+        Number(secondLeg.away_score) || 0;
+
+      teamBScore +=
+        Number(secondLeg.home_score) || 0;
     }
-    
+
     if (
-      teamAScore === teamBScore
+      teamAScore ===
+      teamBScore
     ) {
       return {
         processed: false,
-        reason: "Aggregate score is tied."
+        reason:
+          "Aggregate score is tied."
       };
     }
-    
+
     winnerTeamId =
-      teamAScore > teamBScore ?
-      teamA :
-      teamB;
-    
+      teamAScore >
+      teamBScore
+        ? teamA
+        : teamB;
   } else {
     const homeScore =
       Number(match.home_score);
-    
+
     const awayScore =
       Number(match.away_score);
-    
+
     if (
       !Number.isInteger(homeScore) ||
       !Number.isInteger(awayScore)
     ) {
       return {
         processed: false,
-        reason: "Invalid knockout score."
+        reason:
+          "Invalid knockout score."
       };
     }
-    
+
     if (
       homeScore === awayScore
     ) {
       return {
         processed: false,
-        reason: "Knockout match is tied."
+        reason:
+          "Knockout match is tied."
       };
     }
-    
+
     winnerTeamId =
-      homeScore > awayScore ?
-      match.home_team_id :
-      match.away_team_id;
+      homeScore > awayScore
+        ? match.home_team_id
+        : match.away_team_id;
   }
-  
+
   await db.prepare(`
     UPDATE matches
     SET
@@ -5211,12 +5287,7 @@ async function processKnockoutResult(
     Date.now(),
     matchId
   ).run();
-  
-  const finalRoundIndex =
-    Math.log2(
-      knockoutSize
-    );
-  
+
   if (
     roundIndex ===
     finalRoundIndex
@@ -5229,7 +5300,7 @@ async function processKnockoutResult(
       `).bind(
         winnerTeamId
       ).first();
-    
+
     await db.prepare(`
       UPDATE tournaments
       SET
@@ -5243,17 +5314,17 @@ async function processKnockoutResult(
       Date.now(),
       tournamentId
     ).run();
-    
+
     return {
       processed: true,
       winnerTeamId,
       champion: true
     };
   }
-  
+
   const semifinalRoundIndex =
     finalRoundIndex - 1;
-  
+
   if (
     roundIndex ===
     semifinalRoundIndex
@@ -5264,15 +5335,15 @@ async function processKnockoutResult(
       roundIndex
     );
   }
-  
+
   const nextRoundIndex =
     roundIndex + 1;
-  
+
   const nextSlot =
-    Math.ceil(
+    Math.floor(
       slot / 2
     );
-  
+
   const nextRound =
     getKnockoutRoundName(
       knockoutSize /
@@ -5281,7 +5352,7 @@ async function processKnockoutResult(
         nextRoundIndex
       )
     );
-  
+
   const nextMatchesResult =
     await db.prepare(`
       SELECT *
@@ -5296,25 +5367,28 @@ async function processKnockoutResult(
       nextRoundIndex,
       nextSlot
     ).all();
-  
+
   const nextMatches =
     nextMatchesResult.results || [];
-  
-  if (!nextMatches.length) {
+
+  if (
+    !nextMatches.length
+  ) {
     return {
       processed: true,
       winnerTeamId,
       advanced: false,
-      reason: "Winner determined, but next-round match does not exist yet."
+      reason:
+        "Winner determined, but next-round match does not exist yet."
     };
   }
-  
+
   const now =
     Date.now();
-  
+
   const isFirstSlot =
-    slot % 2 === 1;
-  
+    slot % 2 === 0;
+
   if (isFirstSlot) {
     await db.prepare(`
       UPDATE matches
@@ -5333,8 +5407,10 @@ async function processKnockoutResult(
       nextRoundIndex,
       nextSlot
     ).run();
-    
-    if (isDoubleLeg) {
+
+    if (
+      isDoubleLeg
+    ) {
       await db.prepare(`
         UPDATE matches
         SET
@@ -5353,7 +5429,6 @@ async function processKnockoutResult(
         nextSlot
       ).run();
     }
-    
   } else {
     await db.prepare(`
       UPDATE matches
@@ -5372,8 +5447,10 @@ async function processKnockoutResult(
       nextRoundIndex,
       nextSlot
     ).run();
-    
-    if (isDoubleLeg) {
+
+    if (
+      isDoubleLeg
+    ) {
       await db.prepare(`
         UPDATE matches
         SET
@@ -5393,7 +5470,7 @@ async function processKnockoutResult(
       ).run();
     }
   }
-  
+
   return {
     processed: true,
     winnerTeamId,
@@ -5403,7 +5480,6 @@ async function processKnockoutResult(
     nextSlot
   };
 }
-
 
 async function prepareThirdPlaceMatch(
   db,
