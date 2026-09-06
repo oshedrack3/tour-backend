@@ -267,190 +267,7 @@ async function getCompetitionRoute(
     });
   }
 }
-async function updateCompetitionRoute(
-  request,
-  env,
-  id,
-  user
-) {
-  try {
-    if (user.role !== "admin") {
-      return Response.json({
-        success: false,
-        message:
-          "Only admins can edit competitions."
-      }, {
-        status: 403
-      });
-    }
-    const competition =
-      await getCompetition(
-        env.DB,
-        id
-      );
-    if (!competition) {
-      return Response.json({
-        success: false,
-        message:
-          "Competition not found."
-      }, {
-        status: 404
-      });
-    }
-    if (
-      competition.owner_id !== user.id
-    ) {
-      return Response.json({
-        success: false,
-        message:
-          "Access denied."
-      }, {
-        status: 403
-      });
-    }
-    const body = await request.json();
-    const updates = {};
-    if (body.name !== undefined) {
-      const name =
-        String(body.name || "").trim();
-      if (!name) {
-        return Response.json({
-          success: false,
-          message:
-            "Competition name cannot be empty."
-        }, {
-          status: 400
-        });
-      }
-      updates.name = name;
-    }
-    if (body.logo !== undefined) {
-      const logo = body.logo;
-      if (
-        logo === null ||
-        logo === ""
-      ) {
-        if (competition.logo_public_id) {
-          try {
-            await deleteCloudinaryImage(
-              competition.logo_public_id,
-              env
-            );
-          } catch (error) {
-            console.error(
-              "Failed to delete old competition logo:",
-              error
-            );
-          }
-        }
-        updates.logo_url = null;
-        updates.logo_public_id = null;
-      } else {
-        if (
-          typeof logo !== "string" ||
-          !logo.startsWith("data:image/")
-        ) {
-          return Response.json({
-            success: false,
-            message:
-              "Invalid competition logo."
-          }, {
-            status: 400
-          });
-        }
-        const newLogo =
-          await uploadBase64Image(
-            logo,
-            "competitions",
-            id,
-            env
-          );
-        if (!newLogo) {
-          return Response.json({
-            success: false,
-            message:
-              "Failed to upload competition logo."
-          }, {
-            status: 500
-          });
-        }
-        if (competition.logo_public_id) {
-          try {
-            await deleteCloudinaryImage(
-              competition.logo_public_id,
-              env
-            );
-          } catch (error) {
-            console.error(
-              "Failed to delete old competition logo:",
-              error
-            );
-          }
-        }
-        updates.logo_url =
-          newLogo.url;
-        updates.logo_public_id =
-          newLogo.publicId;
-      }
-    }
-    if (
-      Object.keys(updates).length === 0
-    ) {
-      return Response.json({
-        success: false,
-        message:
-          "No competition changes provided."
-      }, {
-        status: 400
-      });
-    }
-    updates.updated_at =
-      Date.now();
-    const fields = [];
-    const values = [];
-    for (
-      const [field, value]
-      of Object.entries(updates)
-    ) {
-      fields.push(`${field} = ?`);
-      values.push(value);
-    }
-    values.push(id);
-    await env.DB
-      .prepare(`
-        UPDATE competitions
-        SET ${fields.join(", ")}
-        WHERE id = ?
-      `)
-      .bind(...values)
-      .run();
-    const updatedCompetition =
-      await getCompetition(
-        env.DB,
-        id
-      );
-    return Response.json({
-      success: true,
-      message:
-        "Competition updated successfully.",
-      competition:
-        updatedCompetition
-    });
-  } catch (error) {
-    console.error(
-      "Update competition error:",
-      error
-    );
-    return Response.json({
-      success: false,
-      message:
-        error.message ||
-        "Failed to update competition."
-    }, {
-      status: 500
-    });
-  }
-}
+
 async function deleteCompetitionRoute(
   env,
   id,
@@ -522,3 +339,222 @@ async function deleteCompetitionRoute(
     });
   }
 }
+
+async function updateCompetitionRoute(
+  request,
+  env,
+  id,
+  user
+) {
+  try {
+    if (user.role !== "admin") {
+      return Response.json({
+        success: false,
+        message:
+          "Only admins can edit competitions."
+      }, {
+        status: 403
+      });
+    }
+
+    const competition =
+      await getCompetition(
+        env.DB,
+        id
+      );
+
+    if (!competition) {
+      return Response.json({
+        success: false,
+        message:
+          "Competition not found."
+      }, {
+        status: 404
+      });
+    }
+
+    if (
+      competition.owner_id !== user.id
+    ) {
+      return Response.json({
+        success: false,
+        message:
+          "Access denied."
+      }, {
+        status: 403
+      });
+    }
+
+    const body =
+      await request.json();
+
+    const updates = {};
+
+    if (body.name !== undefined) {
+      const name =
+        String(body.name || "").trim();
+
+      if (!name) {
+        return Response.json({
+          success: false,
+          message:
+            "Competition name cannot be empty."
+        }, {
+          status: 400
+        });
+      }
+
+      updates.name = name;
+    }
+
+    if (body.logo !== undefined) {
+      const logo = body.logo;
+
+      if (
+        logo === null ||
+        logo === ""
+      ) {
+        if (
+          competition.logo_public_id
+        ) {
+          try {
+            await deleteCloudinaryImage(
+              competition.logo_public_id,
+              env
+            );
+          } catch (error) {
+            console.error(
+              "Failed to delete old competition logo:",
+              error
+            );
+          }
+        }
+
+        updates.logo_url = null;
+        updates.logo_public_id = null;
+      } else {
+        if (
+          typeof logo !== "string" ||
+          !logo.startsWith("data:image/")
+        ) {
+          return Response.json({
+            success: false,
+            message:
+              "Invalid competition logo."
+          }, {
+            status: 400
+          });
+        }
+
+        const newLogo =
+          await uploadBase64Image(
+            logo,
+            "competitions",
+            id,
+            env
+          );
+
+        if (!newLogo) {
+          return Response.json({
+            success: false,
+            message:
+              "Failed to upload competition logo."
+          }, {
+            status: 500
+          });
+        }
+
+        if (
+          competition.logo_public_id &&
+          competition.logo_public_id !==
+            newLogo.publicId
+        ) {
+          try {
+            await deleteCloudinaryImage(
+              competition.logo_public_id,
+              env
+            );
+          } catch (error) {
+            console.error(
+              "Failed to delete old competition logo:",
+              error
+            );
+          }
+        }
+
+        updates.logo_url =
+          newLogo.url;
+
+        updates.logo_public_id =
+          newLogo.publicId;
+      }
+    }
+
+    if (
+      Object.keys(updates).length === 0
+    ) {
+      return Response.json({
+        success: false,
+        message:
+          "No competition changes provided."
+      }, {
+        status: 400
+      });
+    }
+
+    updates.updated_at =
+      Date.now();
+
+    const fields = [];
+    const values = [];
+
+    for (
+      const [field, value]
+      of Object.entries(updates)
+    ) {
+      fields.push(`${field} = ?`);
+      values.push(value);
+    }
+
+    values.push(id);
+
+    await env.DB
+      .prepare(`
+        UPDATE competitions
+        SET ${fields.join(", ")}
+        WHERE id = ?
+      `)
+      .bind(...values)
+      .run();
+
+    const updatedCompetition =
+      await getCompetition(
+        env.DB,
+        id
+      );
+
+    return Response.json({
+      success: true,
+      message:
+        "Competition updated successfully.",
+      competition:
+        updatedCompetition
+    });
+
+  } catch (error) {
+    console.error(
+      "Update competition error:",
+      error
+    );
+
+    return Response.json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to update competition."
+    }, {
+      status: 500
+    });
+  }
+}
+

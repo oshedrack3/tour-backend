@@ -148,12 +148,33 @@ export async function handleTournamentRequest(
       user
     );
   }
+  
   if (
-  request.method === "GET" &&
-  pathname === "/tournaments/importable"
+    request.method === "GET" &&
+    pathname === "/tournaments/importable"
+  ) {
+    return await getImportableTournamentsRoute(
+      env,
+      user
+    );
+  }
+  if (
+  request.method === "DELETE" &&
+  /^\/tournaments\/[^/]+\/players\/[^/]+$/.test(pathname)
 ) {
-  return await getImportableTournamentsRoute(
+  const parts =
+    pathname.split("/");
+  
+  const tournamentId =
+    parts[2];
+  
+  const playerId =
+    parts[4];
+  
+  return await removeTournamentPlayerRoute(
     env,
+    tournamentId,
+    playerId,
     user
   );
 }
@@ -5912,8 +5933,7 @@ async function importTournamentPlayersRoute(
     return Response.json({
       success: true,
       message: players.length ?
-        `${players.length} team${players.length === 1 ? "" : "s"} imported successfully.` :
-        "No new teams to import.",
+        `${players.length} team${players.length === 1 ? "" : "s"} imported successfully.` : "No new teams to import.",
       players
     });
     
@@ -5939,7 +5959,7 @@ async function getImportableTournamentsRoute(
 ) {
   try {
     let tournaments = [];
-
+    
     if (user.role === "admin") {
       tournaments =
         await getTournamentsByOwner(
@@ -5953,19 +5973,153 @@ async function getImportableTournamentsRoute(
           user.id
         );
     }
-
+    
     tournaments =
       (tournaments || [])
-        .map(parseTournament);
-
+      .map(parseTournament);
+    
     return Response.json({
       success: true,
       tournaments
     });
-
+    
   } catch (error) {
     console.error(
       "Get importable tournaments error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to load tournaments."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function removeTournamentPlayerRoute(
+  env,
+  tournamentId,
+  playerId,
+  user
+) {
+  try {
+    if (user.role !== "admin") {
+      return Response.json({
+        success: false,
+        message:
+          "Only admins can remove players."
+      }, {
+        status: 403
+      });
+    }
+
+    const tournament =
+      await getTournament(
+        env.DB,
+        tournamentId
+      );
+
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message:
+          "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+
+    if (
+      tournament.admin_uid !== user.id
+    ) {
+      return Response.json({
+        success: false,
+        message:
+          "Access denied."
+      }, {
+        status: 403
+      });
+    }
+
+    const match =
+      await env.DB
+        .prepare(`
+          SELECT id
+          FROM matches
+          WHERE tournament_id = ?
+          LIMIT 1
+        `)
+        .bind(
+          tournamentId
+        )
+        .first();
+
+    if (match) {
+      return Response.json({
+        success: false,
+        message:
+          "Players cannot be removed after fixtures have been generated."
+      }, {
+        status: 400
+      });
+    }
+
+    const player =
+      await env.DB
+        .prepare(`
+          SELECT
+            tp.id,
+            tp.tournament_id,
+            tp.user_id,
+            tp.team_id,
+            t.name AS team_name
+          FROM tournament_players tp
+          LEFT JOIN teams t
+            ON t.id = tp.team_id
+          WHERE tp.id = ?
+          AND tp.tournament_id = ?
+        `)
+        .bind(
+          playerId,
+          tournamentId
+        )
+        .first();
+
+    if (!player) {
+      return Response.json({
+        success: false,
+        message:
+          "Tournament player not found."
+      }, {
+        status: 404
+      });
+    }
+
+    await env.DB
+      .prepare(`
+        DELETE FROM tournament_players
+        WHERE id = ?
+        AND tournament_id = ?
+      `)
+      .bind(
+        playerId,
+        tournamentId
+      )
+      .run();
+
+    return Response.json({
+      success: true,
+      message:
+        `${player.team_name || "Player"} removed from tournament.`,
+      player
+    });
+
+  } catch (error) {
+    console.error(
+      "Remove tournament player error:",
       error
     );
 
@@ -5973,7 +6127,7 @@ async function getImportableTournamentsRoute(
       success: false,
       message:
         error.message ||
-        "Failed to load tournaments."
+        "Failed to remove player from tournament."
     }, {
       status: 500
     });
