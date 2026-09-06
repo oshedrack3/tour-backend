@@ -4442,28 +4442,29 @@ function pairByGroupRules(
   }
   const result = [];
   for (
-    let position = 0;
-    position < qualifiersPerGroup;
-    position++
+    let i = 0;
+    i < groupCount;
+    i += 2
   ) {
-    const oppositePosition =
-      qualifiersPerGroup -
-      1 -
-      position;
+    const firstGroup =
+      groupList[i];
+    const secondGroup =
+      groupList[i + 1];
     for (
-      let i = 0;
-      i < groupCount / 2;
-      i++
+      let position = 0;
+      position < qualifiersPerGroup;
+      position++
     ) {
       const first =
-        groupList[i]
-          .teams[position];
+        firstGroup.teams[
+          position
+        ];
+      const oppositePosition =
+        qualifiersPerGroup -
+        1 -
+        position;
       const second =
-        groupList[
-          groupCount -
-          1 -
-          i
-        ].teams[
+        secondGroup.teams[
           oppositePosition
         ];
       if (
@@ -4490,6 +4491,8 @@ function pairByGroupRules(
   }
   return result;
 }
+
+
 
 async function getCupQualifiedTeams(
   db,
