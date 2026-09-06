@@ -1232,13 +1232,14 @@ export async function updateMatchResultAtomic(
   awayTeamId,
   homeStats,
   awayStats,
-  tournamentId
+  tournamentId,
+  updatePlayerStats = true
 ) {
-  const now = Date.now();
-  
+  const now =
+    Date.now();
   const statements = [
     db
-    .prepare(`
+      .prepare(`
         UPDATE matches
         SET
           home_score = ?,
@@ -1250,133 +1251,146 @@ export async function updateMatchResultAtomic(
         WHERE id = ?
         AND tournament_id = ?
       `)
-    .bind(
-      matchUpdates.home_score,
-      matchUpdates.away_score,
-      matchUpdates.played,
-      matchUpdates.played_at,
-      matchUpdates.winner_team_id,
-      now,
-      matchId,
-      tournamentId
-    ),
-    
-    db
-    .prepare(`
-        UPDATE tournament_players
-        SET
-          played = ?,
-          wins = ?,
-          draws = ?,
-          losses = ?,
-          gf = ?,
-          ga = ?,
-          points = ?
-        WHERE tournament_id = ?
-        AND team_id = ?
-      `)
-    .bind(
-      homeStats.played,
-      homeStats.wins,
-      homeStats.draws,
-      homeStats.losses,
-      homeStats.gf,
-      homeStats.ga,
-      homeStats.points,
-      tournamentId,
-      homeTeamId
-    ),
-    
-    db
-    .prepare(`
-        UPDATE tournament_players
-        SET
-          played = ?,
-          wins = ?,
-          draws = ?,
-          losses = ?,
-          gf = ?,
-          ga = ?,
-          points = ?
-        WHERE tournament_id = ?
-        AND team_id = ?
-      `)
-    .bind(
-      awayStats.played,
-      awayStats.wins,
-      awayStats.draws,
-      awayStats.losses,
-      awayStats.gf,
-      awayStats.ga,
-      awayStats.points,
-      tournamentId,
-      awayTeamId
-    )
+      .bind(
+        matchUpdates.home_score,
+        matchUpdates.away_score,
+        matchUpdates.played,
+        matchUpdates.played_at,
+        matchUpdates.winner_team_id,
+        now,
+        matchId,
+        tournamentId
+      )
   ];
-  
-  await db.batch(statements);
-  
-  const [
-    updatedMatch,
-    updatedHomePlayer,
-    updatedAwayPlayer
-  ] = await Promise.all([
-    db
-    .prepare(`
+  if (
+    updatePlayerStats &&
+    homeStats &&
+    awayStats
+  ) {
+    statements.push(
+      db
+        .prepare(`
+          UPDATE tournament_players
+          SET
+            played = ?,
+            wins = ?,
+            draws = ?,
+            losses = ?,
+            gf = ?,
+            ga = ?,
+            points = ?
+          WHERE tournament_id = ?
+          AND team_id = ?
+        `)
+        .bind(
+          homeStats.played,
+          homeStats.wins,
+          homeStats.draws,
+          homeStats.losses,
+          homeStats.gf,
+          homeStats.ga,
+          homeStats.points,
+          tournamentId,
+          homeTeamId
+        ),
+      db
+        .prepare(`
+          UPDATE tournament_players
+          SET
+            played = ?,
+            wins = ?,
+            draws = ?,
+            losses = ?,
+            gf = ?,
+            ga = ?,
+            points = ?
+          WHERE tournament_id = ?
+          AND team_id = ?
+        `)
+        .bind(
+          awayStats.played,
+          awayStats.wins,
+          awayStats.draws,
+          awayStats.losses,
+          awayStats.gf,
+          awayStats.ga,
+          awayStats.points,
+          tournamentId,
+          awayTeamId
+        )
+    );
+  }
+  await db.batch(
+    statements
+  );
+  const updatedMatch =
+    await db
+      .prepare(`
         SELECT *
         FROM matches
         WHERE id = ?
         AND tournament_id = ?
       `)
-    .bind(
-      matchId,
-      tournamentId
-    )
-    .first(),
-    
-    db
-    .prepare(`
-        SELECT
-          tp.*,
-          tm.name AS team_name,
-          tm.logo AS team_logo
-        FROM tournament_players tp
-        INNER JOIN teams tm
-          ON tm.id = tp.team_id
-        WHERE tp.tournament_id = ?
-        AND tp.team_id = ?
-      `)
-    .bind(
-      tournamentId,
-      homeTeamId
-    )
-    .first(),
-    
-    db
-    .prepare(`
-        SELECT
-          tp.*,
-          tm.name AS team_name,
-          tm.logo AS team_logo
-        FROM tournament_players tp
-        INNER JOIN teams tm
-          ON tm.id = tp.team_id
-        WHERE tp.tournament_id = ?
-        AND tp.team_id = ?
-      `)
-    .bind(
-      tournamentId,
-      awayTeamId
-    )
-    .first()
-  ]);
-  
-  return {
-    match: updatedMatch,
-    players: [
+      .bind(
+        matchId,
+        tournamentId
+      )
+      .first();
+  let updatedHomePlayer =
+    null;
+  let updatedAwayPlayer =
+    null;
+  if (
+    updatePlayerStats
+  ) {
+    [
       updatedHomePlayer,
       updatedAwayPlayer
-    ]
+    ] = await Promise.all([
+      db
+        .prepare(`
+          SELECT
+            tp.*,
+            tm.name AS team_name,
+            tm.logo AS team_logo
+          FROM tournament_players tp
+          INNER JOIN teams tm
+            ON tm.id = tp.team_id
+          WHERE tp.tournament_id = ?
+          AND tp.team_id = ?
+        `)
+        .bind(
+          tournamentId,
+          homeTeamId
+        )
+        .first(),
+      db
+        .prepare(`
+          SELECT
+            tp.*,
+            tm.name AS team_name,
+            tm.logo AS team_logo
+          FROM tournament_players tp
+          INNER JOIN teams tm
+            ON tm.id = tp.team_id
+          WHERE tp.tournament_id = ?
+          AND tp.team_id = ?
+        `)
+        .bind(
+          tournamentId,
+          awayTeamId
+        )
+        .first()
+    ]);
+  }
+  return {
+    match: updatedMatch,
+    players: updatePlayerStats
+      ? [
+          updatedHomePlayer,
+          updatedAwayPlayer
+        ]
+      : []
   };
 }
 
