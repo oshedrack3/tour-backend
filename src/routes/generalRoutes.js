@@ -24,6 +24,10 @@ import {
   getWebPush
 } from "../push.js";
 
+import {
+  sendPushToUser
+} from "../pushNotifications.js";
+
 export async function handleGeneralRequest(
   request,
   env,
@@ -450,7 +454,9 @@ async function createNoticeRoute(
     
     if (Array.isArray(images)) {
       for (
-        let i = 0; i < images.length; i++
+        let i = 0;
+        i < images.length;
+        i++
       ) {
         const image =
           images[i];
@@ -467,7 +473,8 @@ async function createNoticeRoute(
         
         uploadedImages.push({
           url: uploaded.url,
-          publicId: uploaded.public_id ||
+          publicId:
+            uploaded.public_id ||
             uploaded.publicId
         });
       }
@@ -475,17 +482,27 @@ async function createNoticeRoute(
     
     const notice = {
       id: noticeId,
-      title: String(title).trim(),
-      content: String(content).trim(),
-      category: category || "general",
-      images: uploadedImages,
-      published: published !== false,
-      expires_at: expiresAt === null ||
-        expiresAt === undefined ?
-        null : Number(expiresAt),
-      created_at: now,
-      updated_at: now,
-      created_by: user.id
+      title:
+        String(title).trim(),
+      content:
+        String(content).trim(),
+      category:
+        category || "general",
+      images:
+        uploadedImages,
+      published:
+        published !== false,
+      expires_at:
+        expiresAt === null ||
+        expiresAt === undefined
+          ? null
+          : Number(expiresAt),
+      created_at:
+        now,
+      updated_at:
+        now,
+      created_by:
+        user.id
     };
     
     await createNotice(
@@ -496,21 +513,47 @@ async function createNoticeRoute(
     const change =
       await env.DB
       .prepare(`
-          SELECT id
-          FROM notice_changes
-          WHERE notice_id = ?
-          AND action = 'create'
-          ORDER BY id DESC
-          LIMIT 1
-        `)
+        SELECT id
+        FROM notice_changes
+        WHERE notice_id = ?
+        AND action = 'create'
+        ORDER BY id DESC
+        LIMIT 1
+      `)
       .bind(noticeId)
       .first();
     
+    if (notice.published) {
+      const users =
+        await env.DB
+        .prepare(`
+          SELECT id
+          FROM users
+        `)
+        .all();
+      
+      await Promise.all(
+        (users.results || [])
+        .map(
+          targetUser =>
+            sendPushToUser(
+              env,
+              targetUser.id,
+              notice.title,
+              notice.content,
+              `/notices/${notice.id}`
+            )
+        )
+      );
+    }
+    
     return Response.json({
       success: true,
-      message: "Notice created successfully.",
+      message:
+        "Notice created successfully.",
       notice,
-      changeId: change?.id || null
+      changeId:
+        change?.id || null
     }, {
       status: 201
     });
@@ -523,13 +566,15 @@ async function createNoticeRoute(
     
     return Response.json({
       success: false,
-      message: error.message ||
+      message:
+        error.message ||
         "Failed to create notice."
     }, {
       status: 500
     });
   }
 }
+
 
 async function updateNoticeRoute(
   request,

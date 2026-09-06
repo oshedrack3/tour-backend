@@ -28,305 +28,213 @@ import {
 import {
   uploadBase64Image
 } from "../cloudinary.js";
+import {
+  sendPushToUser
+} from "../pushNotifications.js";
 
-export async function handleTournamentRequest(
+async function updateSubmissionDeadlineRoute(
   request,
   env,
+  tournamentId,
   user
 ) {
-  const url = new URL(request.url);
-  
-  const pathname =
-    url.pathname.replace(/\/+$/, "") || "/";
-  
-  if (
-    request.method === "POST" &&
-    pathname === "/teams/create"
-  ) {
-    return await createTeamRoute(
-      request,
-      env,
-      user
-    );
-  }
-  
-  if (
-    request.method === "POST" &&
-    pathname === "/tournaments/create"
-  ) {
-    return await createTournamentRoute(
-      request,
-      env,
-      user
-    );
-  }
-  if (
-    request.method === "DELETE" &&
-    /^\/tournaments\/[^/]+$/.test(pathname)
-  ) {
-    const tournamentId =
-      pathname.split("/")[2];
-    
-    return await deleteTournamentRoute(
-      env,
-      tournamentId,
-      user
-    );
-  }
-  if (
-    request.method === "POST" &&
-    /^\/tournaments\/[^/]+\/matches\/[^/]+\/submission$/.test(pathname)
-  ) {
-    const parts =
-      pathname.split("/");
-    
-    const tournamentId =
-      parts[2];
-    
-    const matchId =
-      parts[4];
-    
-    return await createMatchSubmissionRoute(
-      request,
-      env,
-      tournamentId,
-      matchId,
-      user
-    );
-  }
-  if (
-    request.method === "PATCH" &&
-    /^\/tournaments\/[^/]+\/submission-deadline$/.test(pathname)
-  ) {
-    const tournamentId =
-      pathname.split("/")[2];
-    
-    return await updateSubmissionDeadlineRoute(
-      request,
-      env,
-      tournamentId,
-      user
-    );
-  }
-  if (
-    request.method === "PATCH" &&
-    /^\/tournaments\/[^/]+\/match-submission\/[^/]+\/review$/.test(pathname)
-  ) {
-    const parts =
-      pathname.split("/");
-    
-    const tournamentId =
-      parts[2];
-    
-    const submissionId =
-      parts[4];
-    
-    return await reviewMatchSubmissionRoute(
-      request,
-      env,
-      tournamentId,
-      submissionId,
-      user
-    );
-  }
-  if (
-    request.method === "GET" &&
-    /^\/tournaments\/[^/]+\/matches\/[^/]+\/submission$/.test(pathname)
-  ) {
-    const parts =
-      pathname.split("/");
-    
-    const tournamentId =
-      parts[2];
-    
-    const matchId =
-      parts[4];
-    
-    return await getMatchSubmissionRoute(
-      env,
-      tournamentId,
-      matchId,
-      user
-    );
-  }
-  
-  if (
-    request.method === "GET" &&
-    /^\/tournaments\/[^/]+\/matches\/[^/]+\/submissions$/.test(pathname)
-  ) {
-    const parts =
-      pathname.split("/");
-    
-    const tournamentId =
-      parts[2];
-    
-    const matchId =
-      parts[4];
-    
-    return await getMatchSubmissionsRoute(
-      env,
-      tournamentId,
-      matchId,
-      user
-    );
-  }
-  if (
-    request.method === "GET" &&
-    pathname === "/tournaments/my"
-  ) {
-    const competitionId =
-      url.searchParams.get(
-        "competition_id"
+  try {
+    const tournament =
+      await getTournament(
+        env.DB,
+        tournamentId
       );
     
-    return await getMyTournamentsRoute(
-      env,
-      user,
-      competitionId
-    );
-  }
-  if (
-    request.method === "GET" &&
-    /^\/tournaments\/[^/]+\/matches$/.test(pathname)
-  ) {
-    const id =
-      pathname.split("/")[2];
-    
-    return await getTournamentMatchesRoute(
-      env,
-      id,
-      user
-    );
-  }
-  
-  if (
-    request.method === "PATCH" &&
-    /^\/tournaments\/[^/]+\/matches\/[^/]+\/result$/.test(pathname)
-  ) {
-    const parts =
-      pathname.split("/");
-    
-    const tournamentId =
-      parts[2];
-    
-    const matchId =
-      parts[4];
-    
-    return await updateMatchResultRoute(
-      request,
-      env,
-      tournamentId,
-      matchId,
-      user
-    );
-  }
-  
-  if (
-    request.method === "GET" &&
-    /^\/tournaments\/[^/]+\/table$/.test(pathname)
-  ) {
-    const id =
-      pathname.split("/")[2];
-    
-    return await getTournamentTableRoute(
-      env,
-      id,
-      user
-    );
-  }
-  
-  if (
-    request.method === "POST" &&
-    /^\/tournaments\/[^/]+\/join$/.test(pathname)
-  ) {
-    const tournamentId =
-      pathname.split("/")[2];
-    
-    return await joinTournamentRoute(
-      request,
-      env,
-      tournamentId,
-      user
-    );
-  }
-  
-  if (
-    request.method === "POST" &&
-    /^\/tournaments\/[^/]+\/generate-fixtures$/.test(pathname)
-  ) {
-    const id =
-      pathname.split("/")[2];
-    
-    return await generateFixturesRoute(
-      request,
-      env,
-      id,
-      user
-    );
-  }
-  
-  if (
-    request.method === "POST" &&
-    /^\/tournaments\/[^/]+\/generate-cup$/.test(pathname)
-  ) {
-    const id = pathname.split("/")[2];
-    
-    return await generateCupRoute(
-      request,
-      env,
-      id,
-      user
-    );
-  }
-  
-  
-  if (
-    request.method === "PUT" &&
-    /^\/matches\/[^/]+$/.test(pathname)
-  ) {
-    const matchId =
-      pathname.split("/")[2];
-    
-    return await updateMatchRoute(
-      request,
-      env,
-      matchId,
-      user
-    );
-  }
-  
-  if (
-    request.method === "PUT" &&
-    /^\/tournaments\/[^/]+\/players\/team$/.test(pathname)
-  ) {
-    const tournamentId =
-      pathname.split("/")[2];
-    
-    return await assignTournamentTeamRoute(
-      request,
-      env,
-      tournamentId,
-      user
-    );
-  }
-  
-  if (
-    request.method === "GET" &&
-    pathname.startsWith("/tournaments/")
-  ) {
-    const id =
-      pathname.split("/")[2];
-    
-    if (id) {
-      return await getTournamentRoute(
-        env,
-        id,
-        user
-      );
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
     }
+    
+    if (
+      user.role !== "admin" ||
+      String(tournament.admin_uid) !==
+      String(user.id)
+    ) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    const body =
+      await request
+      .json()
+      .catch(() => ({}));
+    
+    const fromRound =
+      Number(body.fromRound);
+    
+    const toRound =
+      Number(body.toRound);
+    
+    const enabled =
+      body.enabled === true;
+    
+    const deadline =
+      body.deadline === null ||
+      body.deadline === undefined ||
+      body.deadline === "" ?
+      null :
+      Number(body.deadline);
+    
+    if (
+      !Number.isInteger(fromRound) ||
+      fromRound < 1
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid starting round."
+      }, {
+        status: 400
+      });
+    }
+    
+    if (
+      !Number.isInteger(toRound) ||
+      toRound < fromRound
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid ending round."
+      }, {
+        status: 400
+      });
+    }
+    
+    if (
+      deadline !== null &&
+      (
+        !Number.isFinite(deadline) ||
+        deadline <= 0
+      )
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid deadline."
+      }, {
+        status: 400
+      });
+    }
+    
+    let settings = {};
+    
+    if (tournament.settings) {
+      try {
+        settings =
+          typeof tournament.settings === "string" ?
+          JSON.parse(tournament.settings) :
+          tournament.settings;
+      } catch {
+        settings = {};
+      }
+    }
+    
+    settings.submissionDeadline = {
+      fromRound,
+      toRound,
+      deadline,
+      enabled
+    };
+    
+    const now =
+      Date.now();
+    
+    await env.DB
+      .prepare(`
+        UPDATE tournaments
+        SET
+          settings = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .bind(
+        JSON.stringify(settings),
+        now,
+        tournamentId
+      )
+      .run();
+    
+    const players =
+      await env.DB
+      .prepare(`
+        SELECT user_id
+        FROM tournament_players
+        WHERE tournament_id = ?
+      `)
+      .bind(tournamentId)
+      .all();
+    
+    let pushTitle =
+      "Submission Deadline Updated";
+    
+    let pushBody;
+    
+    if (enabled && deadline !== null) {
+      const deadlineDate =
+        new Date(deadline);
+      
+      pushBody =
+        `Match submissions for rounds ${fromRound}-${toRound} are due by ${deadlineDate.toLocaleString()}.`;
+    } else if (!enabled) {
+      pushBody =
+        `The submission deadline for rounds ${fromRound}-${toRound} has been disabled.`;
+    } else {
+      pushBody =
+        `The submission deadline for rounds ${fromRound}-${toRound} has been updated.`;
+    }
+    
+    await Promise.all(
+      (players.results || [])
+      .filter(
+        player =>
+          player.user_id &&
+          String(player.user_id) !==
+          String(user.id)
+      )
+      .map(
+        player =>
+          sendPushToUser(
+            env,
+            player.user_id,
+            pushTitle,
+            pushBody,
+            `/tournament/${tournamentId}`
+          )
+      )
+    );
+    
+    return Response.json({
+      success: true,
+      submissionDeadline:
+        settings.submissionDeadline
+    });
+    
+  } catch (error) {
+    console.error(
+      "Update submission deadline error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to update submission deadline."
+    }, {
+      status: 500
+    });
   }
-  
-  return null;
 }
 
 async function createTournamentRoute(
@@ -1854,19 +1762,20 @@ async function joinTournamentRoute(
     const playedMatch =
       await env.DB
       .prepare(`
-    SELECT 1
-    FROM matches
-    WHERE tournament_id = ?
-    AND played = 1
-    LIMIT 1
-  `)
+        SELECT 1
+        FROM matches
+        WHERE tournament_id = ?
+        AND played = 1
+        LIMIT 1
+      `)
       .bind(tournamentId)
       .first();
     
     if (playedMatch) {
       return Response.json({
         success: false,
-        message: "You cannot join this tournament because it has already started."
+        message:
+          "You cannot join this tournament because it has already started."
       }, {
         status: 409
       });
@@ -1908,8 +1817,10 @@ async function joinTournamentRoute(
     if (teamIds.length > maxTeams) {
       return Response.json({
         success: false,
-        message: user.role === "admin" ?
-          "You can register a maximum of 20 teams." : "You can register only one team."
+        message:
+          user.role === "admin" ?
+          "You can register a maximum of 20 teams." :
+          "You can register only one team."
       }, {
         status: 400
       });
@@ -1923,14 +1834,14 @@ async function joinTournamentRoute(
     const ownedTeams =
       await env.DB
       .prepare(`
-          SELECT
-            id,
-            name,
-            logo
-          FROM teams
-          WHERE owner_uid = ?
-          AND id IN (${placeholders})
-        `)
+        SELECT
+          id,
+          name,
+          logo
+        FROM teams
+        WHERE owner_uid = ?
+        AND id IN (${placeholders})
+      `)
       .bind(
         user.id,
         ...teamIds
@@ -1946,7 +1857,8 @@ async function joinTournamentRoute(
     ) {
       return Response.json({
         success: false,
-        message: "One or more selected teams were not found or you do not own them."
+        message:
+          "One or more selected teams were not found or you do not own them."
       }, {
         status: 403
       });
@@ -1955,11 +1867,11 @@ async function joinTournamentRoute(
     const existing =
       await env.DB
       .prepare(`
-          SELECT team_id
-          FROM tournament_players
-          WHERE tournament_id = ?
-          AND team_id IN (${placeholders})
-        `)
+        SELECT team_id
+        FROM tournament_players
+        WHERE tournament_id = ?
+        AND team_id IN (${placeholders})
+      `)
       .bind(
         tournamentId,
         ...teamIds
@@ -1986,7 +1898,8 @@ async function joinTournamentRoute(
     ) {
       return Response.json({
         success: false,
-        message: "One or more selected teams are already registered in this tournament."
+        message:
+          "One or more selected teams are already registered in this tournament."
       }, {
         status: 409
       });
@@ -1999,33 +1912,33 @@ async function joinTournamentRoute(
       teamIds.map(teamId =>
         env.DB
         .prepare(`
-            INSERT INTO tournament_players (
-              id,
-              tournament_id,
-              user_id,
-              team_id,
-              status,
-              joined_at,
-              responded_at,
-              has_new_invitation,
-              invitation_count,
-              played,
-              wins,
-              draws,
-              losses,
-              gf,
-              ga,
-              points
-            )
-            VALUES (
-              ?, ?, ?, ?,
-              'accepted',
-              ?, ?,
-              0,
-              1,
-              0, 0, 0, 0, 0, 0, 0
-            )
-          `)
+          INSERT INTO tournament_players (
+            id,
+            tournament_id,
+            user_id,
+            team_id,
+            status,
+            joined_at,
+            responded_at,
+            has_new_invitation,
+            invitation_count,
+            played,
+            wins,
+            draws,
+            losses,
+            gf,
+            ga,
+            points
+          )
+          VALUES (
+            ?, ?, ?, ?,
+            'accepted',
+            ?, ?,
+            0,
+            1,
+            0, 0, 0, 0, 0, 0, 0
+          )
+        `)
         .bind(
           crypto.randomUUID(),
           tournamentId,
@@ -2043,18 +1956,18 @@ async function joinTournamentRoute(
     const registered =
       await env.DB
       .prepare(`
-          SELECT
-            tp.*,
-            t.name AS team_name,
-            t.logo AS team_logo
-          FROM tournament_players tp
-          LEFT JOIN teams t
-            ON t.id = tp.team_id
-          WHERE tp.tournament_id = ?
-          AND tp.user_id = ?
-          AND tp.team_id IN (${placeholders})
-          ORDER BY tp.joined_at ASC
-        `)
+        SELECT
+          tp.*,
+          t.name AS team_name,
+          t.logo AS team_logo
+        FROM tournament_players tp
+        LEFT JOIN teams t
+          ON t.id = tp.team_id
+        WHERE tp.tournament_id = ?
+        AND tp.user_id = ?
+        AND tp.team_id IN (${placeholders})
+        ORDER BY tp.joined_at ASC
+      `)
       .bind(
         tournamentId,
         user.id,
@@ -2062,10 +1975,31 @@ async function joinTournamentRoute(
       )
       .all();
     
+    const registeredTeams =
+      teams
+      .map(team => team.name)
+      .join(", ");
+    
+    if (
+      tournament.admin_uid &&
+      String(tournament.admin_uid) !==
+      String(user.id)
+    ) {
+      await sendPushToUser(
+        env,
+        tournament.admin_uid,
+        "New Tournament Player",
+        `${user.username || "A player"} joined ${tournament.name || "your tournament"} with ${registeredTeams}.`,
+        `/tournament/${tournamentId}`
+      );
+    }
+    
     return Response.json({
       success: true,
-      message: "Successfully joined the tournament!",
-      players: registered.results || []
+      message:
+        "Successfully joined the tournament!",
+      players:
+        registered.results || []
     });
     
   } catch (error) {
@@ -2076,7 +2010,8 @@ async function joinTournamentRoute(
     
     return Response.json({
       success: false,
-      message: error.message ||
+      message:
+        error.message ||
         "Failed to join tournament."
     }, {
       status: 500
@@ -2307,6 +2242,7 @@ async function createMatchSubmissionRoute(
           tournamentId
         )
       );
+    
     if (!tournament) {
       return Response.json({
         success: false,
@@ -2513,23 +2449,14 @@ async function createMatchSubmissionRoute(
         env.DB,
         {
           id: submissionId,
-          
           tournament_id: tournamentId,
-          
           match_id: matchId,
-          
           submitted_by: user.id,
-          
           team_id: submittingTeamId,
-          
           home_goals: homeGoals,
-          
           away_goals: awayGoals,
-          
           screenshot: screenshotUrl,
-          
           screenshot_public_id: screenshotPublicId,
-          
           created_at: now
         }
       );
@@ -2545,6 +2472,20 @@ async function createMatchSubmissionRoute(
         tournamentId
       )
       .run();
+    
+    if (
+      tournament.admin_uid &&
+      String(tournament.admin_uid) !==
+      String(user.id)
+    ) {
+      await sendPushToUser(
+        env,
+        tournament.admin_uid,
+        "Match Result Submitted",
+        `A player submitted a ${homeGoals}-${awayGoals} match result for ${tournament.name}.`,
+        `/tournament/${tournamentId}`
+      );
+    }
     
     return Response.json({
       success: true,
@@ -2744,7 +2685,8 @@ async function reviewMatchSubmissionRoute(
             status: "rejected",
             reviewed_at: now,
             reviewed_by: user.id,
-            rejection_reason: rejectionReason || null
+            rejection_reason:
+              rejectionReason || null
           }
         );
       
@@ -2759,6 +2701,14 @@ async function reviewMatchSubmissionRoute(
           tournamentId
         )
         .run();
+      
+      await sendPushToUser(
+        env,
+        submission.submitted_by,
+        "Match Result Rejected",
+        `Your ${submission.home_goals}-${submission.away_goals} match result for ${tournament.name} was rejected${rejectionReason ? `: ${rejectionReason}` : "."}`,
+        `/tournament/${tournamentId}`
+      );
       
       return Response.json({
         success: true,
@@ -2974,6 +2924,14 @@ async function reviewMatchSubmissionRoute(
           match.id
         );
     }
+    
+    await sendPushToUser(
+      env,
+      submission.submitted_by,
+      "Match Result Approved",
+      `Your ${homeScore}-${awayScore} match result for ${tournament.name} was approved.`,
+      `/tournament/${tournamentId}`
+    );
     
     return Response.json({
       success: true,
