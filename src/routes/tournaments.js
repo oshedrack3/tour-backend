@@ -135,16 +135,25 @@ export async function handleTournamentRequest(
     );
   }
   if (
-  request.method === "POST" &&
-  /^\/tournaments\/[^/]+\/import-teams$/.test(pathname)
+    request.method === "POST" &&
+    /^\/tournaments\/[^/]+\/import-teams$/.test(pathname)
+  ) {
+    const tournamentId =
+      pathname.split("/")[2];
+    
+    return await importTournamentPlayersRoute(
+      request,
+      env,
+      tournamentId,
+      user
+    );
+  }
+  if (
+  request.method === "GET" &&
+  pathname === "/tournaments/importable"
 ) {
-  const tournamentId =
-    pathname.split("/")[2];
-  
-  return await importTournamentPlayersRoute(
-    request,
+  return await getImportableTournamentsRoute(
     env,
-    tournamentId,
     user
   );
 }
@@ -3564,8 +3573,7 @@ async function generateCupRoute(
     return Response.json({
       success: true,
       message: enableGroups ?
-        "Cup group stage generated successfully." :
-        "Direct knockout tournament generated successfully.",
+        "Cup group stage generated successfully." : "Direct knockout tournament generated successfully.",
       tournamentId,
       settings: updatedSettings,
       groups,
@@ -5819,17 +5827,16 @@ async function importTournamentPlayersRoute(
         tournamentId,
         user.id
       );
-
+    
     if (!targetTournament) {
       return Response.json({
         success: false,
-        message:
-          "Tournament not found or access denied."
+        message: "Tournament not found or access denied."
       }, {
         status: 404
       });
     }
-
+    
     if (targetTournament.admin_uid !== user.id) {
       return Response.json({
         success: false,
@@ -5838,86 +5845,127 @@ async function importTournamentPlayersRoute(
         status: 403
       });
     }
-
+    
     const body =
       await request
-        .json()
-        .catch(() => ({}));
-
+      .json()
+      .catch(() => ({}));
+    
     const sourceTournamentId =
       String(
         body.source_tournament_id || ""
       ).trim();
-
+    
     if (!sourceTournamentId) {
       return Response.json({
         success: false,
-        message:
-          "Source tournament ID is required."
+        message: "Source tournament ID is required."
       }, {
         status: 400
       });
     }
-
+    
     if (
       sourceTournamentId ===
       tournamentId
     ) {
       return Response.json({
         success: false,
-        message:
-          "Source and target tournaments cannot be the same."
+        message: "Source and target tournaments cannot be the same."
       }, {
         status: 400
       });
     }
-
+    
     const sourceTournament =
       await getTournamentForUser(
         env.DB,
         sourceTournamentId,
         user.id
       );
-
+    
     if (!sourceTournament) {
       return Response.json({
         success: false,
-        message:
-          "Source tournament not found or access denied."
+        message: "Source tournament not found or access denied."
       }, {
         status: 404
       });
     }
-
+    
     if (sourceTournament.admin_uid !== user.id) {
       return Response.json({
         success: false,
-        message:
-          "You can only import teams from a tournament you own."
+        message: "You can only import teams from a tournament you own."
       }, {
         status: 403
       });
     }
-
+    
     const players =
       await importTournamentPlayers(
         env.DB,
         sourceTournamentId,
         tournamentId
       );
+    
+    return Response.json({
+      success: true,
+      message: players.length ?
+        `${players.length} team${players.length === 1 ? "" : "s"} imported successfully.` :
+        "No new teams to import.",
+      players
+    });
+    
+  } catch (error) {
+    console.error(
+      "Import tournament players error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to import teams."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function getImportableTournamentsRoute(
+  env,
+  user
+) {
+  try {
+    let tournaments = [];
+
+    if (user.role === "admin") {
+      tournaments =
+        await getTournamentsByOwner(
+          env.DB,
+          user.id
+        );
+    } else {
+      tournaments =
+        await getTournamentsByPlayer(
+          env.DB,
+          user.id
+        );
+    }
+
+    tournaments =
+      (tournaments || [])
+        .map(parseTournament);
 
     return Response.json({
       success: true,
-      message:
-        players.length
-          ? `${players.length} team${players.length === 1 ? "" : "s"} imported successfully.`
-          : "No new teams to import.",
-      players
+      tournaments
     });
 
   } catch (error) {
     console.error(
-      "Import tournament players error:",
+      "Get importable tournaments error:",
       error
     );
 
@@ -5925,7 +5973,7 @@ async function importTournamentPlayersRoute(
       success: false,
       message:
         error.message ||
-        "Failed to import teams."
+        "Failed to load tournaments."
     }, {
       status: 500
     });
