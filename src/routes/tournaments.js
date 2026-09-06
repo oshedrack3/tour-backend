@@ -32,210 +32,6 @@ import {
   sendPushToUser
 } from "../pushNotifications.js";
 
-async function updateSubmissionDeadlineRoute(
-  request,
-  env,
-  tournamentId,
-  user
-) {
-  try {
-    const tournament =
-      await getTournament(
-        env.DB,
-        tournamentId
-      );
-    
-    if (!tournament) {
-      return Response.json({
-        success: false,
-        message: "Tournament not found."
-      }, {
-        status: 404
-      });
-    }
-    
-    if (
-      user.role !== "admin" ||
-      String(tournament.admin_uid) !==
-      String(user.id)
-    ) {
-      return Response.json({
-        success: false,
-        message: "Tournament not found."
-      }, {
-        status: 404
-      });
-    }
-    
-    const body =
-      await request
-      .json()
-      .catch(() => ({}));
-    
-    const fromRound =
-      Number(body.fromRound);
-    
-    const toRound =
-      Number(body.toRound);
-    
-    const enabled =
-      body.enabled === true;
-    
-    const deadline =
-      body.deadline === null ||
-      body.deadline === undefined ||
-      body.deadline === "" ?
-      null :
-      Number(body.deadline);
-    
-    if (
-      !Number.isInteger(fromRound) ||
-      fromRound < 1
-    ) {
-      return Response.json({
-        success: false,
-        message: "Invalid starting round."
-      }, {
-        status: 400
-      });
-    }
-    
-    if (
-      !Number.isInteger(toRound) ||
-      toRound < fromRound
-    ) {
-      return Response.json({
-        success: false,
-        message: "Invalid ending round."
-      }, {
-        status: 400
-      });
-    }
-    
-    if (
-      deadline !== null &&
-      (
-        !Number.isFinite(deadline) ||
-        deadline <= 0
-      )
-    ) {
-      return Response.json({
-        success: false,
-        message: "Invalid deadline."
-      }, {
-        status: 400
-      });
-    }
-    
-    let settings = {};
-    
-    if (tournament.settings) {
-      try {
-        settings =
-          typeof tournament.settings === "string" ?
-          JSON.parse(tournament.settings) :
-          tournament.settings;
-      } catch {
-        settings = {};
-      }
-    }
-    
-    settings.submissionDeadline = {
-      fromRound,
-      toRound,
-      deadline,
-      enabled
-    };
-    
-    const now =
-      Date.now();
-    
-    await env.DB
-      .prepare(`
-        UPDATE tournaments
-        SET
-          settings = ?,
-          updated_at = ?
-        WHERE id = ?
-      `)
-      .bind(
-        JSON.stringify(settings),
-        now,
-        tournamentId
-      )
-      .run();
-    
-    const players =
-      await env.DB
-      .prepare(`
-        SELECT user_id
-        FROM tournament_players
-        WHERE tournament_id = ?
-      `)
-      .bind(tournamentId)
-      .all();
-    
-    let pushTitle =
-      "Submission Deadline Updated";
-    
-    let pushBody;
-    
-    if (enabled && deadline !== null) {
-      const deadlineDate =
-        new Date(deadline);
-      
-      pushBody =
-        `Match submissions for rounds ${fromRound}-${toRound} are due by ${deadlineDate.toLocaleString()}.`;
-    } else if (!enabled) {
-      pushBody =
-        `The submission deadline for rounds ${fromRound}-${toRound} has been disabled.`;
-    } else {
-      pushBody =
-        `The submission deadline for rounds ${fromRound}-${toRound} has been updated.`;
-    }
-    
-    await Promise.all(
-      (players.results || [])
-      .filter(
-        player =>
-          player.user_id &&
-          String(player.user_id) !==
-          String(user.id)
-      )
-      .map(
-        player =>
-          sendPushToUser(
-            env,
-            player.user_id,
-            pushTitle,
-            pushBody,
-            `/tournament/${tournamentId}`
-          )
-      )
-    );
-    
-    return Response.json({
-      success: true,
-      submissionDeadline:
-        settings.submissionDeadline
-    });
-    
-  } catch (error) {
-    console.error(
-      "Update submission deadline error:",
-      error
-    );
-    
-    return Response.json({
-      success: false,
-      message:
-        error.message ||
-        "Failed to update submission deadline."
-    }, {
-      status: 500
-    });
-  }
-}
 
 async function createTournamentRoute(
   request,
@@ -2959,159 +2755,7 @@ async function reviewMatchSubmissionRoute(
   }
 }
 
-async function updateSubmissionDeadlineRoute(
-  request,
-  env,
-  tournamentId,
-  user
-) {
-  try {
-    const tournament =
-      await getTournament(
-        env.DB,
-        tournamentId
-      );
-    
-    if (!tournament) {
-      return Response.json({
-        success: false,
-        message: "Tournament not found."
-      }, {
-        status: 404
-      });
-    }
-    
-    if (
-      user.role !== "admin" ||
-      String(tournament.admin_uid) !==
-      String(user.id)
-    ) {
-      return Response.json({
-        success: false,
-        message: "Tournament not found."
-      }, {
-        status: 404
-      });
-    }
-    
-    const body =
-      await request
-      .json()
-      .catch(() => ({}));
-    
-    const fromRound =
-      Number(body.fromRound);
-    
-    const toRound =
-      Number(body.toRound);
-    
-    const enabled =
-      body.enabled === true;
-    
-    const deadline =
-      body.deadline === null ||
-      body.deadline === undefined ||
-      body.deadline === "" ?
-      null :
-      Number(body.deadline);
-    
-    if (
-      !Number.isInteger(fromRound) ||
-      fromRound < 1
-    ) {
-      return Response.json({
-        success: false,
-        message: "Invalid starting round."
-      }, {
-        status: 400
-      });
-    }
-    
-    if (
-      !Number.isInteger(toRound) ||
-      toRound < fromRound
-    ) {
-      return Response.json({
-        success: false,
-        message: "Invalid ending round."
-      }, {
-        status: 400
-      });
-    }
-    
-    if (
-      deadline !== null &&
-      (
-        !Number.isFinite(deadline) ||
-        deadline <= 0
-      )
-    ) {
-      return Response.json({
-        success: false,
-        message: "Invalid deadline."
-      }, {
-        status: 400
-      });
-    }
-    
-    let settings = {};
-    
-    if (tournament.settings) {
-      try {
-        settings =
-          typeof tournament.settings === "string" ?
-          JSON.parse(tournament.settings) :
-          tournament.settings;
-      } catch {
-        settings = {};
-      }
-    }
-    
-    settings.submissionDeadline = {
-      fromRound,
-      toRound,
-      deadline,
-      enabled
-    };
-    
-    const now =
-      Date.now();
-    
-    await env.DB
-      .prepare(`
-        UPDATE tournaments
-        SET
-          settings = ?,
-          updated_at = ?
-        WHERE id = ?
-      `)
-      .bind(
-        JSON.stringify(settings),
-        now,
-        tournamentId
-      )
-      .run();
-    
-    return Response.json({
-      success: true,
-      submissionDeadline: settings.submissionDeadline
-    });
-    
-  } catch (error) {
-    console.error(
-      "Update submission deadline error:",
-      error
-    );
-    
-    return Response.json({
-      success: false,
-      message: error.message ||
-        "Failed to update submission deadline."
-    }, {
-      status: 500
-    });
-  }
-}
+
 async function deleteTournamentRoute(
   env,
   tournamentId,
@@ -5724,4 +5368,213 @@ async function prepareThirdPlaceMatch(
     homeTeamId: losers[0],
     awayTeamId: losers[1]
   };
+}
+
+
+async function updateSubmissionDeadlineRoute(
+  request,
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournament(
+        env.DB,
+        tournamentId
+      );
+    
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    if (
+      user.role !== "admin" ||
+      String(tournament.admin_uid) !==
+      String(user.id)
+    ) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    const body =
+      await request
+      .json()
+      .catch(() => ({}));
+    
+    const fromRound =
+      Number(body.fromRound);
+    
+    const toRound =
+      Number(body.toRound);
+    
+    const enabled =
+      body.enabled === true;
+    
+    const deadline =
+      body.deadline === null ||
+      body.deadline === undefined ||
+      body.deadline === "" ?
+      null :
+      Number(body.deadline);
+    
+    if (
+      !Number.isInteger(fromRound) ||
+      fromRound < 1
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid starting round."
+      }, {
+        status: 400
+      });
+    }
+    
+    if (
+      !Number.isInteger(toRound) ||
+      toRound < fromRound
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid ending round."
+      }, {
+        status: 400
+      });
+    }
+    
+    if (
+      deadline !== null &&
+      (
+        !Number.isFinite(deadline) ||
+        deadline <= 0
+      )
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid deadline."
+      }, {
+        status: 400
+      });
+    }
+    
+    let settings = {};
+    
+    if (tournament.settings) {
+      try {
+        settings =
+          typeof tournament.settings === "string" ?
+          JSON.parse(tournament.settings) :
+          tournament.settings;
+      } catch {
+        settings = {};
+      }
+    }
+    
+    settings.submissionDeadline = {
+      fromRound,
+      toRound,
+      deadline,
+      enabled
+    };
+    
+    const now =
+      Date.now();
+    
+    await env.DB
+      .prepare(`
+        UPDATE tournaments
+        SET
+          settings = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .bind(
+        JSON.stringify(settings),
+        now,
+        tournamentId
+      )
+      .run();
+    
+    const players =
+      await env.DB
+      .prepare(`
+        SELECT user_id
+        FROM tournament_players
+        WHERE tournament_id = ?
+      `)
+      .bind(tournamentId)
+      .all();
+    
+    let pushTitle =
+      "Submission Deadline Updated";
+    
+    let pushBody;
+    
+    if (
+      enabled &&
+      deadline !== null
+    ) {
+      const deadlineDate =
+        new Date(deadline);
+      
+      pushBody =
+        `Match submissions for rounds ${fromRound}-${toRound} are due by ${deadlineDate.toLocaleString()}.`;
+    } else if (!enabled) {
+      pushBody =
+        `The submission deadline for rounds ${fromRound}-${toRound} has been disabled.`;
+    } else {
+      pushBody =
+        `The submission deadline for rounds ${fromRound}-${toRound} has been updated.`;
+    }
+    
+    await Promise.all(
+      (players.results || [])
+      .filter(
+        player =>
+          player.user_id &&
+          String(player.user_id) !==
+          String(user.id)
+      )
+      .map(
+        player =>
+          sendPushToUser(
+            env,
+            player.user_id,
+            pushTitle,
+            pushBody,
+            `/tournament/${tournamentId}`
+          )
+      )
+    );
+    
+    return Response.json({
+      success: true,
+      submissionDeadline:
+        settings.submissionDeadline
+    });
+    
+  } catch (error) {
+    console.error(
+      "Update submission deadline error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to update submission deadline."
+    }, {
+      status: 500
+    });
+  }
 }
