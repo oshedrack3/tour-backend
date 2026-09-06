@@ -2126,3 +2126,83 @@ export async function deleteTournamentCupData(
     `).bind(tournamentId)
   ]);
 }
+
+
+export async function getPushSubscription(
+  db,
+  userId
+) {
+  return await db
+    .prepare(`
+      SELECT
+        user_id,
+        endpoint,
+        p256dh,
+        auth,
+        created_at,
+        updated_at
+      FROM push_subscriptions
+      WHERE user_id = ?
+      LIMIT 1
+    `)
+    .bind(userId)
+    .first();
+}
+
+export async function savePushSubscription(
+  db,
+  userId,
+  subscription
+) {
+  const now = Date.now();
+  
+  await db
+    .prepare(`
+      INSERT INTO push_subscriptions (
+        user_id,
+        endpoint,
+        p256dh,
+        auth,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id)
+      DO UPDATE SET
+        endpoint = excluded.endpoint,
+        p256dh = excluded.p256dh,
+        auth = excluded.auth,
+        updated_at = excluded.updated_at
+    `)
+    .bind(
+      userId,
+      subscription.endpoint,
+      subscription.keys.p256dh,
+      subscription.keys.auth,
+      now,
+      now
+    )
+    .run();
+  
+  return await getPushSubscription(
+    db,
+    userId
+  );
+}
+
+export async function deletePushSubscription(
+  db,
+  userId
+) {
+  await db
+    .prepare(`
+      DELETE FROM push_subscriptions
+      WHERE user_id = ?
+    `)
+    .bind(userId)
+    .run();
+  
+  return true;
+}
+
+

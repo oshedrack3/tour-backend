@@ -1,5 +1,8 @@
 import {
   getNotice,
+  getPushSubscription,
+  savePushSubscription,
+  deletePushSubscription,
   getPublishedNotices,
   createNotice,
   updateNotice,
@@ -17,6 +20,9 @@ import {
   uploadBase64Image,
   deleteCloudinaryImage
 } from "../cloudinary.js";
+import {
+  getWebPush
+} from "../push.js";
 
 export async function handleGeneralRequest(
   request,
@@ -24,6 +30,27 @@ export async function handleGeneralRequest(
   pathname,
   user
 ) {
+  if (
+  request.method === "POST" &&
+  pathname === "/subscribe"
+) {
+  return await subscribePushRoute(
+    request,
+    env,
+    user
+  );
+}
+
+if (
+  request.method === "POST" &&
+  pathname === "/test"
+) {
+  return await testPushRoute(
+    request,
+    env,
+    user
+  );
+}
   if (
     request.method === "GET" &&
     pathname === "/notices/sync"
@@ -990,10 +1017,8 @@ async function updateProfileRoute(
     const body =
       await request.json();
     const updates = {
-      username:
-        body.username,
-      phone:
-        body.phone
+      username: body.username,
+      phone: body.phone
     };
     const result =
       await updateUserProfile(
@@ -1024,8 +1049,7 @@ async function updateProfileRoute(
       );
     return Response.json({
       success: true,
-      message:
-        "Profile updated successfully.",
+      message: "Profile updated successfully.",
       profile
     });
   } catch (error) {
@@ -1035,9 +1059,136 @@ async function updateProfileRoute(
     );
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to update profile."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+async function subscribePushRoute(
+  request,
+  env,
+  user
+) {
+  try {
+    const subscription =
+      await request.json();
+
+    if (
+      !subscription ||
+      !subscription.endpoint ||
+      !subscription.keys ||
+      !subscription.keys.p256dh ||
+      !subscription.keys.auth
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid push subscription."
+      }, {
+        status: 400
+      });
+    }
+
+    await savePushSubscription(
+      env.DB,
+      user.id,
+      subscription
+    );
+
+    return Response.json({
+      success: true,
+      message: "Push subscription saved."
+    });
+
+  } catch (error) {
+    console.error(
+      "Push subscription error:",
+      error
+    );
+
+    return Response.json({
+      success: false,
+      message:
+        "Failed to save push subscription."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+async function testPushRoute(
+  request,
+  env,
+  user
+) {
+  try {
+    const subscription =
+      await getPushSubscription(
+        env.DB,
+        user.id
+      );
+
+    if (!subscription) {
+      return Response.json({
+        success: false,
+        message:
+          "No push subscription found for this user."
+      }, {
+        status: 404
+      });
+    }
+
+    const pushSubscription = {
+      endpoint: subscription.endpoint,
+      keys: {
+        p256dh: subscription.p256dh,
+        auth: subscription.auth
+      }
+    };
+
+    const payload = JSON.stringify({
+      title: "Test Notification",
+      body: "Web push is working!",
+      url: "/"
+    });
+
+    const webpush =
+      getWebPush(env);
+
+    await webpush.sendNotification(
+      pushSubscription,
+      payload
+    );
+
+    return Response.json({
+      success: true,
+      message: "Test notification sent."
+    });
+
+  } catch (error) {
+    console.error(
+      "Push test error:",
+      error
+    );
+
+    if (
+      error.statusCode === 404 ||
+      error.statusCode === 410
+    ) {
+      await deletePushSubscription(
+        env.DB,
+        user.id
+      );
+    }
+
+    return Response.json({
+      success: false,
+      message:
+        "Failed to send test notification."
     }, {
       status: 500
     });
