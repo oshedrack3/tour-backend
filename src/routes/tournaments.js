@@ -33,6 +33,307 @@ import {
 } from "../pushNotifications.js";
 
 
+export async function handleTournamentRequest(
+  request,
+  env,
+  user
+) {
+  const url = new URL(request.url);
+  
+  const pathname =
+    url.pathname.replace(/\/+$/, "") || "/";
+  
+  if (
+    request.method === "POST" &&
+    pathname === "/teams/create"
+  ) {
+    return await createTeamRoute(
+      request,
+      env,
+      user
+    );
+  }
+  
+  if (
+    request.method === "POST" &&
+    pathname === "/tournaments/create"
+  ) {
+    return await createTournamentRoute(
+      request,
+      env,
+      user
+    );
+  }
+  if (
+    request.method === "DELETE" &&
+    /^\/tournaments\/[^/]+$/.test(pathname)
+  ) {
+    const tournamentId =
+      pathname.split("/")[2];
+    
+    return await deleteTournamentRoute(
+      env,
+      tournamentId,
+      user
+    );
+  }
+  if (
+    request.method === "POST" &&
+    /^\/tournaments\/[^/]+\/matches\/[^/]+\/submission$/.test(pathname)
+  ) {
+    const parts =
+      pathname.split("/");
+    
+    const tournamentId =
+      parts[2];
+    
+    const matchId =
+      parts[4];
+    
+    return await createMatchSubmissionRoute(
+      request,
+      env,
+      tournamentId,
+      matchId,
+      user
+    );
+  }
+  if (
+    request.method === "PATCH" &&
+    /^\/tournaments\/[^/]+\/submission-deadline$/.test(pathname)
+  ) {
+    const tournamentId =
+      pathname.split("/")[2];
+    
+    return await updateSubmissionDeadlineRoute(
+      request,
+      env,
+      tournamentId,
+      user
+    );
+  }
+  if (
+    request.method === "PATCH" &&
+    /^\/tournaments\/[^/]+\/match-submission\/[^/]+\/review$/.test(pathname)
+  ) {
+    const parts =
+      pathname.split("/");
+    
+    const tournamentId =
+      parts[2];
+    
+    const submissionId =
+      parts[4];
+    
+    return await reviewMatchSubmissionRoute(
+      request,
+      env,
+      tournamentId,
+      submissionId,
+      user
+    );
+  }
+  if (
+    request.method === "GET" &&
+    /^\/tournaments\/[^/]+\/matches\/[^/]+\/submission$/.test(pathname)
+  ) {
+    const parts =
+      pathname.split("/");
+    
+    const tournamentId =
+      parts[2];
+    
+    const matchId =
+      parts[4];
+    
+    return await getMatchSubmissionRoute(
+      env,
+      tournamentId,
+      matchId,
+      user
+    );
+  }
+  
+  if (
+    request.method === "GET" &&
+    /^\/tournaments\/[^/]+\/matches\/[^/]+\/submissions$/.test(pathname)
+  ) {
+    const parts =
+      pathname.split("/");
+    
+    const tournamentId =
+      parts[2];
+    
+    const matchId =
+      parts[4];
+    
+    return await getMatchSubmissionsRoute(
+      env,
+      tournamentId,
+      matchId,
+      user
+    );
+  }
+  if (
+    request.method === "GET" &&
+    pathname === "/tournaments/my"
+  ) {
+    const competitionId =
+      url.searchParams.get(
+        "competition_id"
+      );
+    
+    return await getMyTournamentsRoute(
+      env,
+      user,
+      competitionId
+    );
+  }
+  if (
+    request.method === "GET" &&
+    /^\/tournaments\/[^/]+\/matches$/.test(pathname)
+  ) {
+    const id =
+      pathname.split("/")[2];
+    
+    return await getTournamentMatchesRoute(
+      env,
+      id,
+      user
+    );
+  }
+  
+  if (
+    request.method === "PATCH" &&
+    /^\/tournaments\/[^/]+\/matches\/[^/]+\/result$/.test(pathname)
+  ) {
+    const parts =
+      pathname.split("/");
+    
+    const tournamentId =
+      parts[2];
+    
+    const matchId =
+      parts[4];
+    
+    return await updateMatchResultRoute(
+      request,
+      env,
+      tournamentId,
+      matchId,
+      user
+    );
+  }
+  
+  if (
+    request.method === "GET" &&
+    /^\/tournaments\/[^/]+\/table$/.test(pathname)
+  ) {
+    const id =
+      pathname.split("/")[2];
+    
+    return await getTournamentTableRoute(
+      env,
+      id,
+      user
+    );
+  }
+  
+  if (
+    request.method === "POST" &&
+    /^\/tournaments\/[^/]+\/join$/.test(pathname)
+  ) {
+    const tournamentId =
+      pathname.split("/")[2];
+    
+    return await joinTournamentRoute(
+      request,
+      env,
+      tournamentId,
+      user
+    );
+  }
+  
+  if (
+    request.method === "POST" &&
+    /^\/tournaments\/[^/]+\/generate-fixtures$/.test(pathname)
+  ) {
+    const id =
+      pathname.split("/")[2];
+    
+    return await generateFixturesRoute(
+      request,
+      env,
+      id,
+      user
+    );
+  }
+  
+  if (
+    request.method === "POST" &&
+    /^\/tournaments\/[^/]+\/generate-cup$/.test(pathname)
+  ) {
+    const id = pathname.split("/")[2];
+    
+    return await generateCupRoute(
+      request,
+      env,
+      id,
+      user
+    );
+  }
+  
+  
+  if (
+    request.method === "PUT" &&
+    /^\/matches\/[^/]+$/.test(pathname)
+  ) {
+    const matchId =
+      pathname.split("/")[2];
+    
+    return await updateMatchRoute(
+      request,
+      env,
+      matchId,
+      user
+    );
+  }
+  
+  if (
+    request.method === "PUT" &&
+    /^\/tournaments\/[^/]+\/players\/team$/.test(pathname)
+  ) {
+    const tournamentId =
+      pathname.split("/")[2];
+    
+    return await assignTournamentTeamRoute(
+      request,
+      env,
+      tournamentId,
+      user
+    );
+  }
+  
+  if (
+    request.method === "GET" &&
+    pathname.startsWith("/tournaments/")
+  ) {
+    const id =
+      pathname.split("/")[2];
+    
+    if (id) {
+      return await getTournamentRoute(
+        env,
+        id,
+        user
+      );
+    }
+  }
+  
+  return null;
+}
+
+
 async function createTournamentRoute(
   request,
   env,
