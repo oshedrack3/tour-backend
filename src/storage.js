@@ -2206,3 +2206,141 @@ export async function deletePushSubscription(
 }
 
 
+
+
+export async function createTournamentPlayersBatch(
+  db,
+  players
+) {
+  if (
+    !Array.isArray(players) ||
+    !players.length
+  ) {
+    return [];
+  }
+  
+  const statements =
+    players.map(player =>
+      db
+      .prepare(`
+          INSERT INTO tournament_players (
+            id,
+            tournament_id,
+            user_id,
+            team_id,
+            status,
+            invited_at,
+            joined_at,
+            responded_at,
+            has_new_invitation,
+            invitation_count,
+            played,
+            wins,
+            draws,
+            losses,
+            gf,
+            ga,
+            points
+          )
+          VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?
+          )
+        `)
+      .bind(
+        player.id,
+        player.tournament_id,
+        player.user_id,
+        player.team_id,
+        player.status || "accepted",
+        player.invited_at || null,
+        player.joined_at || null,
+        player.responded_at || null,
+        player.has_new_invitation ?? 0,
+        player.invitation_count ?? 1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      )
+    );
+  
+  await db.batch(statements);
+  
+  return players;
+}
+export async function importTournamentPlayers(
+  db,
+  sourceTournamentId,
+  newTournamentId
+) {
+  const sourcePlayers =
+    await getTournamentPlayers(
+      db,
+      sourceTournamentId
+    );
+
+  if (!sourcePlayers.length) {
+    return [];
+  }
+
+  const existingPlayers =
+    await getTournamentPlayers(
+      db,
+      newTournamentId
+    );
+
+  const existingTeamIds =
+    new Set(
+      existingPlayers.map(
+        player =>
+          String(player.team_id)
+      )
+    );
+
+  const playersToImport =
+    sourcePlayers.filter(
+      player =>
+        !existingTeamIds.has(
+          String(player.team_id)
+        )
+    );
+
+  if (!playersToImport.length) {
+    return [];
+  }
+
+  const now = Date.now();
+
+  const newPlayers =
+    playersToImport.map(
+      player => ({
+        id: crypto.randomUUID(),
+        tournament_id:
+          newTournamentId,
+        user_id:
+          player.user_id,
+        team_id:
+          player.team_id,
+        status: "accepted",
+        invited_at: null,
+        joined_at: now,
+        responded_at: now,
+        has_new_invitation: 0,
+        invitation_count: 1
+      })
+    );
+
+  await createTournamentPlayersBatch(
+    db,
+    newPlayers
+  );
+
+  return await getTournamentPlayers(
+    db,
+    newTournamentId
+  );
+}
