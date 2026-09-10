@@ -4,6 +4,7 @@ import {
   getTournamentsByOwner,
   getTournamentsByPlayer,
   createTournament,
+  updateTournament,
   getTeamsByTournament,
   createMatchesBatch,
   getMatches,
@@ -148,6 +149,21 @@ export async function handleTournamentRequest(
       user
     );
   }
+  if (
+    request.method === "PATCH" &&
+    /^\/tournaments\/[^/]+$/.test(pathname)
+  )
+  {
+    const tournamentId =
+      pathname.split("/")[2];
+    
+    return await updateTournamentRoute(
+      request,
+      env,
+      tournamentId,
+      user
+    );
+  }
   
   if (
     request.method === "GET" &&
@@ -159,25 +175,25 @@ export async function handleTournamentRequest(
     );
   }
   if (
-  request.method === "DELETE" &&
-  /^\/tournaments\/[^/]+\/players\/[^/]+$/.test(pathname)
-) {
-  const parts =
-    pathname.split("/");
-  
-  const tournamentId =
-    parts[2];
-  
-  const playerId =
-    parts[4];
-  
-  return await removeTournamentPlayerRoute(
-    env,
-    tournamentId,
-    playerId,
-    user
-  );
-}
+    request.method === "DELETE" &&
+    /^\/tournaments\/[^/]+\/players\/[^/]+$/.test(pathname)
+  ) {
+    const parts =
+      pathname.split("/");
+    
+    const tournamentId =
+      parts[2];
+    
+    const playerId =
+      parts[4];
+    
+    return await removeTournamentPlayerRoute(
+      env,
+      tournamentId,
+      playerId,
+      user
+    );
+  }
   if (
     request.method === "GET" &&
     /^\/tournaments\/[^/]+\/matches\/[^/]+\/submission$/.test(pathname)
@@ -556,6 +572,9 @@ async function createTournamentRoute(
           match_days: typeof match_days === "string" ?
             match_days : JSON.stringify(match_days),
           tournament_image: tournamentImageData?.url || null,
+          tournament_image_public_id:
+            
+            tournamentImageData?.publicId || null,
           settings: typeof settings === "string" ?
             settings : JSON.stringify(settings),
           access_type,
@@ -6009,67 +6028,63 @@ async function removeTournamentPlayerRoute(
     if (user.role !== "admin") {
       return Response.json({
         success: false,
-        message:
-          "Only admins can remove players."
+        message: "Only admins can remove players."
       }, {
         status: 403
       });
     }
-
+    
     const tournament =
       await getTournament(
         env.DB,
         tournamentId
       );
-
+    
     if (!tournament) {
       return Response.json({
         success: false,
-        message:
-          "Tournament not found."
+        message: "Tournament not found."
       }, {
         status: 404
       });
     }
-
+    
     if (
       tournament.admin_uid !== user.id
     ) {
       return Response.json({
         success: false,
-        message:
-          "Access denied."
+        message: "Access denied."
       }, {
         status: 403
       });
     }
-
+    
     const match =
       await env.DB
-        .prepare(`
+      .prepare(`
           SELECT id
           FROM matches
           WHERE tournament_id = ?
           LIMIT 1
         `)
-        .bind(
-          tournamentId
-        )
-        .first();
-
+      .bind(
+        tournamentId
+      )
+      .first();
+    
     if (match) {
       return Response.json({
         success: false,
-        message:
-          "Players cannot be removed after fixtures have been generated."
+        message: "Players cannot be removed after fixtures have been generated."
       }, {
         status: 400
       });
     }
-
+    
     const player =
       await env.DB
-        .prepare(`
+      .prepare(`
           SELECT
             tp.id,
             tp.tournament_id,
@@ -6082,22 +6097,21 @@ async function removeTournamentPlayerRoute(
           WHERE tp.id = ?
           AND tp.tournament_id = ?
         `)
-        .bind(
-          playerId,
-          tournamentId
-        )
-        .first();
-
+      .bind(
+        playerId,
+        tournamentId
+      )
+      .first();
+    
     if (!player) {
       return Response.json({
         success: false,
-        message:
-          "Tournament player not found."
+        message: "Tournament player not found."
       }, {
         status: 404
       });
     }
-
+    
     await env.DB
       .prepare(`
         DELETE FROM tournament_players
@@ -6109,17 +6123,318 @@ async function removeTournamentPlayerRoute(
         tournamentId
       )
       .run();
+    
+    return Response.json({
+      success: true,
+      message: `${player.team_name || "Player"} removed from tournament.`,
+      player
+    });
+    
+  } catch (error) {
+    console.error(
+      "Remove tournament player error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to remove player from tournament."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function updateTournamentRoute(
+  request,
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const body = await request.json();
+
+    const existing =
+      await getTournamentForUser(
+        env.DB,
+        tournamentId,
+        user.id
+      );
+
+    if (!existing) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+
+    const updates = {};
+
+    if (body.name !== undefined) {
+      const name =
+        String(body.name || "").trim();
+
+      if (!name) {
+        return Response.json({
+          success: false,
+          message: "Tournament name is required."
+        }, {
+          status: 400
+        });
+      }
+
+      updates.name = name;
+    }
+
+    if (
+      body.competition_id !== undefined ||
+      body.competitionId !== undefined
+    ) {
+      const competition_id =
+        String(
+          body.competition_id ??
+          body.competitionId ??
+          ""
+        ).trim();
+
+      if (!competition_id) {
+        return Response.json({
+          success: false,
+          message: "Competition ID is required."
+        }, {
+          status: 400
+        });
+      }
+
+      const competition =
+        await env.DB
+        .prepare(`
+          SELECT id, owner_id
+          FROM competitions
+          WHERE id = ?
+        `)
+        .bind(competition_id)
+        .first();
+
+      if (!competition) {
+        return Response.json({
+          success: false,
+          message: "Competition not found."
+        }, {
+          status: 404
+        });
+      }
+
+      if (competition.owner_id !== user.id) {
+        return Response.json({
+          success: false,
+          message: "Access denied."
+        }, {
+          status: 403
+        });
+      }
+
+      updates.competition_id =
+        competition_id;
+    }
+
+    if (body.season !== undefined) {
+      const season =
+        String(body.season || "").trim();
+
+      if (!season) {
+        return Response.json({
+          success: false,
+          message: "Season is required."
+        }, {
+          status: 400
+        });
+      }
+
+      updates.season = season;
+    }
+
+    if (body.format !== undefined) {
+      const format =
+        String(body.format || "").trim();
+
+      if (!format) {
+        return Response.json({
+          success: false,
+          message: "Tournament format is required."
+        }, {
+          status: 400
+        });
+      }
+
+      updates.format = format;
+    }
+
+    if (
+      body.season_status !== undefined ||
+      body.seasonStatus !== undefined ||
+      body.status !== undefined
+    ) {
+      updates.season_status =
+        String(
+          body.season_status ??
+          body.seasonStatus ??
+          body.status ??
+          ""
+        ).trim();
+    }
+
+    if (body.champion !== undefined) {
+      updates.champion =
+        body.champion;
+    }
+
+    if (
+      body.champion_name !== undefined ||
+      body.championName !== undefined
+    ) {
+      updates.champion_name =
+        body.champion_name ??
+        body.championName;
+    }
+
+    if (
+      body.start_date !== undefined ||
+      body.startDate !== undefined
+    ) {
+      updates.start_date =
+        body.start_date ??
+        body.startDate;
+    }
+
+    if (
+      body.end_date !== undefined ||
+      body.endDate !== undefined
+    ) {
+      updates.end_date =
+        body.end_date ??
+        body.endDate;
+    }
+
+    if (
+      body.match_days !== undefined ||
+      body.matchDays !== undefined
+    ) {
+      const match_days =
+        body.match_days ??
+        body.matchDays;
+
+      updates.match_days =
+        typeof match_days === "string"
+          ? match_days
+          : JSON.stringify(match_days);
+    }
+
+    if (body.settings !== undefined) {
+      updates.settings =
+        typeof body.settings === "string"
+          ? body.settings
+          : JSON.stringify(body.settings);
+    }
+
+    if (
+      body.access_type !== undefined ||
+      body.accessType !== undefined
+    ) {
+      updates.access_type =
+        body.access_type ??
+        body.accessType;
+    }
+
+    if (
+      body.is_public !== undefined ||
+      body.isPublic !== undefined
+    ) {
+      const is_public =
+        body.is_public ??
+        body.isPublic;
+
+      updates.is_public =
+        is_public ? 1 : 0;
+    }
+
+    const tournamentImage =
+      body.tournament_image !== undefined
+        ? body.tournament_image
+        : body.tournamentImage !== undefined
+          ? body.tournamentImage
+          : body.image !== undefined
+            ? body.image
+            : undefined;
+
+    if (tournamentImage !== undefined) {
+      if (tournamentImage === null || tournamentImage === "") {
+        updates.tournament_image = null;
+        updates.tournament_image_public_id = null;
+      } else {
+        if (
+          typeof tournamentImage !== "string" ||
+          !tournamentImage.startsWith("data:image/")
+        ) {
+          return Response.json({
+            success: false,
+            message: "Invalid tournament image."
+          }, {
+            status: 400
+          });
+        }
+
+        const tournamentImageData =
+          await uploadBase64Image(
+            tournamentImage,
+            "tournaments",
+            tournamentId,
+            env
+          );
+
+        updates.tournament_image =
+          tournamentImageData.url;
+
+        updates.tournament_image_public_id =
+          tournamentImageData.publicId;
+      }
+    }
+
+    if (!Object.keys(updates).length) {
+      return Response.json({
+        success: true,
+        tournament: parseTournament(existing)
+      });
+    }
+
+    const tournament =
+      await updateTournament(
+        env.DB,
+        tournamentId,
+        updates,
+        user.id
+      );
+
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Failed to update tournament."
+      }, {
+        status: 500
+      });
+    }
 
     return Response.json({
       success: true,
-      message:
-        `${player.team_name || "Player"} removed from tournament.`,
-      player
+      tournament: parseTournament(tournament)
     });
 
   } catch (error) {
     console.error(
-      "Remove tournament player error:",
+      "Update tournament error:",
       error
     );
 
@@ -6127,7 +6442,7 @@ async function removeTournamentPlayerRoute(
       success: false,
       message:
         error.message ||
-        "Failed to remove player from tournament."
+        "Failed to update tournament."
     }, {
       status: 500
     });

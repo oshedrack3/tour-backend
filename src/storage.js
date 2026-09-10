@@ -168,6 +168,7 @@ export async function createTournament(
         end_date,
         match_days,
         tournament_image,
+        tournament_image_public_id,
         settings,
         access_type,
         is_public,
@@ -176,7 +177,7 @@ export async function createTournament(
       )
       VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `)
     .bind(
@@ -193,6 +194,7 @@ export async function createTournament(
       tournament.end_date || null,
       tournament.match_days || "[]",
       tournament.tournament_image || null,
+      tournament.tournament_image_public_id || null,
       tournament.settings || "{}",
       tournament.access_type || null,
       tournament.is_public ?? null,
@@ -202,9 +204,9 @@ export async function createTournament(
     .run();
   
   return await getTournament(
-  db,
-  tournament.id
-);
+    db,
+    tournament.id
+  );
 }
 
 export async function updateTournament(
@@ -214,11 +216,11 @@ export async function updateTournament(
   userId
 ) {
   const existing =
-  await getTournamentForUser(
-    db,
-    id,
-    userId
-  );
+    await getTournamentForUser(
+      db,
+      id,
+      userId
+    );
   
   if (!existing) {
     return null;
@@ -298,6 +300,17 @@ export async function updateTournament(
     );
   }
   
+  if (
+    updates.tournament_image_public_id !== undefined
+  ) {
+    fields.push(
+      "tournament_image_public_id = ?"
+    );
+    values.push(
+      updates.tournament_image_public_id
+    );
+  }
+  
   if (updates.settings !== undefined) {
     fields.push("settings = ?");
     values.push(
@@ -342,12 +355,11 @@ export async function updateTournament(
     .run();
   
   return await getTournamentForUser(
-  db,
-  id,
-  userId
-);
+    db,
+    id,
+    userId
+  );
 }
-
 export async function deleteTournament(
   db,
   id
