@@ -1259,6 +1259,7 @@ export async function updateMatchResultAtomic(
           played = ?,
           played_at = ?,
           winner_team_id = ?,
+          stats = ?,
           updated_at = ?
         WHERE id = ?
         AND tournament_id = ?
@@ -1269,6 +1270,7 @@ export async function updateMatchResultAtomic(
         matchUpdates.played,
         matchUpdates.played_at,
         matchUpdates.winner_team_id,
+        matchUpdates.stats || null,
         now,
         matchId,
         tournamentId
@@ -1406,6 +1408,7 @@ export async function updateMatchResultAtomic(
   };
 }
 
+
 export async function getTournament(
   db,
   tournamentId
@@ -1420,7 +1423,6 @@ export async function getTournament(
     .bind(tournamentId)
     .first();
 }
-
 
 
 export async function getMatchSubmission(
@@ -1519,10 +1521,11 @@ export async function createMatchSubmission(
       away_goals,
       screenshot,
       screenshot_public_id,
+      stats,
       status,
       created_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
   `).bind(
     submission.id,
     submission.tournament_id,
@@ -1533,6 +1536,7 @@ export async function createMatchSubmission(
     submission.away_goals,
     submission.screenshot || null,
     submission.screenshot_public_id || null,
+    submission.stats || null,
     submission.created_at
   ).run();
   

@@ -2526,6 +2526,27 @@ async function createMatchSubmissionRoute(
       });
     }
     
+    let stats = null;
+    
+    if (
+      body.stats !== null &&
+      body.stats !== undefined
+    ) {
+      if (
+        typeof body.stats !== "object" ||
+        Array.isArray(body.stats)
+      ) {
+        return Response.json({
+          success: false,
+          message: "Invalid match statistics."
+        }, {
+          status: 400
+        });
+      }
+      
+      stats = body.stats;
+    }
+    
     const screenshot =
       body.screenshot ||
       body.image ||
@@ -2589,10 +2610,11 @@ async function createMatchSubmissionRoute(
           away_goals: awayGoals,
           screenshot: screenshotUrl,
           screenshot_public_id: screenshotPublicId,
+          stats: stats ?
+            JSON.stringify(stats) : null,
           created_at: now
         }
       );
-    
     await env.DB
       .prepare(`
         UPDATE tournaments
@@ -2709,6 +2731,7 @@ function checkMatchSubmissionDeadline(
   };
 }
 
+
 async function reviewMatchSubmissionRoute(
   request,
   env,
@@ -2817,7 +2840,8 @@ async function reviewMatchSubmissionRoute(
             status: "rejected",
             reviewed_at: now,
             reviewed_by: user.id,
-            rejection_reason: rejectionReason || null
+            rejection_reason:
+              rejectionReason || null
           }
         );
       
@@ -2888,6 +2912,26 @@ async function reviewMatchSubmissionRoute(
         submission.away_goals
       );
     
+    let submittedStats =
+      null;
+    
+    if (submission.stats) {
+      try {
+        submittedStats =
+          typeof submission.stats === "string" ?
+          JSON.parse(submission.stats) :
+          submission.stats;
+      } catch {
+        return Response.json({
+          success: false,
+          message:
+            "Submission contains invalid match statistics."
+        }, {
+          status: 400
+        });
+      }
+    }
+    
     if (
       !Number.isInteger(homeScore) ||
       !Number.isInteger(awayScore) ||
@@ -2896,7 +2940,8 @@ async function reviewMatchSubmissionRoute(
     ) {
       return Response.json({
         success: false,
-        message: "Submission contains an invalid score."
+        message:
+          "Submission contains an invalid score."
       }, {
         status: 400
       });
@@ -2922,30 +2967,45 @@ async function reviewMatchSubmissionRoute(
     ) {
       return Response.json({
         success: false,
-        message: "One or both teams do not have tournament player records."
+        message:
+          "One or both teams do not have tournament player records."
       }, {
         status: 400
       });
     }
     
     const currentHome = {
-      played: Number(homePlayer.played) || 0,
-      wins: Number(homePlayer.wins) || 0,
-      draws: Number(homePlayer.draws) || 0,
-      losses: Number(homePlayer.losses) || 0,
-      gf: Number(homePlayer.gf) || 0,
-      ga: Number(homePlayer.ga) || 0,
-      points: Number(homePlayer.points) || 0
+      played:
+        Number(homePlayer.played) || 0,
+      wins:
+        Number(homePlayer.wins) || 0,
+      draws:
+        Number(homePlayer.draws) || 0,
+      losses:
+        Number(homePlayer.losses) || 0,
+      gf:
+        Number(homePlayer.gf) || 0,
+      ga:
+        Number(homePlayer.ga) || 0,
+      points:
+        Number(homePlayer.points) || 0
     };
     
     const currentAway = {
-      played: Number(awayPlayer.played) || 0,
-      wins: Number(awayPlayer.wins) || 0,
-      draws: Number(awayPlayer.draws) || 0,
-      losses: Number(awayPlayer.losses) || 0,
-      gf: Number(awayPlayer.gf) || 0,
-      ga: Number(awayPlayer.ga) || 0,
-      points: Number(awayPlayer.points) || 0
+      played:
+        Number(awayPlayer.played) || 0,
+      wins:
+        Number(awayPlayer.wins) || 0,
+      draws:
+        Number(awayPlayer.draws) || 0,
+      losses:
+        Number(awayPlayer.losses) || 0,
+      gf:
+        Number(awayPlayer.gf) || 0,
+      ga:
+        Number(awayPlayer.ga) || 0,
+      points:
+        Number(awayPlayer.points) || 0
     };
     
     const newStats =
@@ -2992,7 +3052,10 @@ async function reviewMatchSubmissionRoute(
           away_score: awayScore,
           played: 1,
           played_at: now,
-          winner_team_id: winnerTeamId
+          winner_team_id: winnerTeamId,
+          stats: submittedStats ?
+            JSON.stringify(submittedStats) :
+            null
         },
         match.home_team_id,
         match.away_team_id,
@@ -3082,14 +3145,14 @@ async function reviewMatchSubmissionRoute(
     
     return Response.json({
       success: false,
-      message: error.message ||
+      message:
+        error.message ||
         "Failed to review match submission."
     }, {
       status: 500
     });
   }
 }
-
 
 async function deleteTournamentRoute(
   env,
@@ -6154,14 +6217,14 @@ async function updateTournamentRoute(
 ) {
   try {
     const body = await request.json();
-
+    
     const existing =
       await getTournamentForUser(
         env.DB,
         tournamentId,
         user.id
       );
-
+    
     if (!existing) {
       return Response.json({
         success: false,
@@ -6170,13 +6233,13 @@ async function updateTournamentRoute(
         status: 404
       });
     }
-
+    
     const updates = {};
-
+    
     if (body.name !== undefined) {
       const name =
         String(body.name || "").trim();
-
+      
       if (!name) {
         return Response.json({
           success: false,
@@ -6185,10 +6248,10 @@ async function updateTournamentRoute(
           status: 400
         });
       }
-
+      
       updates.name = name;
     }
-
+    
     if (
       body.competition_id !== undefined ||
       body.competitionId !== undefined
@@ -6199,7 +6262,7 @@ async function updateTournamentRoute(
           body.competitionId ??
           ""
         ).trim();
-
+      
       if (!competition_id) {
         return Response.json({
           success: false,
@@ -6208,7 +6271,7 @@ async function updateTournamentRoute(
           status: 400
         });
       }
-
+      
       const competition =
         await env.DB
         .prepare(`
@@ -6218,7 +6281,7 @@ async function updateTournamentRoute(
         `)
         .bind(competition_id)
         .first();
-
+      
       if (!competition) {
         return Response.json({
           success: false,
@@ -6227,7 +6290,7 @@ async function updateTournamentRoute(
           status: 404
         });
       }
-
+      
       if (competition.owner_id !== user.id) {
         return Response.json({
           success: false,
@@ -6236,15 +6299,15 @@ async function updateTournamentRoute(
           status: 403
         });
       }
-
+      
       updates.competition_id =
         competition_id;
     }
-
+    
     if (body.season !== undefined) {
       const season =
         String(body.season || "").trim();
-
+      
       if (!season) {
         return Response.json({
           success: false,
@@ -6253,14 +6316,14 @@ async function updateTournamentRoute(
           status: 400
         });
       }
-
+      
       updates.season = season;
     }
-
+    
     if (body.format !== undefined) {
       const format =
         String(body.format || "").trim();
-
+      
       if (!format) {
         return Response.json({
           success: false,
@@ -6269,10 +6332,10 @@ async function updateTournamentRoute(
           status: 400
         });
       }
-
+      
       updates.format = format;
     }
-
+    
     if (
       body.season_status !== undefined ||
       body.seasonStatus !== undefined ||
@@ -6286,12 +6349,12 @@ async function updateTournamentRoute(
           ""
         ).trim();
     }
-
+    
     if (body.champion !== undefined) {
       updates.champion =
         body.champion;
     }
-
+    
     if (
       body.champion_name !== undefined ||
       body.championName !== undefined
@@ -6300,7 +6363,7 @@ async function updateTournamentRoute(
         body.champion_name ??
         body.championName;
     }
-
+    
     if (
       body.start_date !== undefined ||
       body.startDate !== undefined
@@ -6309,7 +6372,7 @@ async function updateTournamentRoute(
         body.start_date ??
         body.startDate;
     }
-
+    
     if (
       body.end_date !== undefined ||
       body.endDate !== undefined
@@ -6318,7 +6381,7 @@ async function updateTournamentRoute(
         body.end_date ??
         body.endDate;
     }
-
+    
     if (
       body.match_days !== undefined ||
       body.matchDays !== undefined
@@ -6326,20 +6389,20 @@ async function updateTournamentRoute(
       const match_days =
         body.match_days ??
         body.matchDays;
-
+      
       updates.match_days =
-        typeof match_days === "string"
-          ? match_days
-          : JSON.stringify(match_days);
+        typeof match_days === "string" ?
+        match_days :
+        JSON.stringify(match_days);
     }
-
+    
     if (body.settings !== undefined) {
       updates.settings =
-        typeof body.settings === "string"
-          ? body.settings
-          : JSON.stringify(body.settings);
+        typeof body.settings === "string" ?
+        body.settings :
+        JSON.stringify(body.settings);
     }
-
+    
     if (
       body.access_type !== undefined ||
       body.accessType !== undefined
@@ -6348,7 +6411,7 @@ async function updateTournamentRoute(
         body.access_type ??
         body.accessType;
     }
-
+    
     if (
       body.is_public !== undefined ||
       body.isPublic !== undefined
@@ -6356,20 +6419,20 @@ async function updateTournamentRoute(
       const is_public =
         body.is_public ??
         body.isPublic;
-
+      
       updates.is_public =
         is_public ? 1 : 0;
     }
-
+    
     const tournamentImage =
-      body.tournament_image !== undefined
-        ? body.tournament_image
-        : body.tournamentImage !== undefined
-          ? body.tournamentImage
-          : body.image !== undefined
-            ? body.image
-            : undefined;
-
+      body.tournament_image !== undefined ?
+      body.tournament_image :
+      body.tournamentImage !== undefined ?
+      body.tournamentImage :
+      body.image !== undefined ?
+      body.image :
+      undefined;
+    
     if (tournamentImage !== undefined) {
       if (tournamentImage === null || tournamentImage === "") {
         updates.tournament_image = null;
@@ -6386,7 +6449,7 @@ async function updateTournamentRoute(
             status: 400
           });
         }
-
+        
         const tournamentImageData =
           await uploadBase64Image(
             tournamentImage,
@@ -6394,22 +6457,22 @@ async function updateTournamentRoute(
             tournamentId,
             env
           );
-
+        
         updates.tournament_image =
           tournamentImageData.url;
-
+        
         updates.tournament_image_public_id =
           tournamentImageData.publicId;
       }
     }
-
+    
     if (!Object.keys(updates).length) {
       return Response.json({
         success: true,
         tournament: parseTournament(existing)
       });
     }
-
+    
     const tournament =
       await updateTournament(
         env.DB,
@@ -6417,7 +6480,7 @@ async function updateTournamentRoute(
         updates,
         user.id
       );
-
+    
     if (!tournament) {
       return Response.json({
         success: false,
@@ -6426,22 +6489,21 @@ async function updateTournamentRoute(
         status: 500
       });
     }
-
+    
     return Response.json({
       success: true,
       tournament: parseTournament(tournament)
     });
-
+    
   } catch (error) {
     console.error(
       "Update tournament error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to update tournament."
     }, {
       status: 500
