@@ -786,9 +786,14 @@ export async function createMatch(
         created_at,
         updated_at,
         submission_status,
-        leg
+        leg,
+        home_rating_change,
+        away_rating_change
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      )
     `)
     .bind(
       match.id,
@@ -809,13 +814,14 @@ export async function createMatch(
       match.created_at,
       match.updated_at || null,
       match.submission_status || null,
-      match.leg ?? 1
+      match.leg ?? 1,
+      match.home_rating_change ?? 0,
+      match.away_rating_change ?? 0
     )
     .run();
   
   return match;
 }
-
 export async function updateMatch(db, id, updates) {
   const fields = [];
   const values = [];
@@ -953,9 +959,14 @@ export async function createMatchesBatch(
             created_at,
             updated_at,
             submission_status,
-            leg
+            leg,
+            home_rating_change,
+            away_rating_change
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          )
         `)
       .bind(
         match.id,
@@ -976,7 +987,9 @@ export async function createMatchesBatch(
         match.created_at,
         match.updated_at || null,
         match.submission_status || null,
-        match.leg ?? 1
+        match.leg ?? 1,
+        match.home_rating_change ?? 0,
+        match.away_rating_change ?? 0
       )
     );
   
@@ -1247,9 +1260,141 @@ export async function updateMatchResultAtomic(
   tournamentId,
   updatePlayerStats = true
 ) {
-  const now =
-    Date.now();
-  const statements = [
+  const now = Date.now();
+
+  const existingMatch = await db
+    .prepare(`
+      SELECT
+        home_rating_change,
+        away_rating_change,
+        played
+      FROM matches
+      WHERE id = ?
+      AND tournament_id = ?
+    `)
+    .bind(
+      matchId,
+      tournamentId
+    )
+    .first();
+
+  const homePlayer = await db
+    .prepare(`
+      SELECT user_id
+      FROM tournament_players
+      WHERE tournament_id = ?
+      AND team_id = ?
+      LIMIT 1
+    `)
+    .bind(
+      tournamentId,
+      homeTeamId
+    )
+    .first();
+
+  const awayPlayer = await db
+    .prepare(`
+      SELECT user_id
+      FROM tournament_players
+      WHERE tournament_id = ?
+      AND team_id = ?
+      LIMIT 1
+    `)
+    .bind(
+      tournamentId,
+      awayTeamId
+    )
+    .first();
+
+  const statements = [];
+
+  let homeRatingChange = 0;
+  let awayRatingChange = 0;
+
+  const canRate =
+    matchUpdates.played &&
+    homePlayer?.user_id &&
+    awayPlayer?.user_id &&
+    homePlayer.user_id !== awayPlayer.user_id;
+
+  if (canRate) {
+    const homeUser = await db
+      .prepare(`
+        SELECT rating
+        FROM users
+        WHERE id = ?
+      `)
+      .bind(
+        homePlayer.user_id
+      )
+      .first();
+
+    const awayUser = await db
+      .prepare(`
+        SELECT rating
+        FROM users
+        WHERE id = ?
+      `)
+      .bind(
+        awayPlayer.user_id
+      )
+      .first();
+
+    if (homeUser && awayUser) {
+      let homeRating =
+        homeUser.rating ?? 1500;
+
+      let awayRating =
+        awayUser.rating ?? 1500;
+
+      if (existingMatch?.played) {
+        homeRating -=
+          existingMatch.home_rating_change || 0;
+
+        awayRating -=
+          existingMatch.away_rating_change || 0;
+      }
+
+      const elo =
+        calculateElo(
+          homeRating,
+          awayRating,
+          matchUpdates.home_score,
+          matchUpdates.away_score
+        );
+
+      homeRatingChange =
+        elo.homeChange;
+
+      awayRatingChange =
+        elo.awayChange;
+
+      statements.push(
+        db
+          .prepare(`
+            UPDATE users
+            SET rating = ?
+            WHERE id = ?
+          `)
+          .bind(
+            homeRating + homeRatingChange,
+            homePlayer.user_id
+          ),
+        db
+          .prepare(`
+            UPDATE users
+            SET rating = ?
+            WHERE id = ?
+          `)
+          .bind(
+            awayRating + awayRatingChange,
+            awayPlayer.user_id
+          )
+      );
+    }
+  }
+
+  statements.push(
     db
       .prepare(`
         UPDATE matches
@@ -1260,6 +1405,8 @@ export async function updateMatchResultAtomic(
           played_at = ?,
           winner_team_id = ?,
           stats = ?,
+          home_rating_change = ?,
+          away_rating_change = ?,
           updated_at = ?
         WHERE id = ?
         AND tournament_id = ?
@@ -1271,11 +1418,14 @@ export async function updateMatchResultAtomic(
         matchUpdates.played_at,
         matchUpdates.winner_team_id,
         matchUpdates.stats || null,
+        homeRatingChange,
+        awayRatingChange,
         now,
         matchId,
         tournamentId
       )
-  ];
+  );
+
   if (
     updatePlayerStats &&
     homeStats &&
@@ -1307,6 +1457,7 @@ export async function updateMatchResultAtomic(
           tournamentId,
           homeTeamId
         ),
+
       db
         .prepare(`
           UPDATE tournament_players
@@ -1334,9 +1485,9 @@ export async function updateMatchResultAtomic(
         )
     );
   }
-  await db.batch(
-    statements
-  );
+
+  await db.batch(statements);
+
   const updatedMatch =
     await db
       .prepare(`
@@ -1350,13 +1501,11 @@ export async function updateMatchResultAtomic(
         tournamentId
       )
       .first();
-  let updatedHomePlayer =
-    null;
-  let updatedAwayPlayer =
-    null;
-  if (
-    updatePlayerStats
-  ) {
+
+  let updatedHomePlayer = null;
+  let updatedAwayPlayer = null;
+
+  if (updatePlayerStats) {
     [
       updatedHomePlayer,
       updatedAwayPlayer
@@ -1378,6 +1527,7 @@ export async function updateMatchResultAtomic(
           homeTeamId
         )
         .first(),
+
       db
         .prepare(`
           SELECT
@@ -1397,6 +1547,7 @@ export async function updateMatchResultAtomic(
         .first()
     ]);
   }
+
   return {
     match: updatedMatch,
     players: updatePlayerStats
@@ -1407,7 +1558,6 @@ export async function updateMatchResultAtomic(
       : []
   };
 }
-
 
 export async function getTournament(
   db,
@@ -2360,3 +2510,85 @@ export async function importTournamentPlayers(
     newTournamentId
   );
 }
+
+
+export function calculateElo(
+  homeRating,
+  awayRating,
+  homeScore,
+  awayScore
+) {
+  const K = 32;
+  
+  const expectedHome =
+    1 /
+    (
+      1 +
+      Math.pow(
+        10,
+        (awayRating - homeRating) / 400
+      )
+    );
+  
+  const expectedAway =
+    1 - expectedHome;
+  
+  let actualHome;
+  let actualAway;
+  
+  if (homeScore > awayScore) {
+    actualHome = 1;
+    actualAway = 0;
+  } else if (homeScore < awayScore) {
+    actualHome = 0;
+    actualAway = 1;
+  } else {
+    actualHome = 0.5;
+    actualAway = 0.5;
+  }
+  
+  const homeChange =
+    Math.round(
+      K * (actualHome - expectedHome)
+    );
+  
+  const awayChange =
+    Math.round(
+      K * (actualAway - expectedAway)
+    );
+  
+  return {
+    homeChange,
+    awayChange
+  };
+}
+
+
+export async function getGlobalRankings(
+  db,
+  limit = 100
+) {
+  const safeLimit = Math.min(
+    Math.max(
+      parseInt(limit, 10) || 100,
+      1
+    ),
+    100
+  );
+  
+  const result = await db
+    .prepare(`
+      SELECT
+        id,
+        username,
+        rating
+      FROM users
+      ORDER BY rating DESC, username ASC
+      LIMIT ?
+    `)
+    .bind(safeLimit)
+    .all();
+  
+  return result.results || [];
+}
+

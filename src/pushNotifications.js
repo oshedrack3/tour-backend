@@ -4,7 +4,7 @@ import {
 } from "./storage.js";
 
 import {
-  getWebPush
+  sendWebPush
 } from "./push.js";
 
 export async function sendPushToUser(
@@ -46,10 +46,8 @@ export async function sendPushToUser(
         url
       });
 
-    const webpush =
-      getWebPush(env);
-
-    await webpush.sendNotification(
+    await sendWebPush(
+      env,
       pushSubscription,
       payload
     );

@@ -21,8 +21,8 @@ import {
   deleteCloudinaryImage
 } from "../cloudinary.js";
 import {
-  getWebPush
-} from "../push.js";
+  sendWebPush
+} from "./push.js";
 
 import {
   sendPushToUser
@@ -35,26 +35,26 @@ export async function handleGeneralRequest(
   user
 ) {
   if (
-  request.method === "POST" &&
-  pathname === "/subscribe"
-) {
-  return await subscribePushRoute(
-    request,
-    env,
-    user
-  );
-}
-
-if (
-  request.method === "POST" &&
-  pathname === "/test"
-) {
-  return await testPushRoute(
-    request,
-    env,
-    user
-  );
-}
+    request.method === "POST" &&
+    pathname === "/subscribe"
+  ) {
+    return await subscribePushRoute(
+      request,
+      env,
+      user
+    );
+  }
+  
+  if (
+    request.method === "POST" &&
+    pathname === "/test"
+  ) {
+    return await testPushRoute(
+      request,
+      env,
+      user
+    );
+  }
   if (
     request.method === "GET" &&
     pathname === "/notices/sync"
@@ -158,6 +158,17 @@ if (
     return await deleteNoticeRoute(
       env,
       noticeId,
+      user
+    );
+  }
+  
+    if (
+    request.method === "GET" &&
+    pathname === "/rankings/global"
+  ) {
+    return await getGlobalRankingsRoute(
+      request,
+      env,
       user
     );
   }
@@ -454,9 +465,7 @@ async function createNoticeRoute(
     
     if (Array.isArray(images)) {
       for (
-        let i = 0;
-        i < images.length;
-        i++
+        let i = 0; i < images.length; i++
       ) {
         const image =
           images[i];
@@ -473,8 +482,7 @@ async function createNoticeRoute(
         
         uploadedImages.push({
           url: uploaded.url,
-          publicId:
-            uploaded.public_id ||
+          publicId: uploaded.public_id ||
             uploaded.publicId
         });
       }
@@ -482,27 +490,18 @@ async function createNoticeRoute(
     
     const notice = {
       id: noticeId,
-      title:
-        String(title).trim(),
-      content:
-        String(content).trim(),
-      category:
-        category || "general",
-      images:
-        uploadedImages,
-      published:
-        published !== false,
-      expires_at:
-        expiresAt === null ||
-        expiresAt === undefined
-          ? null
-          : Number(expiresAt),
-      created_at:
-        now,
-      updated_at:
-        now,
-      created_by:
-        user.id
+      title: String(title).trim(),
+      content: String(content).trim(),
+      category: category || "general",
+      images: uploadedImages,
+      published: published !== false,
+      expires_at: expiresAt === null ||
+        expiresAt === undefined ?
+        null :
+        Number(expiresAt),
+      created_at: now,
+      updated_at: now,
+      created_by: user.id
     };
     
     await createNotice(
@@ -536,24 +535,22 @@ async function createNoticeRoute(
         (users.results || [])
         .map(
           targetUser =>
-            sendPushToUser(
-              env,
-              targetUser.id,
-              notice.title,
-              notice.content,
-              `/notices/${notice.id}`
-            )
+          sendPushToUser(
+            env,
+            targetUser.id,
+            notice.title,
+            notice.content,
+            `/notices/${notice.id}`
+          )
         )
       );
     }
     
     return Response.json({
       success: true,
-      message:
-        "Notice created successfully.",
+      message: "Notice created successfully.",
       notice,
-      changeId:
-        change?.id || null
+      changeId: change?.id || null
     }, {
       status: 201
     });
@@ -566,8 +563,7 @@ async function createNoticeRoute(
     
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to create notice."
     }, {
       status: 500
@@ -1121,7 +1117,7 @@ async function subscribePushRoute(
   try {
     const subscription =
       await request.json();
-
+    
     if (
       !subscription ||
       !subscription.endpoint ||
@@ -1136,28 +1132,27 @@ async function subscribePushRoute(
         status: 400
       });
     }
-
+    
     await savePushSubscription(
       env.DB,
       user.id,
       subscription
     );
-
+    
     return Response.json({
       success: true,
       message: "Push subscription saved."
     });
-
+    
   } catch (error) {
     console.error(
       "Push subscription error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        "Failed to save push subscription."
+      message: "Failed to save push subscription."
     }, {
       status: 500
     });
@@ -1176,17 +1171,16 @@ async function testPushRoute(
         env.DB,
         user.id
       );
-
+    
     if (!subscription) {
       return Response.json({
         success: false,
-        message:
-          "No push subscription found for this user."
+        message: "No push subscription found for this user."
       }, {
         status: 404
       });
     }
-
+    
     const pushSubscription = {
       endpoint: subscription.endpoint,
       keys: {
@@ -1194,32 +1188,31 @@ async function testPushRoute(
         auth: subscription.auth
       }
     };
-
-    const payload = JSON.stringify({
-      title: "Test Notification",
-      body: "Web push is working!",
-      url: "/"
-    });
-
-    const webpush =
-      getWebPush(env);
-
-    await webpush.sendNotification(
+    
+    const payload =
+      JSON.stringify({
+        title: "Test Notification",
+        body: "Web push is working!",
+        url: "/"
+      });
+    
+    await sendWebPush(
+      env,
       pushSubscription,
       payload
     );
-
+    
     return Response.json({
       success: true,
       message: "Test notification sent."
     });
-
+    
   } catch (error) {
     console.error(
       "Push test error:",
       error
     );
-
+    
     if (
       error.statusCode === 404 ||
       error.statusCode === 410
@@ -1229,11 +1222,73 @@ async function testPushRoute(
         user.id
       );
     }
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to send test notification."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+
+async function getGlobalRankingsRoute(
+  request,
+  env,
+  user
+) {
+  try {
+    const url =
+      new URL(request.url);
+
+    const limitParam =
+      url.searchParams.get("limit");
+
+    const limit =
+      Math.min(
+        Math.max(
+          parseInt(limitParam, 10) || 100,
+          1
+        ),
+        100
+      );
+
+    const result =
+      await env.DB
+      .prepare(`
+        SELECT
+          id,
+          username,
+          rating
+        FROM users
+        ORDER BY
+          rating DESC,
+          username ASC
+        LIMIT ?
+      `)
+      .bind(limit)
+      .all();
+
+    return Response.json({
+      success: true,
+      rankings:
+        result.results || []
+    });
+
+  } catch (error) {
+    console.error(
+      "Global rankings error:",
+      error
+    );
 
     return Response.json({
       success: false,
       message:
-        "Failed to send test notification."
+        error.message ||
+        "Failed to load global rankings."
     }, {
       status: 500
     });
