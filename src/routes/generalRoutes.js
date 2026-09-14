@@ -22,7 +22,7 @@ import {
 } from "../cloudinary.js";
 import {
   sendWebPush
-} from "./push.js";
+} from "../push.js";
 
 import {
   sendPushToUser
