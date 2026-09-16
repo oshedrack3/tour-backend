@@ -6217,14 +6217,14 @@ async function updateTournamentRoute(
 ) {
   try {
     const body = await request.json();
-    
+
     const existing =
       await getTournamentForUser(
         env.DB,
         tournamentId,
         user.id
       );
-    
+
     if (!existing) {
       return Response.json({
         success: false,
@@ -6233,13 +6233,14 @@ async function updateTournamentRoute(
         status: 404
       });
     }
-    
+
     const updates = {};
-    
+    let completingTournament = false;
+
     if (body.name !== undefined) {
       const name =
         String(body.name || "").trim();
-      
+
       if (!name) {
         return Response.json({
           success: false,
@@ -6248,10 +6249,10 @@ async function updateTournamentRoute(
           status: 400
         });
       }
-      
+
       updates.name = name;
     }
-    
+
     if (
       body.competition_id !== undefined ||
       body.competitionId !== undefined
@@ -6262,7 +6263,7 @@ async function updateTournamentRoute(
           body.competitionId ??
           ""
         ).trim();
-      
+
       if (!competition_id) {
         return Response.json({
           success: false,
@@ -6271,7 +6272,7 @@ async function updateTournamentRoute(
           status: 400
         });
       }
-      
+
       const competition =
         await env.DB
         .prepare(`
@@ -6281,7 +6282,7 @@ async function updateTournamentRoute(
         `)
         .bind(competition_id)
         .first();
-      
+
       if (!competition) {
         return Response.json({
           success: false,
@@ -6290,7 +6291,7 @@ async function updateTournamentRoute(
           status: 404
         });
       }
-      
+
       if (competition.owner_id !== user.id) {
         return Response.json({
           success: false,
@@ -6299,15 +6300,15 @@ async function updateTournamentRoute(
           status: 403
         });
       }
-      
+
       updates.competition_id =
         competition_id;
     }
-    
+
     if (body.season !== undefined) {
       const season =
         String(body.season || "").trim();
-      
+
       if (!season) {
         return Response.json({
           success: false,
@@ -6316,14 +6317,14 @@ async function updateTournamentRoute(
           status: 400
         });
       }
-      
+
       updates.season = season;
     }
-    
+
     if (body.format !== undefined) {
       const format =
         String(body.format || "").trim();
-      
+
       if (!format) {
         return Response.json({
           success: false,
@@ -6332,38 +6333,39 @@ async function updateTournamentRoute(
           status: 400
         });
       }
-      
+
       updates.format = format;
     }
-    
+
     if (
       body.season_status !== undefined ||
       body.seasonStatus !== undefined ||
       body.status !== undefined
     ) {
-      updates.season_status =
+      const seasonStatus =
         String(
           body.season_status ??
           body.seasonStatus ??
           body.status ??
           ""
         ).trim();
+
+      updates.season_status =
+        seasonStatus;
+
+      const existingStatus =
+        existing.season_status ??
+        existing.seasonStatus ??
+        "";
+
+      if (
+        seasonStatus === "completed" &&
+        existingStatus !== "completed"
+      ) {
+        completingTournament = true;
+      }
     }
-    
-    if (body.champion !== undefined) {
-      updates.champion =
-        body.champion;
-    }
-    
-    if (
-      body.champion_name !== undefined ||
-      body.championName !== undefined
-    ) {
-      updates.champion_name =
-        body.champion_name ??
-        body.championName;
-    }
-    
+
     if (
       body.start_date !== undefined ||
       body.startDate !== undefined
@@ -6372,7 +6374,7 @@ async function updateTournamentRoute(
         body.start_date ??
         body.startDate;
     }
-    
+
     if (
       body.end_date !== undefined ||
       body.endDate !== undefined
@@ -6381,7 +6383,7 @@ async function updateTournamentRoute(
         body.end_date ??
         body.endDate;
     }
-    
+
     if (
       body.match_days !== undefined ||
       body.matchDays !== undefined
@@ -6389,20 +6391,20 @@ async function updateTournamentRoute(
       const match_days =
         body.match_days ??
         body.matchDays;
-      
+
       updates.match_days =
-        typeof match_days === "string" ?
-        match_days :
-        JSON.stringify(match_days);
+        typeof match_days === "string"
+          ? match_days
+          : JSON.stringify(match_days);
     }
-    
+
     if (body.settings !== undefined) {
       updates.settings =
-        typeof body.settings === "string" ?
-        body.settings :
-        JSON.stringify(body.settings);
+        typeof body.settings === "string"
+          ? body.settings
+          : JSON.stringify(body.settings);
     }
-    
+
     if (
       body.access_type !== undefined ||
       body.accessType !== undefined
@@ -6411,7 +6413,7 @@ async function updateTournamentRoute(
         body.access_type ??
         body.accessType;
     }
-    
+
     if (
       body.is_public !== undefined ||
       body.isPublic !== undefined
@@ -6419,22 +6421,25 @@ async function updateTournamentRoute(
       const is_public =
         body.is_public ??
         body.isPublic;
-      
+
       updates.is_public =
         is_public ? 1 : 0;
     }
-    
+
     const tournamentImage =
-      body.tournament_image !== undefined ?
-      body.tournament_image :
-      body.tournamentImage !== undefined ?
-      body.tournamentImage :
-      body.image !== undefined ?
-      body.image :
-      undefined;
-    
+      body.tournament_image !== undefined
+        ? body.tournament_image
+        : body.tournamentImage !== undefined
+        ? body.tournamentImage
+        : body.image !== undefined
+        ? body.image
+        : undefined;
+
     if (tournamentImage !== undefined) {
-      if (tournamentImage === null || tournamentImage === "") {
+      if (
+        tournamentImage === null ||
+        tournamentImage === ""
+      ) {
         updates.tournament_image = null;
         updates.tournament_image_public_id = null;
       } else {
@@ -6449,7 +6454,7 @@ async function updateTournamentRoute(
             status: 400
           });
         }
-        
+
         const tournamentImageData =
           await uploadBase64Image(
             tournamentImage,
@@ -6457,22 +6462,48 @@ async function updateTournamentRoute(
             tournamentId,
             env
           );
-        
+
         updates.tournament_image =
           tournamentImageData.url;
-        
+
         updates.tournament_image_public_id =
           tournamentImageData.publicId;
       }
     }
-    
+
+    if (completingTournament) {
+      const table =
+        await rebuildTable(
+          env.DB,
+          tournamentId
+        );
+
+      if (!table.length) {
+        return Response.json({
+          success: false,
+          message:
+            "Cannot complete tournament without teams."
+        }, {
+          status: 400
+        });
+      }
+
+      const winner = table[0];
+
+      updates.champion =
+        winner.id;
+
+      updates.champion_name =
+        winner.name;
+    }
+
     if (!Object.keys(updates).length) {
       return Response.json({
         success: true,
         tournament: parseTournament(existing)
       });
     }
-    
+
     const tournament =
       await updateTournament(
         env.DB,
@@ -6480,7 +6511,7 @@ async function updateTournamentRoute(
         updates,
         user.id
       );
-    
+
     if (!tournament) {
       return Response.json({
         success: false,
@@ -6489,21 +6520,22 @@ async function updateTournamentRoute(
         status: 500
       });
     }
-    
+
     return Response.json({
       success: true,
       tournament: parseTournament(tournament)
     });
-    
+
   } catch (error) {
     console.error(
       "Update tournament error:",
       error
     );
-    
+
     return Response.json({
       success: false,
-      message: error.message ||
+      message:
+        error.message ||
         "Failed to update tournament."
     }, {
       status: 500
