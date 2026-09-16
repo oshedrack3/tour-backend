@@ -270,6 +270,11 @@ export async function updateTournament(
     values.push(updates.champion_name);
   }
   
+  if (updates.completed_at !== undefined) {
+    fields.push("completed_at = ?");
+    values.push(updates.completed_at);
+  }
+  
   if (updates.start_date !== undefined) {
     fields.push("start_date = ?");
     values.push(updates.start_date);
@@ -2592,3 +2597,43 @@ export async function getGlobalRankings(
   return result.results || [];
 }
 
+
+export async function getExpiredMatchSubmissions(
+  db
+) {
+  const cutoff =
+    Date.now() -
+    (30 * 24 * 60 * 60 * 1000);
+  
+  const result =
+    await db
+    .prepare(`
+      SELECT
+        ms.id,
+        ms.screenshot_public_id
+      FROM match_submissions ms
+      INNER JOIN tournaments t
+        ON t.id = ms.tournament_id
+      WHERE t.season_status = 'completed'
+      AND t.completed_at IS NOT NULL
+      AND t.completed_at <= ?
+    `)
+    .bind(cutoff)
+    .all();
+  
+  return result.results || [];
+}
+
+
+export async function deleteMatchSubmission(
+  db,
+  submissionId
+) {
+  await db
+    .prepare(`
+      DELETE FROM match_submissions
+      WHERE id = ?
+    `)
+    .bind(submissionId)
+    .run();
+}
