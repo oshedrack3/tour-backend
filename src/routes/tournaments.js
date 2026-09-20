@@ -2684,15 +2684,12 @@ function checkMatchSubmissionDeadline(
     Number(deadline.toRound);
   
   const matchRound =
-    Number(
-      match.round ??
-      match.round_index
-    );
+    Number(match.round_index);
   
   if (
-    !Number.isFinite(fromRound) ||
-    !Number.isFinite(toRound) ||
-    !Number.isFinite(matchRound)
+    !Number.isInteger(fromRound) ||
+    !Number.isInteger(toRound) ||
+    !Number.isInteger(matchRound)
   ) {
     return {
       allowed: false,
