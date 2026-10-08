@@ -86,8 +86,7 @@ async function createCompetitionRoute(
     if (user.role !== "admin") {
       return Response.json({
         success: false,
-        message:
-          "Only admins can create competitions."
+        message: "Only admins can create competitions."
       }, {
         status: 403
       });
@@ -102,8 +101,7 @@ async function createCompetitionRoute(
     if (!name) {
       return Response.json({
         success: false,
-        message:
-          "Competition name is required."
+        message: "Competition name is required."
       }, {
         status: 400
       });
@@ -118,8 +116,7 @@ async function createCompetitionRoute(
       ) {
         return Response.json({
           success: false,
-          message:
-            "Invalid competition logo."
+          message: "Invalid competition logo."
         }, {
           status: 400
         });
@@ -139,10 +136,8 @@ async function createCompetitionRoute(
           id,
           name,
           owner_id: user.id,
-          logo_url:
-            logoData?.url || null,
-          logo_public_id:
-            logoData?.publicId || null,
+          logo_url: logoData?.url || null,
+          logo_public_id: logoData?.publicId || null,
           tournament_count: 0,
           active_seasons: 0,
           created_at: now,
@@ -162,8 +157,7 @@ async function createCompetitionRoute(
     );
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to create competition."
     }, {
       status: 500
@@ -176,7 +170,7 @@ async function getMyCompetitionsRoute(
 ) {
   try {
     let competitions;
-
+    
     if (user.role === "admin") {
       competitions =
         await getCompetitionsByOwner(
@@ -189,22 +183,21 @@ async function getMyCompetitionsRoute(
           env.DB
         );
     }
-
+    
     return Response.json({
       success: true,
       competitions
     });
-
+    
   } catch (error) {
     console.error(
       "Get competitions error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to load competitions."
     }, {
       status: 500
@@ -223,45 +216,42 @@ async function getCompetitionRoute(
         env.DB,
         id
       );
-
+    
     if (!competition) {
       return Response.json({
         success: false,
-        message:
-          "Competition not found."
+        message: "Competition not found."
       }, {
         status: 404
       });
     }
-
+    
     if (
       user.role === "admin" &&
       competition.owner_id !== user.id
     ) {
       return Response.json({
         success: false,
-        message:
-          "Competition not found."
+        message: "Competition not found."
       }, {
         status: 404
       });
     }
-
+    
     return Response.json({
       success: true,
       competition
     });
-
+    
   } catch (error) {
     console.error(
       "Get competition error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        "Failed to load competition."
+      message: "Failed to load competition."
     }, {
       status: 500
     });
@@ -282,8 +272,7 @@ async function deleteCompetitionRoute(
     if (!competition) {
       return Response.json({
         success: false,
-        message:
-          "Competition not found."
+        message: "Competition not found."
       }, {
         status: 404
       });
@@ -293,8 +282,7 @@ async function deleteCompetitionRoute(
     ) {
       return Response.json({
         success: false,
-        message:
-          "Access denied."
+        message: "Access denied."
       }, {
         status: 403
       });
@@ -321,8 +309,7 @@ async function deleteCompetitionRoute(
       .run();
     return Response.json({
       success: true,
-      message:
-        "Competition deleted."
+      message: "Competition deleted."
     });
   } catch (error) {
     console.error(
@@ -331,8 +318,7 @@ async function deleteCompetitionRoute(
     );
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to delete competition."
     }, {
       status: 500
@@ -350,66 +336,62 @@ async function updateCompetitionRoute(
     if (user.role !== "admin") {
       return Response.json({
         success: false,
-        message:
-          "Only admins can edit competitions."
+        message: "Only admins can edit competitions."
       }, {
         status: 403
       });
     }
-
+    
     const competition =
       await getCompetition(
         env.DB,
         id
       );
-
+    
     if (!competition) {
       return Response.json({
         success: false,
-        message:
-          "Competition not found."
+        message: "Competition not found."
       }, {
         status: 404
       });
     }
-
+    
     if (
       competition.owner_id !== user.id
     ) {
       return Response.json({
         success: false,
-        message:
-          "Access denied."
+        message: "Access denied."
       }, {
         status: 403
       });
     }
-
+    
     const body =
       await request.json();
-
+    
     const updates = {};
-
+    
     if (body.name !== undefined) {
       const name =
         String(body.name || "").trim();
-
+      
       if (!name) {
         return Response.json({
           success: false,
-          message:
-            "Competition name cannot be empty."
+          message: "Competition name cannot be empty."
         }, {
           status: 400
         });
       }
-
+      
       updates.name = name;
     }
-
+    
     if (body.logo !== undefined) {
       const logo = body.logo;
-
+      
       if (
         logo === null ||
         logo === ""
@@ -429,7 +411,7 @@ async function updateCompetitionRoute(
             );
           }
         }
-
+        
         updates.logo_url = null;
         updates.logo_public_id = null;
       } else {
@@ -439,13 +421,12 @@ async function updateCompetitionRoute(
         ) {
           return Response.json({
             success: false,
-            message:
-              "Invalid competition logo."
+            message: "Invalid competition logo."
           }, {
             status: 400
           });
         }
-
+        
         const newLogo =
           await uploadBase64Image(
             logo,
@@ -453,21 +434,20 @@ async function updateCompetitionRoute(
             id,
             env
           );
-
+        
         if (!newLogo) {
           return Response.json({
             success: false,
-            message:
-              "Failed to upload competition logo."
+            message: "Failed to upload competition logo."
           }, {
             status: 500
           });
         }
-
+        
         if (
           competition.logo_public_id &&
           competition.logo_public_id !==
-            newLogo.publicId
+          newLogo.publicId
         ) {
           try {
             await deleteCloudinaryImage(
@@ -481,43 +461,56 @@ async function updateCompetitionRoute(
             );
           }
         }
-
+        
         updates.logo_url =
           newLogo.url;
-
+        
         updates.logo_public_id =
           newLogo.publicId;
       }
     }
-
+    
+    if (body.rules !== undefined) {
+      const rules =
+        String(body.rules || "").trim();
+      
+      if (rules !== competition.rules) {
+        updates.rules = rules;
+        updates.rules_version =
+          Number(
+            competition.rules_version || 0
+          ) + 1;
+        updates.rules_updated_at =
+          Date.now();
+      }
+    }
+    
     if (
       Object.keys(updates).length === 0
     ) {
       return Response.json({
         success: false,
-        message:
-          "No competition changes provided."
+        message: "No competition changes provided."
       }, {
         status: 400
       });
     }
-
+    
     updates.updated_at =
       Date.now();
-
+    
     const fields = [];
     const values = [];
-
+    
     for (
-      const [field, value]
-      of Object.entries(updates)
+      const [field, value] of Object.entries(updates)
     ) {
       fields.push(`${field} = ?`);
       values.push(value);
     }
-
+    
     values.push(id);
-
+    
     await env.DB
       .prepare(`
         UPDATE competitions
@@ -526,35 +519,31 @@ async function updateCompetitionRoute(
       `)
       .bind(...values)
       .run();
-
+    
     const updatedCompetition =
       await getCompetition(
         env.DB,
         id
       );
-
+    
     return Response.json({
       success: true,
-      message:
-        "Competition updated successfully.",
-      competition:
-        updatedCompetition
+      message: "Competition updated successfully.",
+      competition: updatedCompetition
     });
-
+    
   } catch (error) {
     console.error(
       "Update competition error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to update competition."
     }, {
       status: 500
     });
   }
 }
-

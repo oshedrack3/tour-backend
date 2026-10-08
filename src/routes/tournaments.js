@@ -1,4 +1,6 @@
 import {
+  getTournamentRuleAcceptance,
+  saveTournamentRuleAcceptance,
   getTournament,
   deleteTournament,
   getTournamentsByOwner,
@@ -79,6 +81,20 @@ export async function handleTournamentRequest(
       user
     );
   }
+  
+  if (
+  request.method === "POST" &&
+  /^\/tournaments\/[^/]+\/rules\/accept$/.test(pathname)
+) {
+  const tournamentId =
+    pathname.split("/")[2];
+  
+  return await acceptTournamentRulesRoute(
+    env,
+    tournamentId,
+    user
+  );
+}
   if (
     request.method === "POST" &&
     /^\/tournaments\/[^/]+\/matches\/[^/]+\/submission$/.test(pathname)
@@ -159,6 +175,20 @@ export async function handleTournamentRequest(
     
     return await updateTournamentRoute(
       request,
+      env,
+      tournamentId,
+      user
+    );
+  }
+  
+  if (
+    request.method === "GET" &&
+    /^\/tournaments\/[^/]+\/rules$/.test(pathname)
+  ) {
+    const tournamentId =
+      pathname.split("/")[2];
+    
+    return await getTournamentRulesRoute(
       env,
       tournamentId,
       user
@@ -6513,6 +6543,213 @@ async function updateTournamentRoute(
       success: false,
       message: error.message ||
         "Failed to update tournament."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function getTournamentRulesRoute(
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournamentForUser(
+        env.DB,
+        tournamentId,
+        user.id
+      );
+
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message:
+          "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+
+    if (!tournament.competition_id) {
+      return Response.json({
+        success: true,
+        rules: null,
+        rules_version: null,
+        accepted: true
+      });
+    }
+
+    const competition =
+      await env.DB
+        .prepare(`
+          SELECT
+            id,
+            rules,
+            rules_version,
+            rules_updated_at
+          FROM competitions
+          WHERE id = ?
+        `)
+        .bind(
+          tournament.competition_id
+        )
+        .first();
+
+    if (!competition) {
+      return Response.json({
+        success: true,
+        rules: null,
+        rules_version: null,
+        accepted: true
+      });
+    }
+
+    if (!competition.rules) {
+      return Response.json({
+        success: true,
+        rules: null,
+        rules_version:
+          competition.rules_version,
+        accepted: true
+      });
+    }
+
+    const acceptance =
+      await getTournamentRuleAcceptance(
+        env.DB,
+        tournamentId,
+        user.id
+      );
+
+    const accepted =
+      !!acceptance &&
+      Number(
+        acceptance.rules_version
+      ) === Number(
+        competition.rules_version
+      );
+
+    return Response.json({
+      success: true,
+      rules: competition.rules,
+      rules_version:
+        competition.rules_version,
+      rules_updated_at:
+        competition.rules_updated_at,
+      accepted
+    });
+
+  } catch (error) {
+    console.error(
+      "Get tournament rules error:",
+      error
+    );
+
+    return Response.json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to load tournament rules."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function acceptTournamentRulesRoute(
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournamentForUser(
+        env.DB,
+        tournamentId,
+        user.id
+      );
+
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message:
+          "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+
+    if (!tournament.competition_id) {
+      return Response.json({
+        success: false,
+        message:
+          "This tournament has no competition."
+      }, {
+        status: 400
+      });
+    }
+
+    const competition =
+      await env.DB
+        .prepare(`
+          SELECT
+            id,
+            rules,
+            rules_version
+          FROM competitions
+          WHERE id = ?
+        `)
+        .bind(
+          tournament.competition_id
+        )
+        .first();
+
+    if (!competition) {
+      return Response.json({
+        success: false,
+        message:
+          "Competition not found."
+      }, {
+        status: 404
+      });
+    }
+
+    if (!competition.rules) {
+      return Response.json({
+        success: true,
+        message:
+          "No tournament rules to accept."
+      });
+    }
+
+    const acceptance =
+      await saveTournamentRuleAcceptance(
+        env.DB,
+        tournamentId,
+        user.id,
+        competition.rules_version
+      );
+
+    return Response.json({
+      success: true,
+      message:
+        "Tournament rules accepted.",
+      acceptance
+    });
+
+  } catch (error) {
+    console.error(
+      "Accept tournament rules error:",
+      error
+    );
+
+    return Response.json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to accept tournament rules."
     }, {
       status: 500
     });

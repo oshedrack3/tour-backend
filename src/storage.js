@@ -61,10 +61,13 @@ export async function createCompetition(
         logo_public_id,
         tournament_count,
         active_seasons,
+        rules,
+        rules_version,
+        rules_updated_at,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .bind(
       competition.id,
@@ -74,6 +77,9 @@ export async function createCompetition(
       competition.logo_public_id || null,
       competition.tournament_count ?? 0,
       competition.active_seasons ?? 0,
+      competition.rules || null,
+      competition.rules_version ?? 1,
+      competition.rules_updated_at || null,
       competition.created_at,
       competition.updated_at || null
     )
@@ -84,7 +90,6 @@ export async function createCompetition(
     competition.id
   );
 }
-
 export async function getTournamentForUser(
   db,
   id,
@@ -2636,4 +2641,68 @@ export async function deleteMatchSubmission(
     `)
     .bind(submissionId)
     .run();
+}
+
+
+export async function getTournamentRuleAcceptance(
+  db,
+  tournamentId,
+  userId
+) {
+  return await db
+    .prepare(`
+      SELECT
+        tournament_id,
+        user_id,
+        rules_version,
+        accepted_at
+      FROM tournament_rule_acceptances
+      WHERE tournament_id = ?
+      AND user_id = ?
+    `)
+    .bind(
+      tournamentId,
+      userId
+    )
+    .first();
+}
+
+export async function saveTournamentRuleAcceptance(
+  db,
+  tournamentId,
+  userId,
+  rulesVersion
+) {
+  const acceptedAt = Date.now();
+  
+  await db
+    .prepare(`
+      INSERT INTO tournament_rule_acceptances (
+        tournament_id,
+        user_id,
+        rules_version,
+        accepted_at
+      )
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT (
+        tournament_id,
+        user_id
+      )
+      DO UPDATE SET
+        rules_version = excluded.rules_version,
+        accepted_at = excluded.accepted_at
+    `)
+    .bind(
+      tournamentId,
+      userId,
+      rulesVersion,
+      acceptedAt
+    )
+    .run();
+  
+  return await getTournamentRuleAcceptance(
+    db,
+    tournamentId,
+    userId
+  );
 }
