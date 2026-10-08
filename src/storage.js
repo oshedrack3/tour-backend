@@ -35,6 +35,9 @@ export async function getCompetitionsByOwner(
         logo_public_id,
         tournament_count,
         active_seasons,
+        rules,
+        rules_version,
+        rules_updated_at,
         created_at,
         updated_at
       FROM competitions
@@ -43,7 +46,6 @@ export async function getCompetitionsByOwner(
     `)
     .bind(ownerId)
     .all();
-  
   return result.results || [];
 }
 
