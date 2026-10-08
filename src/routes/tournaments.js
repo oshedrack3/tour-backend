@@ -6664,12 +6664,10 @@ async function acceptTournamentRulesRoute(
 ) {
   try {
     const tournament =
-      await getTournamentForUser(
-        env.DB,
-        tournamentId,
-        user.id
-      );
-
+  await getTournament(
+    env.DB,
+    tournamentId
+  );
     if (!tournament) {
       return Response.json({
         success: false,
