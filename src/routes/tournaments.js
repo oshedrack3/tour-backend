@@ -29,7 +29,8 @@ import {
   getTournamentsByCompetition,
   importTournamentPlayers,
   getUserRegisteredSquad,
-  getUserRegisteredSquad
+  getRegisteredSquad
+ 
 } from "../storage.js";
 import {
   uploadBase64Image
