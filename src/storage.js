@@ -2706,3 +2706,327 @@ export async function saveTournamentRuleAcceptance(
     userId
   );
 }
+
+
+export async function getRegisteredSquad(
+  db,
+  userId
+) {
+  return await db
+    .prepare(`
+      SELECT
+        rs.*,
+        u.username
+      FROM registered_squads rs
+      JOIN users u ON u.id = rs.user_id
+      WHERE rs.user_id = ?
+    `)
+    .bind(userId)
+    .first();
+}
+
+export async function getSquadChangeRequest(
+  db,
+  requestId
+) {
+  return await db
+    .prepare(`
+      SELECT
+        scr.*,
+        u.username
+      FROM squad_change_requests scr
+      JOIN users u ON u.id = scr.user_id
+      WHERE scr.id = ?
+    `)
+    .bind(requestId)
+    .first();
+}
+
+export async function getPendingSquadChangeRequest(
+  db,
+  userId
+) {
+  return await db
+    .prepare(`
+      SELECT *
+      FROM squad_change_requests
+      WHERE user_id = ?
+      AND status = 'pending'
+      LIMIT 1
+    `)
+    .bind(userId)
+    .first();
+}
+
+export async function createRegisteredSquad(
+  db,
+  squad
+) {
+  await db
+    .prepare(`
+      INSERT INTO registered_squads (
+        id,
+        user_id,
+        image_url,
+        image_public_id
+      )
+      VALUES (?, ?, ?, ?)
+    `)
+    .bind(
+      squad.id,
+      squad.user_id,
+      squad.image_url,
+      squad.image_public_id
+    )
+    .run();
+  
+  return await getRegisteredSquad(
+    db,
+    squad.user_id
+  );
+}
+
+export async function createSquadChangeRequest(
+  db,
+  request
+) {
+  await db
+    .prepare(`
+      INSERT INTO squad_change_requests (
+        id,
+        user_id,
+        image_url,
+        image_public_id,
+        status
+      )
+      VALUES (?, ?, ?, ?, 'pending')
+    `)
+    .bind(
+      request.id,
+      request.user_id,
+      request.image_url,
+      request.image_public_id
+    )
+    .run();
+  
+  return await getSquadChangeRequest(
+    db,
+    request.id
+  );
+}
+
+export async function getPendingSquadChangeRequests(
+  db
+) {
+  const result = await db
+    .prepare(`
+      SELECT
+        scr.*,
+        u.username
+      FROM squad_change_requests scr
+      JOIN users u ON u.id = scr.user_id
+      WHERE scr.status = 'pending'
+      ORDER BY scr.created_at ASC
+    `)
+    .all();
+  
+  return result.results || [];
+}
+
+
+export async function getSquadChangeEligibility(
+  db,
+  userId
+) {
+  const squad = await getRegisteredSquad(
+    db,
+    userId
+  );
+  
+  if (!squad) {
+    return {
+      eligible: false,
+      reason: "no_registered_squad"
+    };
+  }
+  
+  const pending =
+    await getPendingSquadChangeRequest(
+      db,
+      userId
+    );
+  
+  if (pending) {
+    return {
+      eligible: false,
+      reason: "pending_request"
+    };
+  }
+  
+  const cooldown =
+    60 * 24 * 60 * 60 * 1000;
+  
+  const nextEligibleAt =
+    Number(squad.updated_at) + cooldown;
+  
+  if (Date.now() < nextEligibleAt) {
+    return {
+      eligible: false,
+      reason: "cooldown",
+      nextEligibleAt
+    };
+  }
+  
+  return {
+    eligible: true,
+    nextEligibleAt
+  };
+}
+
+export async function reviewSquadChangeRequest(
+  db,
+  requestId,
+  adminId,
+  decision,
+  rejectionReason = null
+) {
+  if (
+    decision !== "approve" &&
+    decision !== "reject"
+  ) {
+    return {
+      success: false,
+      message: "Invalid review decision."
+    };
+  }
+  const request = await getSquadChangeRequest(
+    db,
+    requestId
+  );
+  if (!request) {
+    return {
+      success: false,
+      message: "Squad change request not found."
+    };
+  }
+  if (request.status !== "pending") {
+    return {
+      success: false,
+      message: "This request has already been reviewed."
+    };
+  }
+  const now = Date.now();
+  if (decision === "reject") {
+    const result = await db.prepare(`
+      UPDATE squad_change_requests
+      SET
+        status = 'rejected',
+        reviewed_by = ?,
+        reviewed_at = ?,
+        rejection_reason = ?
+      WHERE id = ?
+      AND status = 'pending'
+    `).bind(
+      adminId,
+      now,
+      rejectionReason,
+      requestId
+    ).run();
+    if (result.meta.changes !== 1) {
+      return {
+        success: false,
+        message:
+          "The request was already reviewed or could not be rejected."
+      };
+    }
+    return {
+      success: true,
+      request: await getSquadChangeRequest(
+        db,
+        requestId
+      )
+    };
+  }
+  const result = await db.batch([
+    db.prepare(`
+      UPDATE squad_change_requests
+      SET
+        status = 'approved',
+        reviewed_by = ?,
+        reviewed_at = ?
+      WHERE id = ?
+      AND status = 'pending'
+      AND EXISTS (
+        SELECT 1
+        FROM registered_squads
+        WHERE user_id = squad_change_requests.user_id
+      )
+    `).bind(
+      adminId,
+      now,
+      requestId
+    ),
+    db.prepare(`
+      UPDATE registered_squads
+      SET
+        image_url = ?,
+        image_public_id = ?,
+        updated_at = ?
+      WHERE user_id = ?
+      AND EXISTS (
+        SELECT 1
+        FROM squad_change_requests
+        WHERE id = ?
+        AND status = 'approved'
+        AND reviewed_by = ?
+        AND reviewed_at = ?
+      )
+    `).bind(
+      request.image_url,
+      request.image_public_id,
+      now,
+      request.user_id,
+      requestId,
+      adminId,
+      now
+    )
+  ]);
+  const approvalChanges =
+    result[0]?.meta?.changes ?? 0;
+  const squadChanges =
+    result[1]?.meta?.changes ?? 0;
+  if (
+    approvalChanges !== 1 ||
+    squadChanges !== 1
+  ) {
+    return {
+      success: false,
+      message:
+        "The request could not be approved. Please refresh and try again."
+    };
+  }
+  return {
+    success: true,
+    request: await getSquadChangeRequest(
+      db,
+      requestId
+    )
+  };
+}
+
+export async function getUserRegisteredSquad(
+  db,
+  userId
+) {
+  return await db.prepare(`
+    SELECT
+      rs.user_id,
+      rs.image_url,
+      rs.created_at,
+      rs.updated_at,
+      u.username
+    FROM registered_squads rs
+    JOIN users u ON u.id = rs.user_id
+    WHERE rs.user_id = ?
+  `).bind(userId).first();
+}

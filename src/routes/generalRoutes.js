@@ -13,7 +13,15 @@ import {
   getHallOfFameChanges,
   updateHallOfFame,
   getUserProfile,
-  updateUserProfile
+  updateUserProfile,
+  getRegisteredSquad,
+  getPendingSquadChangeRequest,
+  getPendingSquadChangeRequests,
+  createRegisteredSquad,
+  createSquadChangeRequest,
+  getSquadChangeEligibility,
+  getUserRegisteredSquad,
+  reviewSquadChangeRequest
 } from "../storage.js";
 
 import {
@@ -162,7 +170,7 @@ export async function handleGeneralRequest(
     );
   }
   
-    if (
+  if (
     request.method === "GET" &&
     pathname === "/rankings/global"
   ) {
@@ -170,6 +178,74 @@ export async function handleGeneralRequest(
       request,
       env,
       user
+    );
+  }
+  
+  if (
+    request.method === "GET" &&
+    pathname === "/squad"
+  ) {
+    return await getMySquadRoute(
+      env,
+      user
+    );
+  }
+  
+  if (
+    request.method === "POST" &&
+    pathname === "/squad"
+  ) {
+    return await registerSquadRoute(
+      request,
+      env,
+      user
+    );
+  }
+  
+  if (
+    request.method === "POST" &&
+    pathname === "/squad/change-requests"
+  ) {
+    return await requestSquadChangeRoute(
+      request,
+      env,
+      user
+    );
+  }
+  
+  if (
+    request.method === "GET" &&
+    pathname === "/admin/squad-change-requests"
+  ) {
+    return await getAdminSquadRequestsRoute(
+      env,
+      user
+    );
+  }
+  
+  if (
+    request.method === "PATCH" &&
+    /^\/admin\/squad-change-requests\/[^/]+$/.test(pathname)
+  ) {
+    const requestId =
+      pathname.split("/")[3];
+    
+    return await reviewSquadChangeRoute(
+      request,
+      env,
+      requestId,
+      user
+    );
+  }
+  const squadMatch =
+    pathname.match(/^\/users\/([^/]+)\/squad$/);
+  if (
+    request.method === "GET" &&
+    squadMatch
+  ) {
+    return await getUserRegisteredSquadRoute(
+      env,
+      decodeURIComponent(squadMatch[1])
     );
   }
   return null;
@@ -497,8 +573,7 @@ async function createNoticeRoute(
       published: published !== false,
       expires_at: expiresAt === null ||
         expiresAt === undefined ?
-        null :
-        Number(expiresAt),
+        null : Number(expiresAt),
       created_at: now,
       updated_at: now,
       created_by: user.id
@@ -1271,8 +1346,7 @@ async function getGlobalRankingsRoute(
       .all();
     return Response.json({
       success: true,
-      rankings:
-        result.results || []
+      rankings: result.results || []
     });
   } catch (error) {
     console.error(
@@ -1281,9 +1355,464 @@ async function getGlobalRankingsRoute(
     );
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to load global rankings."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+async function getMySquadRoute(env, user) {
+  try {
+    if (!user) {
+      return Response.json({
+        success: false,
+        message: "Please log in to continue."
+      }, {
+        status: 401
+      });
+    }
+    
+    const squad = await getRegisteredSquad(
+      env.DB,
+      user.id
+    );
+    
+    const pendingRequest =
+      await getPendingSquadChangeRequest(
+        env.DB,
+        user.id
+      );
+    
+    const eligibility =
+      squad ?
+      await getSquadChangeEligibility(
+        env.DB,
+        user.id
+      ) :
+      null;
+    
+    return Response.json({
+      success: true,
+      squad,
+      pendingRequest,
+      eligibility
+    });
+  } catch (error) {
+    return Response.json({
+      success: false,
+      message: "Unable to retrieve your squad."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function registerSquadRoute(
+  request,
+  env,
+  user
+) {
+  try {
+    if (!user) {
+      return Response.json({
+        success: false,
+        message: "Please log in to continue."
+      }, {
+        status: 401
+      });
+    }
+    
+    const existingSquad =
+      await getRegisteredSquad(
+        env.DB,
+        user.id
+      );
+    
+    if (existingSquad) {
+      return Response.json({
+        success: false,
+        message: "You already have a registered squad. Submit a change request instead."
+      }, {
+        status: 409
+      });
+    }
+    
+    const body = await request.json();
+    const image = body.image;
+    
+    if (
+      typeof image !== "string" ||
+      !image.startsWith("data:image/")
+    ) {
+      return Response.json({
+        success: false,
+        message: "Please provide a valid squad image."
+      }, {
+        status: 400
+      });
+    }
+    
+    const uploaded =
+      await uploadBase64Image(
+        image,
+        "gesl/squads",
+        `squad-${user.id}-${crypto.randomUUID()}`,
+        env
+      );
+    
+    if (
+      !uploaded?.url ||
+      !(uploaded.public_id || uploaded.publicId)
+    ) {
+      return Response.json({
+        success: false,
+        message: "Squad image upload failed."
+      }, {
+        status: 502
+      });
+    }
+    
+    const squad = await createRegisteredSquad(
+      env.DB,
+      {
+        id: crypto.randomUUID(),
+        user_id: user.id,
+        image_url: uploaded.url,
+        image_public_id: uploaded.public_id || uploaded.publicId
+      }
+    );
+    
+    return Response.json({
+      success: true,
+      message: "Your squad has been registered successfully.",
+      squad
+    }, {
+      status: 201
+    });
+  } catch (error) {
+    return Response.json({
+      success: false,
+      message: "Unable to register your squad."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function requestSquadChangeRoute(
+  request,
+  env,
+  user
+) {
+  try {
+    if (!user) {
+      return Response.json({
+        success: false,
+        message: "Please log in to continue."
+      }, {
+        status: 401
+      });
+    }
+    
+    const squad = await getRegisteredSquad(
+      env.DB,
+      user.id
+    );
+    
+    if (!squad) {
+      return Response.json({
+        success: false,
+        message: "Register your squad before requesting a change."
+      }, {
+        status: 400
+      });
+    }
+    
+    const eligibility =
+      await getSquadChangeEligibility(
+        env.DB,
+        user.id
+      );
+    
+    if (!eligibility.eligible) {
+      const messages = {
+        pending_request: "You already have a pending squad change request.",
+        cooldown: "You can change your squad once every 60 days.",
+        no_registered_squad: "Register your squad before requesting a change."
+      };
+      
+      return Response.json({
+        success: false,
+        message: messages[eligibility.reason] ||
+          "You are not eligible to change your squad.",
+        eligibility
+      }, {
+        status: 409
+      });
+    }
+    
+    const body = await request.json();
+    const image = body.image;
+    
+    if (
+      typeof image !== "string" ||
+      !image.startsWith("data:image/")
+    ) {
+      return Response.json({
+        success: false,
+        message: "Please provide a valid squad image."
+      }, {
+        status: 400
+      });
+    }
+    
+    const uploaded =
+      await uploadBase64Image(
+        image,
+        "gesl/squad-change-requests",
+        `squad-change-${user.id}-${crypto.randomUUID()}`,
+        env
+      );
+    
+    if (
+      !uploaded?.url ||
+      !(uploaded.public_id || uploaded.publicId)
+    ) {
+      return Response.json({
+        success: false,
+        message: "Squad image upload failed."
+      }, {
+        status: 502
+      });
+    }
+    
+    const changeRequest =
+      await createSquadChangeRequest(
+        env.DB,
+        {
+          id: crypto.randomUUID(),
+          user_id: user.id,
+          image_url: uploaded.url,
+          image_public_id: uploaded.public_id || uploaded.publicId
+        }
+      );
+    
+    return Response.json({
+      success: true,
+      message: "Your squad change request has been submitted for admin review.",
+      request: changeRequest
+    }, {
+      status: 201
+    });
+  } catch (error) {
+    return Response.json({
+      success: false,
+      message: "Unable to submit your squad change request."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function getAdminSquadRequestsRoute(
+  env,
+  user
+) {
+  try {
+    if (!user || user.role !== "admin") {
+      return Response.json({
+        success: false,
+        message: "You are not authorized to perform this action."
+      }, {
+        status: 403
+      });
+    }
+    
+    const requests =
+      await getPendingSquadChangeRequests(
+        env.DB
+      );
+    
+    return Response.json({
+      success: true,
+      requests
+    });
+  } catch (error) {
+    return Response.json({
+      success: false,
+      message: "Unable to retrieve squad change requests."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function reviewSquadChangeRoute(
+  request,
+  env,
+  requestId,
+  user
+) {
+  try {
+    if (!user || user.role !== "admin") {
+      return Response.json({
+        success: false,
+        message: "You are not authorized to perform this action."
+      }, {
+        status: 403
+      });
+    }
+    
+    const body = await request.json();
+    
+    const decision = body.decision;
+    const rejectionReason =
+      typeof body.rejection_reason === "string" ?
+      body.rejection_reason.trim() :
+      null;
+    
+    if (
+      decision !== "approve" &&
+      decision !== "reject"
+    ) {
+      return Response.json({
+        success: false,
+        message: "Decision must be either approve or reject."
+      }, {
+        status: 400
+      });
+    }
+    
+    if (
+      decision === "reject" &&
+      rejectionReason &&
+      rejectionReason.length > 1000
+    ) {
+      return Response.json({
+        success: false,
+        message: "The rejection reason cannot exceed 1000 characters."
+      }, {
+        status: 400
+      });
+    }
+    
+    const changeRequest =
+      await getSquadChangeRequest(
+        env.DB,
+        requestId
+      );
+    
+    if (!changeRequest) {
+      return Response.json({
+        success: false,
+        message: "Squad change request not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    if (changeRequest.status !== "pending") {
+      return Response.json({
+        success: false,
+        message: "This squad change request has already been reviewed."
+      }, {
+        status: 409
+      });
+    }
+    
+    const registeredSquad =
+      await getRegisteredSquad(
+        env.DB,
+        changeRequest.user_id
+      );
+    
+    if (!registeredSquad) {
+      return Response.json({
+        success: false,
+        message: "The user has no registered squad to update."
+      }, {
+        status: 409
+      });
+    }
+    
+    const result =
+      await reviewSquadChangeRequest(
+        env.DB,
+        requestId,
+        user.id,
+        decision,
+        rejectionReason
+      );
+    
+    if (!result?.success) {
+      return Response.json({
+        success: false,
+        message: result?.message ||
+          "Unable to review this squad change request."
+      }, {
+        status: 409
+      });
+    }
+    
+    if (
+      decision === "approve" &&
+      registeredSquad.image_public_id &&
+      registeredSquad.image_public_id !==
+      changeRequest.image_public_id
+    ) {
+      try {
+        await deleteCloudinaryImage(
+          registeredSquad.image_public_id,
+          env
+        );
+      } catch (error) {}
+    }
+    
+    return Response.json({
+      success: true,
+      message: decision === "approve" ?
+        "Squad change approved successfully." :
+        "Squad change request rejected successfully."
+    });
+  } catch (error) {
+    return Response.json({
+      success: false,
+      message: "Unable to review the squad change request."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function getUserRegisteredSquadRoute(
+  env,
+  userId
+) {
+  try {
+    const squad =
+      await getUserRegisteredSquad(
+        env.DB,
+        userId
+      );
+    if (!squad) {
+      return Response.json({
+        success: false,
+        message: "This player has no registered squad."
+      }, {
+        status: 404
+      });
+    }
+    return Response.json({
+      success: true,
+      squad
+    });
+  } catch (error) {
+    return Response.json({
+      success: false,
+      message: "Unable to retrieve this player's squad."
     }, {
       status: 500
     });
