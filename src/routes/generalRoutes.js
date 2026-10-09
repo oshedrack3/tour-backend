@@ -1243,10 +1243,8 @@ async function getGlobalRankingsRoute(
   try {
     const url =
       new URL(request.url);
-
     const limitParam =
       url.searchParams.get("limit");
-
     const limit =
       Math.min(
         Math.max(
@@ -1255,7 +1253,6 @@ async function getGlobalRankingsRoute(
         ),
         100
       );
-
     const result =
       await env.DB
       .prepare(`
@@ -1264,6 +1261,7 @@ async function getGlobalRankingsRoute(
           username,
           rating
         FROM users
+        WHERE is_test_account = 0
         ORDER BY
           rating DESC,
           username ASC
@@ -1271,19 +1269,16 @@ async function getGlobalRankingsRoute(
       `)
       .bind(limit)
       .all();
-
     return Response.json({
       success: true,
       rankings:
         result.results || []
     });
-
   } catch (error) {
     console.error(
       "Global rankings error:",
       error
     );
-
     return Response.json({
       success: false,
       message:
