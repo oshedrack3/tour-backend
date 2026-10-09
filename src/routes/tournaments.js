@@ -1935,6 +1935,21 @@ async function joinTournamentRoute(
       });
     }
     
+    const registeredSquad =
+      await getRegisteredSquad(
+        env.DB,
+        user.id
+      );
+    
+    if (!registeredSquad) {
+      return Response.json({
+        success: false,
+        message: "You must register your squad before joining a tournament. Go to your Profile page, find the Registered Squad section, and upload your squad image. Once registered, return here to join the tournament."
+      }, {
+        status: 403
+      });
+    }
+    
     if (
       tournament.is_public === false ||
       tournament.is_public === 0
@@ -2532,6 +2547,20 @@ async function createMatchSubmissionRoute(
       });
     }
     
+    const registeredSquad =
+      await getRegisteredSquad(
+        env.DB,
+        user.id
+      );
+    
+    if (!registeredSquad) {
+      return Response.json({
+        success: false,
+        message: "You must register your squad before submitting a match result. To register your squad, go to your Profile page, locate the Registered Squad section, and upload an image of your squad. Once your squad has been successfully registered, return to the tournament and submit your match result."
+      }, {
+        status: 403
+      });
+    }
     const existingPending =
       await getPendingMatchSubmission(
         env.DB,
