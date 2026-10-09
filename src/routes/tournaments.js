@@ -28,6 +28,7 @@ import {
   getTournamentsByOwnerAndCompetition,
   getTournamentsByCompetition,
   importTournamentPlayers,
+  getUserRegisteredSquad,
   getUserRegisteredSquad
 } from "../storage.js";
 import {
