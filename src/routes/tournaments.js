@@ -83,18 +83,18 @@ export async function handleTournamentRequest(
   }
   
   if (
-  request.method === "POST" &&
-  /^\/tournaments\/[^/]+\/rules\/accept$/.test(pathname)
-) {
-  const tournamentId =
-    pathname.split("/")[2];
-  
-  return await acceptTournamentRulesRoute(
-    env,
-    tournamentId,
-    user
-  );
-}
+    request.method === "POST" &&
+    /^\/tournaments\/[^/]+\/rules\/accept$/.test(pathname)
+  ) {
+    const tournamentId =
+      pathname.split("/")[2];
+    
+    return await acceptTournamentRulesRoute(
+      env,
+      tournamentId,
+      user
+    );
+  }
   if (
     request.method === "POST" &&
     /^\/tournaments\/[^/]+\/matches\/[^/]+\/submission$/.test(pathname)
@@ -222,6 +222,23 @@ export async function handleTournamentRequest(
       tournamentId,
       playerId,
       user
+    );
+  }
+  
+  if (
+    request.method === "GET" &&
+    url.pathname.match(
+      /^\/tournaments\/[^/]+\/teams\/[^/]+\/squad$/
+    )
+  ) {
+    const match = url.pathname.match(
+      /^\/tournaments\/([^/]+)\/teams\/([^/]+)\/squad$/
+    );
+    
+    return getTournamentTeamSquadRoute(
+      env,
+      decodeURIComponent(match[1]),
+      decodeURIComponent(match[2])
     );
   }
   if (
@@ -6556,21 +6573,20 @@ async function getTournamentRulesRoute(
 ) {
   try {
     const tournament =
-  await getTournament(
-    env.DB,
-    tournamentId
-  );
-
+      await getTournament(
+        env.DB,
+        tournamentId
+      );
+    
     if (!tournament) {
       return Response.json({
         success: false,
-        message:
-          "Tournament not found."
+        message: "Tournament not found."
       }, {
         status: 404
       });
     }
-
+    
     if (!tournament.competition_id) {
       return Response.json({
         success: true,
@@ -6579,10 +6595,10 @@ async function getTournamentRulesRoute(
         accepted: true
       });
     }
-
+    
     const competition =
       await env.DB
-        .prepare(`
+      .prepare(`
           SELECT
             id,
             rules,
@@ -6591,11 +6607,11 @@ async function getTournamentRulesRoute(
           FROM competitions
           WHERE id = ?
         `)
-        .bind(
-          tournament.competition_id
-        )
-        .first();
-
+      .bind(
+        tournament.competition_id
+      )
+      .first();
+    
     if (!competition) {
       return Response.json({
         success: true,
@@ -6604,52 +6620,47 @@ async function getTournamentRulesRoute(
         accepted: true
       });
     }
-
+    
     if (!competition.rules) {
       return Response.json({
         success: true,
         rules: null,
-        rules_version:
-          competition.rules_version,
+        rules_version: competition.rules_version,
         accepted: true
       });
     }
-
+    
     const acceptance =
       await getTournamentRuleAcceptance(
         env.DB,
         tournamentId,
         user.id
       );
-
-    const accepted =
-      !!acceptance &&
+    
+    const accepted = !!acceptance &&
       Number(
         acceptance.rules_version
       ) === Number(
         competition.rules_version
       );
-
+    
     return Response.json({
       success: true,
       rules: competition.rules,
-      rules_version:
-        competition.rules_version,
-      rules_updated_at:
-        competition.rules_updated_at,
+      rules_version: competition.rules_version,
+      rules_updated_at: competition.rules_updated_at,
       accepted
     });
-
+    
   } catch (error) {
     console.error(
       "Get tournament rules error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to load tournament rules."
     }, {
       status: 500
@@ -6664,33 +6675,31 @@ async function acceptTournamentRulesRoute(
 ) {
   try {
     const tournament =
-  await getTournament(
-    env.DB,
-    tournamentId
-  );
+      await getTournament(
+        env.DB,
+        tournamentId
+      );
     if (!tournament) {
       return Response.json({
         success: false,
-        message:
-          "Tournament not found."
+        message: "Tournament not found."
       }, {
         status: 404
       });
     }
-
+    
     if (!tournament.competition_id) {
       return Response.json({
         success: false,
-        message:
-          "This tournament has no competition."
+        message: "This tournament has no competition."
       }, {
         status: 400
       });
     }
-
+    
     const competition =
       await env.DB
-        .prepare(`
+      .prepare(`
           SELECT
             id,
             rules,
@@ -6698,29 +6707,27 @@ async function acceptTournamentRulesRoute(
           FROM competitions
           WHERE id = ?
         `)
-        .bind(
-          tournament.competition_id
-        )
-        .first();
-
+      .bind(
+        tournament.competition_id
+      )
+      .first();
+    
     if (!competition) {
       return Response.json({
         success: false,
-        message:
-          "Competition not found."
+        message: "Competition not found."
       }, {
         status: 404
       });
     }
-
+    
     if (!competition.rules) {
       return Response.json({
         success: true,
-        message:
-          "No tournament rules to accept."
+        message: "No tournament rules to accept."
       });
     }
-
+    
     const acceptance =
       await saveTournamentRuleAcceptance(
         env.DB,
@@ -6728,25 +6735,73 @@ async function acceptTournamentRulesRoute(
         user.id,
         competition.rules_version
       );
-
+    
     return Response.json({
       success: true,
-      message:
-        "Tournament rules accepted.",
+      message: "Tournament rules accepted.",
       acceptance
     });
-
+    
   } catch (error) {
     console.error(
       "Accept tournament rules error:",
       error
     );
-
+    
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to accept tournament rules."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+async function getTournamentTeamSquadRoute(
+  env,
+  tournamentId,
+  teamId
+) {
+  try {
+    const player = await getTournamentPlayerByTeam(
+      env.DB,
+      tournamentId,
+      teamId
+    );
+    
+    if (!player) {
+      return Response.json({
+        success: false,
+        message: "Player not found for this team."
+      }, {
+        status: 404
+      });
+    }
+    
+    const squad = await getUserRegisteredSquad(
+      env.DB,
+      player.user_id
+    );
+    
+    if (!squad) {
+      return Response.json({
+        success: false,
+        message: "This player has no registered squad."
+      }, {
+        status: 404
+      });
+    }
+    
+    return Response.json({
+      success: true,
+      squad
+    });
+  } catch (error) {
+    return Response.json({
+      success: false,
+      message: "Unable to retrieve this team's registered squad."
     }, {
       status: 500
     });
