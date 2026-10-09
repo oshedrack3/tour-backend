@@ -2587,7 +2587,6 @@ export async function getGlobalRankings(
     ),
     100
   );
-  
   const result = await db
     .prepare(`
       SELECT
@@ -2595,15 +2594,14 @@ export async function getGlobalRankings(
         username,
         rating
       FROM users
+      WHERE is_test_account = 0
       ORDER BY rating DESC, username ASC
       LIMIT ?
     `)
     .bind(safeLimit)
     .all();
-  
   return result.results || [];
 }
-
 
 export async function getExpiredMatchSubmissions(
   db
