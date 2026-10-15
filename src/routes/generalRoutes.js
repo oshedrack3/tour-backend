@@ -1918,20 +1918,9 @@ async function recalculateHistoricalRatingsRoute(
   }
 
   const runId = "historical_elo_v1";
+  let step = "check_existing_run";
 
   try {
-    await env.DB.exec(`
-      CREATE TABLE IF NOT EXISTS rating_recalculation_runs (
-        id TEXT PRIMARY KEY,
-        status TEXT NOT NULL,
-        started_at INTEGER NOT NULL,
-        completed_at INTEGER,
-        matches_processed INTEGER NOT NULL DEFAULT 0,
-        matches_skipped INTEGER NOT NULL DEFAULT 0,
-        users_updated INTEGER NOT NULL DEFAULT 0
-      )
-    `);
-
     const existingRun = await env.DB
       .prepare(`
         SELECT id, status
@@ -1952,6 +1941,8 @@ async function recalculateHistoricalRatingsRoute(
       });
     }
 
+    step = "load_users";
+
     const usersResult = await env.DB
       .prepare(`
         SELECT id, is_test_account
@@ -1969,6 +1960,8 @@ async function recalculateHistoricalRatingsRoute(
         testAccounts.add(player.id);
       }
     }
+
+    step = "load_completed_matches";
 
     const matchesResult = await env.DB
       .prepare(`
@@ -2021,6 +2014,8 @@ async function recalculateHistoricalRatingsRoute(
 
     let matchesProcessed = 0;
     let matchesSkipped = 0;
+
+    step = "calculate_ratings";
 
     for (const match of matches) {
       const homeId = match.home_user_id;
@@ -2084,6 +2079,8 @@ async function recalculateHistoricalRatingsRoute(
       matchesProcessed++;
     }
 
+    step = "register_recalculation";
+
     const insertRun = await env.DB
       .prepare(`
         INSERT OR IGNORE INTO rating_recalculation_runs (
@@ -2096,7 +2093,10 @@ async function recalculateHistoricalRatingsRoute(
       .bind(runId, Date.now())
       .run();
 
-    if (!insertRun.meta?.changes) {
+    if (
+      !insertRun.meta ||
+      insertRun.meta.changes !== 1
+    ) {
       return Response.json({
         success: false,
         message:
@@ -2105,6 +2105,8 @@ async function recalculateHistoricalRatingsRoute(
         status: 409
       });
     }
+
+    step = "prepare_database_updates";
 
     const statements = [];
 
@@ -2139,6 +2141,8 @@ async function recalculateHistoricalRatingsRoute(
       );
     }
 
+    step = "write_database_batches";
+
     for (
       let i = 0;
       i < statements.length;
@@ -2148,6 +2152,8 @@ async function recalculateHistoricalRatingsRoute(
         statements.slice(i, i + 50)
       );
     }
+
+    step = "mark_completed";
 
     await env.DB
       .prepare(`
@@ -2184,6 +2190,7 @@ async function recalculateHistoricalRatingsRoute(
   } catch (error) {
     console.error(
       "Historical rating recalculation error:",
+      step,
       error
     );
 
@@ -2201,6 +2208,7 @@ async function recalculateHistoricalRatingsRoute(
 
     return Response.json({
       success: false,
+      step: step,
       errorName: error.name || "Error",
       message: error.message || String(error)
     }, {
