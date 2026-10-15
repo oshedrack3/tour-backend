@@ -1893,6 +1893,7 @@ async function getUserRegisteredSquadRoute(
 }
 
 
+
 async function recalculateHistoricalRatingsRoute(
   request,
   env,
@@ -2138,7 +2139,11 @@ async function recalculateHistoricalRatingsRoute(
       );
     }
 
-    for (let i = 0; i < statements.length; i += 50) {
+    for (
+      let i = 0;
+      i < statements.length;
+      i += 50
+    ) {
       await env.DB.batch(
         statements.slice(i, i + 50)
       );
@@ -2196,8 +2201,8 @@ async function recalculateHistoricalRatingsRoute(
 
     return Response.json({
       success: false,
-      message:
-        "Recalculation failed. Check Worker logs and restore the database backup if any changes were partially applied. Do not rerun automatically."
+      errorName: error.name || "Error",
+      message: error.message || String(error)
     }, {
       status: 500
     });
