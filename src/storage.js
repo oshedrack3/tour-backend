@@ -2575,34 +2575,6 @@ export function calculateElo(
   };
 }
 
-
-export async function getGlobalRankings(
-  db,
-  limit = 100
-) {
-  const safeLimit = Math.min(
-    Math.max(
-      parseInt(limit, 10) || 100,
-      1
-    ),
-    100
-  );
-  const result = await db
-    .prepare(`
-      SELECT
-        id,
-        username,
-        rating
-      FROM users
-      WHERE is_test_account = 0
-      ORDER BY rating DESC, username ASC
-      LIMIT ?
-    `)
-    .bind(safeLimit)
-    .all();
-  return result.results || [];
-}
-
 export async function getExpiredMatchSubmissions(
   db
 ) {
@@ -3029,4 +3001,95 @@ export async function getUserRegisteredSquad(
     JOIN users u ON u.id = rs.user_id
     WHERE rs.user_id = ?
   `).bind(userId).first();
+}
+
+
+
+export async function getGlobalRankings(
+  db,
+  limit = 100
+) {
+  const safeLimit = Math.min(
+    Math.max(
+      parseInt(limit, 10) || 100,
+      1
+    ),
+    100
+  );
+  
+  const result = await db
+    .prepare(`
+WITH all_stats AS (
+SELECT
+user_id,
+played,
+wins,
+draws,
+losses,
+gf,
+ga
+FROM tournament_players
+WHERE status = ‘accepted’
+
+    UNION ALL
+    SELECT
+      user_id,
+      played,
+      wins,
+      draws,
+      losses,
+      gf,
+      ga
+    FROM tournament_player_knockout
+  ),
+  career AS (
+    SELECT
+      user_id,
+      SUM(played) AS played,
+      SUM(wins) AS wins,
+      SUM(draws) AS draws,
+      SUM(losses) AS losses,
+      SUM(gf) AS goals_for,
+      SUM(ga) AS goals_against
+    FROM all_stats
+    GROUP BY user_id
+  )
+  SELECT
+    u.id,
+    u.username,
+    u.rating,
+    COALESCE(c.played, 0) AS played,
+    COALESCE(c.wins, 0) AS wins,
+    COALESCE(c.draws, 0) AS draws,
+    COALESCE(c.losses, 0) AS losses,
+    COALESCE(c.goals_for, 0) AS goals_for,
+    COALESCE(c.goals_against, 0)
+      AS goals_against,
+    COALESCE(c.goals_for, 0)
+      - COALESCE(c.goals_against, 0)
+      AS goal_difference,
+    ROUND(
+      100.0 * COALESCE(c.wins, 0)
+      / NULLIF(c.played, 0),
+      2
+    ) AS win_percentage
+  FROM users u
+  LEFT JOIN career c
+    ON c.user_id = u.id
+  WHERE u.is_test_account = 0
+  ORDER BY
+    u.rating DESC,
+    COALESCE(c.wins, 0) DESC,
+    (
+      COALESCE(c.goals_for, 0)
+      - COALESCE(c.goals_against, 0)
+    ) DESC,
+    COALESCE(c.goals_for, 0) DESC,
+    u.username COLLATE NOCASE ASC
+  LIMIT ?
+`)
+    .bind(safeLimit)
+    .all();
+  
+  return result.results || [];
 }
