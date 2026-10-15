@@ -1,4 +1,5 @@
 import {
+  calculateElo,
   getNotice,
   getPushSubscription,
   savePushSubscription,
@@ -248,6 +249,17 @@ export async function handleGeneralRequest(
       decodeURIComponent(squadMatch[1])
     );
   }
+  
+  if (
+  request.method === "POST" &&
+  pathname === "/admin/ratings/recalculate-history"
+) {
+  return await recalculateHistoricalRatingsRoute(
+    request,
+    env,
+    user
+  );
+}
   return null;
 }
 
@@ -1874,6 +1886,637 @@ async function getUserRegisteredSquadRoute(
     return Response.json({
       success: false,
       message: "Unable to retrieve this player's squad."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+async function recalculateHistoricalRatingsRoute(
+  request,
+  env,
+  user
+) {
+  if (request.method !== "POST") {
+    return Response.json({
+      success: false,
+      message: "Method not allowed."
+    }, {
+      status: 405
+    });
+  }
+
+  if (user?.role !== "admin") {
+    return Response.json({
+      success: false,
+      message: "Admin access required."
+    }, {
+      status: 403
+    });
+  }
+
+  try {
+    const existingRun = await env.DB
+      .prepare(`
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table'
+        AND name = 'rating_recalculation_runs'
+      `)
+      .first();
+
+    if (existingRun) {
+      const completed = await env.DB
+        .prepare(`
+          SELECT id
+          FROM rating_recalculation_runs
+          WHERE id = 'historical_elo_v1'
+          AND status = 'completed'
+        `)
+        .first();
+
+      if (completed) {
+        return Response.json({
+          success: false,
+          message:
+            "Historical rating recalculation has already completed."
+        }, {
+          status: 409
+        });
+      }
+    }
+
+    await env.DB.exec(`
+      CREATE TABLE IF NOT EXISTS rating_recalculation_runs (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        matches_processed INTEGER NOT NULL DEFAULT 0,
+        matches_skipped INTEGER NOT NULL DEFAULT 0,
+        users_updated INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+
+    const run = await env.DB
+      .prepare(`
+        SELECT id, status
+        FROM rating_recalculation_runs
+        WHERE id = 'historical_elo_v1'
+      `)
+      .first();
+
+    if (run) {
+      return Response.json({
+        success: false,
+        message:
+          "A historical recalculation has already been started. Check its status before attempting recovery.",
+        status: run.status
+      }, {
+        status: 409
+      });
+    }
+
+    await env.DB
+      .prepare(`
+        INSERT INTO rating_recalculation_runs (
+          id,
+          status,
+          started_at
+        )
+        VALUES (
+          'historical_elo_v1',
+          'running',
+          ?
+        )
+      `)
+      .bind(Date.now())
+      .run();
+
+    const usersResult = await env.DB
+      .prepare(`
+        SELECT id, is_test_account
+        FROM users
+      `)
+      .all();
+
+    const ratings = new Map();
+
+    for (const player of usersResult.results || []) {
+      ratings.set(player.id, 1500);
+    }
+
+    const matchesResult = await env.DB
+      .prepare(`
+        SELECT
+          m.id,
+          m.tournament_id,
+          m.home_team_id,
+          m.away_team_id,
+          m.home_score,
+          m.away_score,
+          m.played,
+          m.played_at,
+          m.created_at,
+          hp.user_id AS home_user_id,
+          ap.user_id AS away_user_id,
+          hu.is_test_account AS home_test_account,
+          au.is_test_account AS away_test_account
+        FROM matches m
+        LEFT JOIN tournament_players hp
+          ON hp.tournament_id = m.tournament_id
+          AND hp.team_id = m.home_team_id
+        LEFT JOIN tournament_players ap
+          ON ap.tournament_id = m.tournament_id
+          AND ap.team_id = m.away_team_id
+        LEFT JOIN users hu
+          ON hu.id = hp.user_id
+        LEFT JOIN users au
+          ON au.id = ap.user_id
+        WHERE m.played = 1
+        ORDER BY
+          COALESCE(m.played_at, m.created_at) ASC,
+          m.created_at ASC,
+          m.id ASC
+      `)
+      .all();
+
+    const matches = matchesResult.results || [];
+
+    const matchChanges = [];
+    let matchesProcessed = 0;
+    let matchesSkipped = 0;
+
+    for (const match of matches) {
+      let homeChange = 0;
+      let awayChange = 0;
+
+      const homeId = match.home_user_id;
+      const awayId = match.away_user_id;
+
+      const valid =
+        homeId &&
+        awayId &&
+        homeId !== awayId &&
+        ratings.has(homeId) &&
+        ratings.has(awayId) &&
+        match.home_score !== null &&
+        match.home_score !== undefined &&
+        match.away_score !== null &&
+        match.away_score !== undefined &&
+        match.home_test_account === 0 &&
+        match.away_test_account === 0;
+
+      if (!valid) {
+        matchesSkipped++;
+
+        matchChanges.push({
+          id: match.id,
+          homeChange: 0,
+          awayChange: 0
+        });
+
+        continue;
+      }
+
+      const homeRating = ratings.get(homeId);
+      const awayRating = ratings.get(awayId);
+
+      const elo = calculateElo(
+        homeRating,
+        awayRating,
+        match.home_score,
+        match.away_score
+      );
+
+      homeChange = elo.homeChange;
+      awayChange = elo.awayChange;
+
+      ratings.set(
+        homeId,
+        homeRating + homeChange
+      );
+
+      ratings.set(
+        awayId,
+        awayRating + awayChange
+      );
+
+      matchesProcessed++;
+
+      matchChanges.push({
+        id: match.id,
+        homeChange,
+        awayChange
+      });
+    }
+
+    const statements = [];
+
+    for (const [userId, rating] of ratings) {
+      statements.push(
+        env.DB
+          .prepare(`
+            UPDATE users
+            SET rating = ?
+            WHERE id = ?
+          `)
+          .bind(rating, userId)
+      );
+    }
+
+    for (const match of matchChanges) {
+      statements.push(
+        env.DB
+          .prepare(`
+            UPDATE matches
+            SET
+              home_rating_change = ?,
+              away_rating_change = ?
+            WHERE id = ?
+          `)
+          .bind(
+            match.homeChange,
+            match.awayChange,
+            match.id
+          )
+      );
+    }
+
+    for (
+      let i = 0;
+      i < statements.length;
+      i += 50
+    ) {
+      await env.DB.batch(
+        statements.slice(i, i + 50)
+      );
+    }
+
+    await env.DB
+      .prepare(`
+        UPDATE rating_recalculation_runs
+        SET
+          status = 'completed',
+          completed_at = ?,
+          matches_processed = ?,
+          matches_skipped = ?,
+          users_updated = ?
+        WHERE id = 'historical_elo_v1'
+      `)
+      .bind(
+        Date.now(),
+        matchesProcessed,
+        matchesSkipped,
+        ratings.size
+      )
+      .run();
+
+    return Response.json({
+      success: true,
+      message:
+        "Historical rating recalculation completed.",
+      usersUpdated: ratings.size,
+      matchesProcessed,
+      matchesSkipped,
+      initialRating: 1500,
+      kFactor: 32
+    });
+
+  } catch (error) {
+    console.error(
+      "Historical rating recalculation error:",
+      error
+    );
+
+    try {
+      await env.DB
+        .prepare(`
+          UPDATE rating_recalculation_runs
+          SET status = 'failed'
+          WHERE id = 'historical_elo_v1'
+          AND status = 'running'
+        `)
+        .run();
+    } catch (ignored) {}
+
+    return Response.json({
+      success: false,
+      message:
+        "Historical rating recalculation failed. Check the Worker logs and database before attempting recovery."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+async function recalculateHistoricalRatingsRoute(
+  request,
+  env,
+  user
+) {
+  if (request.method !== "POST") {
+    return Response.json({
+      success: false,
+      message: "Method not allowed."
+    }, {
+      status: 405
+    });
+  }
+
+  if (user?.role !== "admin") {
+    return Response.json({
+      success: false,
+      message: "Admin access required."
+    }, {
+      status: 403
+    });
+  }
+
+  const runId = "historical_elo_v1";
+
+  try {
+    await env.DB.exec(`
+      CREATE TABLE IF NOT EXISTS rating_recalculation_runs (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        matches_processed INTEGER NOT NULL DEFAULT 0,
+        matches_skipped INTEGER NOT NULL DEFAULT 0,
+        users_updated INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+
+    const existingRun = await env.DB
+      .prepare(`
+        SELECT id, status
+        FROM rating_recalculation_runs
+        WHERE id = ?
+      `)
+      .bind(runId)
+      .first();
+
+    if (existingRun) {
+      return Response.json({
+        success: false,
+        message:
+          "This recalculation has already been started. Do not run it again without checking the database.",
+        status: existingRun.status
+      }, {
+        status: 409
+      });
+    }
+
+    const usersResult = await env.DB
+      .prepare(`
+        SELECT id, is_test_account
+        FROM users
+      `)
+      .all();
+
+    const ratings = new Map();
+    const testAccounts = new Set();
+
+    for (const player of usersResult.results || []) {
+      ratings.set(player.id, 1500);
+
+      if (Number(player.is_test_account) === 1) {
+        testAccounts.add(player.id);
+      }
+    }
+
+    const matchesResult = await env.DB
+      .prepare(`
+        SELECT
+          m.id,
+          m.tournament_id,
+          m.home_team_id,
+          m.away_team_id,
+          m.home_score,
+          m.away_score,
+          m.played_at,
+          m.created_at,
+          hp.user_id AS home_user_id,
+          ap.user_id AS away_user_id
+        FROM matches m
+        LEFT JOIN (
+          SELECT
+            tournament_id,
+            team_id,
+            MIN(user_id) AS user_id
+          FROM tournament_players
+          WHERE status = 'accepted'
+          GROUP BY tournament_id, team_id
+          HAVING COUNT(DISTINCT user_id) = 1
+        ) hp
+          ON hp.tournament_id = m.tournament_id
+          AND hp.team_id = m.home_team_id
+        LEFT JOIN (
+          SELECT
+            tournament_id,
+            team_id,
+            MIN(user_id) AS user_id
+          FROM tournament_players
+          WHERE status = 'accepted'
+          GROUP BY tournament_id, team_id
+          HAVING COUNT(DISTINCT user_id) = 1
+        ) ap
+          ON ap.tournament_id = m.tournament_id
+          AND ap.team_id = m.away_team_id
+        WHERE m.played = 1
+        ORDER BY
+          COALESCE(m.played_at, m.created_at) ASC,
+          m.created_at ASC,
+          m.id ASC
+      `)
+      .all();
+
+    const matches = matchesResult.results || [];
+    const matchChanges = [];
+
+    let matchesProcessed = 0;
+    let matchesSkipped = 0;
+
+    for (const match of matches) {
+      const homeId = match.home_user_id;
+      const awayId = match.away_user_id;
+
+      const valid =
+        homeId &&
+        awayId &&
+        homeId !== awayId &&
+        ratings.has(homeId) &&
+        ratings.has(awayId) &&
+        !testAccounts.has(homeId) &&
+        !testAccounts.has(awayId) &&
+        match.home_score !== null &&
+        match.home_score !== undefined &&
+        match.away_score !== null &&
+        match.away_score !== undefined &&
+        Number.isFinite(Number(match.home_score)) &&
+        Number.isFinite(Number(match.away_score)) &&
+        Number(match.home_score) >= 0 &&
+        Number(match.away_score) >= 0;
+
+      if (!valid) {
+        matchesSkipped++;
+
+        matchChanges.push({
+          id: match.id,
+          homeChange: 0,
+          awayChange: 0
+        });
+
+        continue;
+      }
+
+      const homeRating = ratings.get(homeId);
+      const awayRating = ratings.get(awayId);
+
+      const elo = calculateElo(
+        homeRating,
+        awayRating,
+        Number(match.home_score),
+        Number(match.away_score)
+      );
+
+      ratings.set(
+        homeId,
+        homeRating + elo.homeChange
+      );
+
+      ratings.set(
+        awayId,
+        awayRating + elo.awayChange
+      );
+
+      matchChanges.push({
+        id: match.id,
+        homeChange: elo.homeChange,
+        awayChange: elo.awayChange
+      });
+
+      matchesProcessed++;
+    }
+
+    const insertRun = await env.DB
+      .prepare(`
+        INSERT OR IGNORE INTO rating_recalculation_runs (
+          id,
+          status,
+          started_at
+        )
+        VALUES (?, 'running', ?)
+      `)
+      .bind(runId, Date.now())
+      .run();
+
+    if (!insertRun.meta?.changes) {
+      return Response.json({
+        success: false,
+        message:
+          "Another recalculation has already started. Check its status."
+      }, {
+        status: 409
+      });
+    }
+
+    const statements = [];
+
+    for (const [userId, rating] of ratings) {
+      statements.push(
+        env.DB
+          .prepare(`
+            UPDATE users
+            SET rating = ?
+            WHERE id = ?
+          `)
+          .bind(rating, userId)
+      );
+    }
+
+    for (const match of matchChanges) {
+      statements.push(
+        env.DB
+          .prepare(`
+            UPDATE matches
+            SET
+              home_rating_change = ?,
+              away_rating_change = ?
+            WHERE id = ?
+              AND played = 1
+          `)
+          .bind(
+            match.homeChange,
+            match.awayChange,
+            match.id
+          )
+      );
+    }
+
+    for (let i = 0; i < statements.length; i += 50) {
+      await env.DB.batch(
+        statements.slice(i, i + 50)
+      );
+    }
+
+    await env.DB
+      .prepare(`
+        UPDATE rating_recalculation_runs
+        SET
+          status = 'completed',
+          completed_at = ?,
+          matches_processed = ?,
+          matches_skipped = ?,
+          users_updated = ?
+        WHERE id = ?
+          AND status = 'running'
+      `)
+      .bind(
+        Date.now(),
+        matchesProcessed,
+        matchesSkipped,
+        ratings.size,
+        runId
+      )
+      .run();
+
+    return Response.json({
+      success: true,
+      message:
+        "Historical rating recalculation completed.",
+      initialRating: 1500,
+      kFactor: 32,
+      usersUpdated: ratings.size,
+      matchesProcessed,
+      matchesSkipped
+    });
+
+  } catch (error) {
+    console.error(
+      "Historical rating recalculation error:",
+      error
+    );
+
+    try {
+      await env.DB
+        .prepare(`
+          UPDATE rating_recalculation_runs
+          SET status = 'failed'
+          WHERE id = ?
+            AND status = 'running'
+        `)
+        .bind(runId)
+        .run();
+    } catch (ignored) {}
+
+    return Response.json({
+      success: false,
+      message:
+        "Recalculation failed. Check Worker logs and restore the database backup if any changes were partially applied. Do not rerun automatically."
     }, {
       status: 500
     });
