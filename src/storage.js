@@ -3093,3 +3093,336 @@ WHERE status = ‘accepted’
   
   return result.results || [];
 }
+
+
+
+export async function deductTournamentPlayerPoints(
+  db,
+  {
+    tournamentId,
+    userId,
+    teamId,
+    points,
+    reason,
+    adminId
+  }
+) {
+  if (
+    !tournamentId ||
+    !userId ||
+    !teamId ||
+    !adminId
+  ) {
+    throw new Error(
+      "Missing required disciplinary action information."
+    );
+  }
+  
+  const pointsToDeduct = Number(points);
+  
+  if (
+    !Number.isSafeInteger(pointsToDeduct) ||
+    pointsToDeduct <= 0
+  ) {
+    throw new Error(
+      "Points deduction must be a positive whole number."
+    );
+  }
+  
+  const cleanReason =
+    typeof reason === "string" ?
+    reason.trim() :
+    "";
+  
+  if (!cleanReason) {
+    throw new Error(
+      "A reason for the deduction is required."
+    );
+  }
+  
+  const player = await db.prepare(`
+    SELECT tournament_id, user_id, team_id
+    FROM tournament_players
+    WHERE tournament_id = ?
+      AND user_id = ?
+      AND team_id = ?
+  `).bind(
+    tournamentId,
+    userId,
+    teamId
+  ).first();
+  
+  if (!player) {
+    throw new Error(
+      "Player is not registered in this tournament."
+    );
+  }
+  
+  const actionId = crypto.randomUUID();
+  const issuedAt = Date.now();
+  
+  const result = await db.batch([
+    db.prepare(`
+      INSERT INTO disciplinary_actions (
+        id,
+        tournament_id,
+        user_id,
+        team_id,
+        points_deducted,
+        reason,
+        status,
+        issued_by,
+        issued_at
+      )
+      SELECT
+        ?, ?, ?, ?, ?, ?,
+        'active',
+        ?, ?
+      WHERE EXISTS (
+        SELECT 1
+        FROM tournament_players
+        WHERE tournament_id = ?
+          AND user_id = ?
+          AND team_id = ?
+      )
+    `).bind(
+      actionId,
+      tournamentId,
+      userId,
+      teamId,
+      pointsToDeduct,
+      cleanReason,
+      adminId,
+      issuedAt,
+      tournamentId,
+      userId,
+      teamId
+    ),
+    
+    db.prepare(`
+      UPDATE tournament_players
+      SET
+        points = points - ?,
+        has_point_deduction = 1,
+        updated_at = ?
+      WHERE tournament_id = ?
+        AND user_id = ?
+        AND team_id = ?
+        AND EXISTS (
+          SELECT 1
+          FROM disciplinary_actions
+          WHERE id = ?
+            AND status = 'active'
+        )
+    `).bind(
+      pointsToDeduct,
+      issuedAt,
+      tournamentId,
+      userId,
+      teamId,
+      actionId
+    )
+  ]);
+  
+  const action = await db.prepare(`
+    SELECT *
+    FROM disciplinary_actions
+    WHERE id = ?
+      AND tournament_id = ?
+      AND status = 'active'
+  `).bind(
+    actionId,
+    tournamentId
+  ).first();
+  
+  if (!action) {
+    throw new Error(
+      "Failed to record the disciplinary action."
+    );
+  }
+  
+  if (
+    result[0]?.meta?.changes !== 1 ||
+    result[1]?.meta?.changes !== 1
+  ) {
+    throw new Error(
+      "The disciplinary action could not be applied correctly."
+    );
+  }
+  
+  return {
+    success: true,
+    action
+  };
+}
+
+export async function reverseTournamentPlayerDeduction(
+  db,
+  {
+    actionId,
+    adminId,
+    reversalReason
+  }
+) {
+  if (!actionId || !adminId) {
+    throw new Error(
+      "Action ID and administrator ID are required."
+    );
+  }
+  
+  const cleanReason =
+    typeof reversalReason === "string" ?
+    reversalReason.trim() :
+    "";
+  
+  if (!cleanReason) {
+    throw new Error(
+      "A reason for reversing the deduction is required."
+    );
+  }
+  
+  const action = await db.prepare(`
+    SELECT *
+    FROM disciplinary_actions
+    WHERE id = ?
+  `).bind(actionId).first();
+  
+  if (!action) {
+    throw new Error(
+      "Disciplinary action not found."
+    );
+  }
+  
+  if (action.status !== "active") {
+    throw new Error(
+      "This disciplinary action has already been reversed."
+    );
+  }
+  
+  const player = await db.prepare(`
+    SELECT tournament_id, user_id, team_id
+    FROM tournament_players
+    WHERE tournament_id = ?
+      AND user_id = ?
+      AND team_id = ?
+  `).bind(
+    action.tournament_id,
+    action.user_id,
+    action.team_id
+  ).first();
+  
+  if (!player) {
+    throw new Error(
+      "The affected player is no longer registered in this tournament."
+    );
+  }
+  
+  const reversedAt = Date.now();
+  const reversalToken = crypto.randomUUID();
+  
+  const result = await db.batch([
+    db.prepare(`
+      UPDATE disciplinary_actions
+      SET
+        status = 'reversed',
+        reversed_by = ?,
+        reversed_at = ?,
+        reversal_reason = ?,
+        reversal_token = ?
+      WHERE id = ?
+        AND status = 'active'
+        AND tournament_id = ?
+    `).bind(
+      adminId,
+      reversedAt,
+      cleanReason,
+      reversalToken,
+      actionId,
+      action.tournament_id
+    ),
+    
+    db.prepare(`
+      UPDATE tournament_players
+      SET
+        points = points + (
+          SELECT points_deducted
+          FROM disciplinary_actions
+          WHERE id = ?
+            AND status = 'reversed'
+            AND reversal_token = ?
+        ),
+        has_point_deduction = CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM disciplinary_actions da
+            WHERE da.tournament_id =
+              tournament_players.tournament_id
+              AND da.user_id =
+                tournament_players.user_id
+              AND da.team_id =
+                tournament_players.team_id
+              AND da.status = 'active'
+          )
+          THEN 1
+          ELSE 0
+        END,
+        updated_at = ?
+      WHERE tournament_id = ?
+        AND user_id = ?
+        AND team_id = ?
+        AND EXISTS (
+          SELECT 1
+          FROM disciplinary_actions da
+          WHERE da.id = ?
+            AND da.status = 'reversed'
+            AND da.reversal_token = ?
+            AND da.tournament_id =
+              tournament_players.tournament_id
+            AND da.user_id =
+              tournament_players.user_id
+            AND da.team_id =
+              tournament_players.team_id
+        )
+    `).bind(
+      actionId,
+      reversalToken,
+      reversedAt,
+      action.tournament_id,
+      action.user_id,
+      action.team_id,
+      actionId,
+      reversalToken
+    )
+  ]);
+  
+  if (
+    result[0]?.meta?.changes !== 1 ||
+    result[1]?.meta?.changes !== 1
+  ) {
+    throw new Error(
+      "The deduction could not be reversed correctly."
+    );
+  }
+  
+  const reversedAction = await db.prepare(`
+    SELECT *
+    FROM disciplinary_actions
+    WHERE id = ?
+      AND reversal_token = ?
+      AND status = 'reversed'
+  `).bind(
+    actionId,
+    reversalToken
+  ).first();
+  
+  if (!reversedAction) {
+    throw new Error(
+      "Failed to verify the reversed disciplinary action."
+    );
+  }
+  
+  return {
+    success: true,
+    action: reversedAction
+  };
+}

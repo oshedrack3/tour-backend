@@ -1,4 +1,6 @@
 import {
+  deductTournamentPlayerPoints,
+  reverseTournamentPlayerDeduction,
   getTournamentRuleAcceptance,
   saveTournamentRuleAcceptance,
   getTournament,
@@ -30,7 +32,7 @@ import {
   importTournamentPlayers,
   getUserRegisteredSquad,
   getRegisteredSquad
- 
+  
 } from "../storage.js";
 import {
   uploadBase64Image
@@ -424,6 +426,44 @@ export async function handleTournamentRequest(
       user
     );
   }
+  
+  if (
+    request.method === "POST" &&
+    /^\/tournaments\/[^/]+\/disciplinary-actions$/.test(pathname)
+  ) {
+    const tournamentId =
+      pathname.split("/")[2];
+    
+    return await deductTournamentPlayerPointsRoute(
+      request,
+      env,
+      tournamentId,
+      user
+    );
+  }
+  
+  if (
+    request.method === "POST" &&
+    /^\/tournaments\/[^/]+\/disciplinary-actions\/[^/]+\/reverse$/.test(pathname)
+  ) {
+    const parts =
+      pathname.split("/");
+    
+    const tournamentId =
+      parts[2];
+    
+    const actionId =
+      parts[4];
+    
+    return await reverseTournamentPlayerDeductionRoute(
+      request,
+      env,
+      tournamentId,
+      actionId,
+      user
+    );
+  }
+  
   
   if (
     request.method === "GET" &&
@@ -6834,6 +6874,201 @@ async function getTournamentTeamSquadRoute(
     return Response.json({
       success: false,
       message: "Unable to retrieve this team's registered squad."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+
+async function deductTournamentPlayerPointsRoute(
+  request,
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament = await getTournament(
+      env.DB,
+      tournamentId,
+      user.id
+    );
+    
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found or access denied."
+      }, {
+        status: 404
+      });
+    }
+    
+    if (user.role !== "admin") {
+      return Response.json({
+        success: false,
+        message: "Access denied."
+      }, {
+        status: 403
+      });
+    }
+    
+    const body = await request.json().catch(() => ({}));
+    
+    const userId = body.user_id;
+    const teamId = body.team_id;
+    const points = Number(body.points);
+    const reason = body.reason;
+    
+    if (
+      !userId ||
+      !teamId ||
+      !Number.isSafeInteger(points) ||
+      points <= 0 ||
+      typeof reason !== "string" ||
+      !reason.trim()
+    ) {
+      return Response.json({
+        success: false,
+        message: "Provide a valid player, team, positive points deduction, and reason."
+      }, {
+        status: 400
+      });
+    }
+    
+    const result = await deductTournamentPlayerPoints(
+      env.DB,
+      {
+        tournamentId,
+        userId,
+        teamId,
+        points,
+        reason,
+        adminId: user.id
+      }
+    );
+    
+    return Response.json({
+      success: true,
+      message: `${points} point(s) deducted successfully.`,
+      action: result.action
+    });
+  } catch (error) {
+    console.error(
+      "Deduct tournament player points error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to deduct tournament points."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function reverseTournamentPlayerDeductionRoute(
+  request,
+  env,
+  tournamentId,
+  actionId,
+  user
+) {
+  try {
+    const tournament = await getTournament(
+      env.DB,
+      tournamentId,
+      user.id
+    );
+    
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found or access denied."
+      }, {
+        status: 404
+      });
+    }
+    
+    if (user.role !== "admin") {
+      return Response.json({
+        success: false,
+        message: "Access denied."
+      }, {
+        status: 403
+      });
+    }
+    
+    const action = await env.DB.prepare(`
+      SELECT *
+      FROM disciplinary_actions
+      WHERE id = ?
+        AND tournament_id = ?
+    `).bind(
+      actionId,
+      tournamentId
+    ).first();
+    
+    if (!action) {
+      return Response.json({
+        success: false,
+        message: "Disciplinary action not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    if (action.status !== "active") {
+      return Response.json({
+        success: false,
+        message: "This disciplinary action has already been reversed."
+      }, {
+        status: 400
+      });
+    }
+    
+    const body = await request.json().catch(() => ({}));
+    
+    const reversalReason = body.reversal_reason;
+    
+    if (
+      typeof reversalReason !== "string" ||
+      !reversalReason.trim()
+    ) {
+      return Response.json({
+        success: false,
+        message: "A reason for reversing the deduction is required."
+      }, {
+        status: 400
+      });
+    }
+    
+    const result = await reverseTournamentPlayerDeduction(
+      env.DB,
+      {
+        actionId,
+        adminId: user.id,
+        reversalReason
+      }
+    );
+    
+    return Response.json({
+      success: true,
+      message: `${action.points_deducted} point(s) restored successfully.`,
+      action: result.action
+    });
+  } catch (error) {
+    console.error(
+      "Reverse tournament player deduction error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to reverse disciplinary action."
     }, {
       status: 500
     });
