@@ -1,5 +1,5 @@
 import {
-  getActiveTournamentDisciplinaryAction,
+  getActiveTournamentDisciplinaryActions,
   deductTournamentPlayerPoints,
   reverseTournamentPlayerDeduction,
   getTournamentRuleAcceptance,
