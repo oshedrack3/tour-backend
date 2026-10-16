@@ -3426,3 +3426,45 @@ export async function reverseTournamentPlayerDeduction(
     action: reversedAction
   };
 }
+
+
+export async function getActiveTournamentDisciplinaryActions(
+  db,
+  tournamentId
+) {
+  const result = await db.prepare(`
+    SELECT
+      da.id,
+      da.tournament_id,
+      da.user_id,
+      da.team_id,
+      da.points_deducted,
+      da.reason,
+      da.status,
+      da.issued_by,
+      da.issued_at,
+      tp.points AS current_points,
+      tp.has_point_deduction,
+      t.name AS team_name,
+      t.logo AS team_logo,
+      u.username
+    FROM disciplinary_actions da
+    INNER JOIN tournament_players tp
+      ON tp.tournament_id = da.tournament_id
+      AND tp.user_id = da.user_id
+      AND tp.team_id = da.team_id
+    LEFT JOIN teams t
+      ON t.id = da.team_id
+    LEFT JOIN users u
+      ON u.id = da.user_id
+    WHERE da.tournament_id = ?
+      AND da.status = 'active'
+    ORDER BY da.issued_at DESC
+  `).bind(
+    tournamentId
+  ).all();
+  
+  return result.results || [];
+}
+
+

@@ -1,4 +1,5 @@
 import {
+  getActiveTournamentDisciplinaryAction,
   deductTournamentPlayerPoints,
   reverseTournamentPlayerDeduction,
   getTournamentRuleAcceptance,
@@ -464,6 +465,18 @@ export async function handleTournamentRequest(
     );
   }
   
+  if (
+  request.method === "GET" &&
+  /^\/tournaments\/[^/]+\/disciplinary-actions$/.test(pathname)
+) {
+  const tournamentId =
+    pathname.split("/")[2];
+  return await getTournamentDisciplinaryActionsRoute(
+    env,
+    tournamentId,
+    user
+  );
+}
   
   if (
     request.method === "GET" &&
@@ -7069,6 +7082,57 @@ async function reverseTournamentPlayerDeductionRoute(
       success: false,
       message: error.message ||
         "Failed to reverse disciplinary action."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+async function getTournamentDisciplinaryActionsRoute(
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament = await getTournament(
+      env.DB,
+      tournamentId
+    );
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    if (
+      tournament.admin_uid !== user.id &&
+      user.role !== "admin"
+    ) {
+      return Response.json({
+        success: false,
+        message: "Only an administrator can view disciplinary actions."
+      }, {
+        status: 403
+      });
+    }
+    const actions =
+      await getActiveTournamentDisciplinaryActions(
+        env.DB,
+        tournamentId
+      );
+    return Response.json({
+      success: true,
+      actions
+    });
+  } catch (error) {
+    return Response.json({
+      success: false,
+      message:
+        error.message ||
+        "Failed to load disciplinary actions."
     }, {
       status: 500
     });
