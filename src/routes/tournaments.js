@@ -1,5 +1,5 @@
 import {
-  getActiveTournamentDisciplinaryActions,
+  getTournamentDisciplinaryActions,
   deductTournamentPlayerPoints,
   reverseTournamentPlayerDeduction,
   getTournamentRuleAcceptance,
@@ -7095,10 +7095,20 @@ async function getTournamentDisciplinaryActionsRoute(
   user
 ) {
   try {
+    if (!user?.id) {
+      return Response.json({
+        success: false,
+        message: "Authentication required."
+      }, {
+        status: 401
+      });
+    }
+
     const tournament = await getTournament(
       env.DB,
       tournamentId
     );
+
     if (!tournament) {
       return Response.json({
         success: false,
@@ -7107,22 +7117,13 @@ async function getTournamentDisciplinaryActionsRoute(
         status: 404
       });
     }
-    if (
-      tournament.admin_uid !== user.id &&
-      user.role !== "admin"
-    ) {
-      return Response.json({
-        success: false,
-        message: "Only an administrator can view disciplinary actions."
-      }, {
-        status: 403
-      });
-    }
+
     const actions =
-      await getActiveTournamentDisciplinaryActions(
+      await getTournamentDisciplinaryActions(
         env.DB,
         tournamentId
       );
+
     return Response.json({
       success: true,
       actions
@@ -7132,7 +7133,7 @@ async function getTournamentDisciplinaryActionsRoute(
       success: false,
       message:
         error.message ||
-        "Failed to load disciplinary actions."
+        "Failed to load disciplinary history."
     }, {
       status: 500
     });

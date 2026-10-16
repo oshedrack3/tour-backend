@@ -3428,7 +3428,7 @@ export async function reverseTournamentPlayerDeduction(
 }
 
 
-export async function getActiveTournamentDisciplinaryActions(
+export async function getTournamentDisciplinaryActions(
   db,
   tournamentId
 ) {
@@ -3443,13 +3443,18 @@ export async function getActiveTournamentDisciplinaryActions(
       da.status,
       da.issued_by,
       da.issued_at,
+      da.reversed_by,
+      da.reversed_at,
+      da.reversal_reason,
       tp.points AS current_points,
       tp.has_point_deduction,
       t.name AS team_name,
       t.logo AS team_logo,
-      u.username
+      u.username,
+      issuer.username AS issued_by_username,
+      reverser.username AS reversed_by_username
     FROM disciplinary_actions da
-    INNER JOIN tournament_players tp
+    LEFT JOIN tournament_players tp
       ON tp.tournament_id = da.tournament_id
       AND tp.user_id = da.user_id
       AND tp.team_id = da.team_id
@@ -3457,8 +3462,11 @@ export async function getActiveTournamentDisciplinaryActions(
       ON t.id = da.team_id
     LEFT JOIN users u
       ON u.id = da.user_id
+    LEFT JOIN users issuer
+      ON issuer.id = da.issued_by
+    LEFT JOIN users reverser
+      ON reverser.id = da.reversed_by
     WHERE da.tournament_id = ?
-      AND da.status = 'active'
     ORDER BY da.issued_at DESC
   `).bind(
     tournamentId
@@ -3466,5 +3474,3 @@ export async function getActiveTournamentDisciplinaryActions(
   
   return result.results || [];
 }
-
-
