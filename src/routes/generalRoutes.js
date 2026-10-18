@@ -251,15 +251,15 @@ export async function handleGeneralRequest(
   }
   
   if (
-  request.method === "POST" &&
-  pathname === "/admin/ratings/recalculate-history"
-) {
-  return await recalculateHistoricalRatingsRoute(
-    request,
-    env,
-    user
-  );
-}
+    request.method === "POST" &&
+    pathname === "/admin/ratings/recalculate-history"
+  ) {
+    return await recalculateHistoricalRatingsRoute(
+      request,
+      env,
+      user
+    );
+  }
   return null;
 }
 
@@ -1329,8 +1329,10 @@ async function getGlobalRankingsRoute(
   try {
     const url =
       new URL(request.url);
+    
     const limitParam =
       url.searchParams.get("limit");
+    
     const limit =
       Math.min(
         Math.max(
@@ -1339,6 +1341,7 @@ async function getGlobalRankingsRoute(
         ),
         100
       );
+    
     const result =
       await env.DB
       .prepare(`
@@ -1353,7 +1356,9 @@ async function getGlobalRankingsRoute(
             ga
           FROM tournament_players
           WHERE status = 'accepted'
+
           UNION ALL
+
           SELECT
             user_id,
             played,
@@ -1380,6 +1385,8 @@ async function getGlobalRankingsRoute(
           u.id,
           u.username,
           u.rating,
+          COALESCE(u.trophies_won, 0)
+            AS trophies_won,
           COALESCE(c.played, 0)
             AS played,
           COALESCE(c.wins, 0)
@@ -1417,6 +1424,7 @@ async function getGlobalRankingsRoute(
       `)
       .bind(limit)
       .all();
+    
     return Response.json({
       success: true,
       rankings: result.results || []
@@ -1426,6 +1434,7 @@ async function getGlobalRankingsRoute(
       "Global rankings error:",
       error
     );
+    
     return Response.json({
       success: false,
       message: error.message ||
@@ -1847,8 +1856,7 @@ async function reviewSquadChangeRoute(
     return Response.json({
       success: true,
       message: decision === "approve" ?
-        "Squad change approved successfully." :
-        "Squad change request rejected successfully."
+        "Squad change approved successfully." : "Squad change request rejected successfully."
     });
   } catch (error) {
     return Response.json({
@@ -1907,7 +1915,7 @@ async function recalculateHistoricalRatingsRoute(
       status: 405
     });
   }
-
+  
   if (user?.role !== "admin") {
     return Response.json({
       success: false,
@@ -1916,10 +1924,10 @@ async function recalculateHistoricalRatingsRoute(
       status: 403
     });
   }
-
+  
   const runId = "historical_elo_v1";
   let step = "check_existing_run";
-
+  
   try {
     const existingRun = await env.DB
       .prepare(`
@@ -1929,40 +1937,39 @@ async function recalculateHistoricalRatingsRoute(
       `)
       .bind(runId)
       .first();
-
+    
     if (existingRun) {
       return Response.json({
         success: false,
-        message:
-          "This recalculation has already been started. Do not run it again without checking the database.",
+        message: "This recalculation has already been started. Do not run it again without checking the database.",
         status: existingRun.status
       }, {
         status: 409
       });
     }
-
+    
     step = "load_users";
-
+    
     const usersResult = await env.DB
       .prepare(`
         SELECT id, is_test_account
         FROM users
       `)
       .all();
-
+    
     const ratings = new Map();
     const testAccounts = new Set();
-
+    
     for (const player of usersResult.results || []) {
       ratings.set(player.id, 1500);
-
+      
       if (Number(player.is_test_account) === 1) {
         testAccounts.add(player.id);
       }
     }
-
+    
     step = "load_completed_matches";
-
+    
     const matchesResult = await env.DB
       .prepare(`
         SELECT
@@ -2008,19 +2015,19 @@ async function recalculateHistoricalRatingsRoute(
           m.id ASC
       `)
       .all();
-
+    
     const matches = matchesResult.results || [];
     const matchChanges = [];
-
+    
     let matchesProcessed = 0;
     let matchesSkipped = 0;
-
+    
     step = "calculate_ratings";
-
+    
     for (const match of matches) {
       const homeId = match.home_user_id;
       const awayId = match.away_user_id;
-
+      
       const valid =
         homeId &&
         awayId &&
@@ -2037,50 +2044,50 @@ async function recalculateHistoricalRatingsRoute(
         Number.isFinite(Number(match.away_score)) &&
         Number(match.home_score) >= 0 &&
         Number(match.away_score) >= 0;
-
+      
       if (!valid) {
         matchesSkipped++;
-
+        
         matchChanges.push({
           id: match.id,
           homeChange: 0,
           awayChange: 0
         });
-
+        
         continue;
       }
-
+      
       const homeRating = ratings.get(homeId);
       const awayRating = ratings.get(awayId);
-
+      
       const elo = calculateElo(
         homeRating,
         awayRating,
         Number(match.home_score),
         Number(match.away_score)
       );
-
+      
       ratings.set(
         homeId,
         homeRating + elo.homeChange
       );
-
+      
       ratings.set(
         awayId,
         awayRating + elo.awayChange
       );
-
+      
       matchChanges.push({
         id: match.id,
         homeChange: elo.homeChange,
         awayChange: elo.awayChange
       });
-
+      
       matchesProcessed++;
     }
-
+    
     step = "register_recalculation";
-
+    
     const insertRun = await env.DB
       .prepare(`
         INSERT OR IGNORE INTO rating_recalculation_runs (
@@ -2092,40 +2099,39 @@ async function recalculateHistoricalRatingsRoute(
       `)
       .bind(runId, Date.now())
       .run();
-
+    
     if (
       !insertRun.meta ||
       insertRun.meta.changes !== 1
     ) {
       return Response.json({
         success: false,
-        message:
-          "Another recalculation has already started. Check its status."
+        message: "Another recalculation has already started. Check its status."
       }, {
         status: 409
       });
     }
-
+    
     step = "prepare_database_updates";
-
+    
     const statements = [];
-
+    
     for (const [userId, rating] of ratings) {
       statements.push(
         env.DB
-          .prepare(`
+        .prepare(`
             UPDATE users
             SET rating = ?
             WHERE id = ?
           `)
-          .bind(rating, userId)
+        .bind(rating, userId)
       );
     }
-
+    
     for (const match of matchChanges) {
       statements.push(
         env.DB
-          .prepare(`
+        .prepare(`
             UPDATE matches
             SET
               home_rating_change = ?,
@@ -2133,28 +2139,26 @@ async function recalculateHistoricalRatingsRoute(
             WHERE id = ?
               AND played = 1
           `)
-          .bind(
-            match.homeChange,
-            match.awayChange,
-            match.id
-          )
+        .bind(
+          match.homeChange,
+          match.awayChange,
+          match.id
+        )
       );
     }
-
+    
     step = "write_database_batches";
-
+    
     for (
-      let i = 0;
-      i < statements.length;
-      i += 50
+      let i = 0; i < statements.length; i += 50
     ) {
       await env.DB.batch(
         statements.slice(i, i + 50)
       );
     }
-
+    
     step = "mark_completed";
-
+    
     await env.DB
       .prepare(`
         UPDATE rating_recalculation_runs
@@ -2175,25 +2179,24 @@ async function recalculateHistoricalRatingsRoute(
         runId
       )
       .run();
-
+    
     return Response.json({
       success: true,
-      message:
-        "Historical rating recalculation completed.",
+      message: "Historical rating recalculation completed.",
       initialRating: 1500,
       kFactor: 32,
       usersUpdated: ratings.size,
       matchesProcessed,
       matchesSkipped
     });
-
+    
   } catch (error) {
     console.error(
       "Historical rating recalculation error:",
       step,
       error
     );
-
+    
     try {
       await env.DB
         .prepare(`
@@ -2205,7 +2208,7 @@ async function recalculateHistoricalRatingsRoute(
         .bind(runId)
         .run();
     } catch (ignored) {}
-
+    
     return Response.json({
       success: false,
       step: step,

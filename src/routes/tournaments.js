@@ -7334,15 +7334,18 @@ async function awardTournamentTrophyBonuses(
     FROM tournaments
     WHERE id = ?
   `).bind(tournamentId).first();
+
   if (!tournament) {
     throw new Error("Tournament not found.");
   }
+
   if (tournament.season_status !== "completed") {
     return {
       success: false,
       message: "Tournament is not completed."
     };
   }
+
   const competitionRules = {
     "724ec974-f388-47f3-b288-7cdd6bdbd715": {
       format: "league",
@@ -7371,40 +7374,47 @@ async function awardTournamentTrophyBonuses(
       }
     }
   };
-  const rules =
-    competitionRules[tournament.competition_id];
+
+  const rules = competitionRules[tournament.competition_id];
+
   if (!rules) {
     return {
       success: false,
       message: "No trophy bonus rules configured for this competition."
     };
   }
-  const tournamentFormat =
-    String(tournament.format || "").toLowerCase();
+
+  const tournamentFormat = String(
+    tournament.format || ""
+  ).toLowerCase();
+
   if (tournamentFormat !== rules.format) {
     return {
       success: false,
       message: "Tournament format does not match its competition rules."
     };
   }
+
   let settings = {};
+
   try {
     settings =
-      typeof tournament.settings === "string" ?
-      JSON.parse(tournament.settings || "{}") :
-      tournament.settings || {};
+      typeof tournament.settings === "string"
+        ? JSON.parse(tournament.settings || "{}")
+        : tournament.settings || {};
   } catch {
     settings = {};
   }
+
   let placements = [];
+
   if (tournamentFormat === "league") {
-    const table = await rebuildTable(
-      db,
-      tournamentId
-    );
+    const table = await rebuildTable(db, tournamentId);
+
     if (!table.length) {
       throw new Error("No league standings found.");
     }
+
     placements = table
       .slice(0, 3)
       .map((team, index) => ({
@@ -7413,18 +7423,19 @@ async function awardTournamentTrophyBonuses(
         bonus: rules.bonuses[index + 1]
       }));
   } else {
-    const knockoutSize =
-      Number(settings.knockoutSize);
+    const knockoutSize = Number(settings.knockoutSize);
+
     if (
       !Number.isInteger(knockoutSize) ||
       ![2, 4, 8, 16, 32].includes(knockoutSize)
     ) {
       throw new Error("Invalid knockout bracket size.");
     }
-    const finalRoundIndex =
-      Math.log2(knockoutSize);
+
+    const finalRoundIndex = Math.log2(knockoutSize);
     const isDoubleLeg =
       settings.knockoutRoundMode === "double";
+
     const result = await db.prepare(`
       SELECT
         id,
@@ -7441,14 +7452,19 @@ async function awardTournamentTrophyBonuses(
         AND match_type = 'knockout'
       ORDER BY round_index, slot, leg
     `).bind(tournamentId).all();
+
     const matches = result.results || [];
+
     if (!matches.length) {
       throw new Error("No knockout matches found.");
     }
+
     const ties = new Map();
+
     for (const match of matches) {
       const roundIndex = Number(match.round_index);
       const slot = Number(match.slot);
+
       if (
         !Number.isInteger(roundIndex) ||
         !Number.isInteger(slot) ||
@@ -7457,59 +7473,82 @@ async function awardTournamentTrophyBonuses(
       ) {
         continue;
       }
+
       const key = `${roundIndex}:${slot}`;
+
       if (!ties.has(key)) {
         ties.set(key, []);
       }
+
       ties.get(key).push(match);
     }
+
     const completedTies = new Map();
+
     for (
-      let roundIndex = 1; roundIndex <= finalRoundIndex; roundIndex++
+      let roundIndex = 1;
+      roundIndex <= finalRoundIndex;
+      roundIndex++
     ) {
       const expectedSlots =
         knockoutSize / Math.pow(2, roundIndex);
+
       const expectedLegs =
-        isDoubleLeg && roundIndex < finalRoundIndex ?
-        2 :
-        1;
+        isDoubleLeg && roundIndex < finalRoundIndex
+          ? 2
+          : 1;
+
       for (
-        let slot = 0; slot < expectedSlots; slot++
+        let slot = 0;
+        slot < expectedSlots;
+        slot++
       ) {
         const key = `${roundIndex}:${slot}`;
         const tieMatches = ties.get(key) || [];
+
         if (!tieMatches.length) {
           throw new Error(
             `Knockout match is missing for round ${roundIndex}, slot ${slot}.`
           );
         }
+
         const legs = [];
+
         for (
-          let legNumber = 1; legNumber <= expectedLegs; legNumber++
+          let legNumber = 1;
+          legNumber <= expectedLegs;
+          legNumber++
         ) {
           const legMatch = tieMatches.find(
             item => Number(item.leg || 1) === legNumber
           );
+
           if (!legMatch) {
             throw new Error(
               `Knockout leg ${legNumber} is missing for round ${roundIndex}, slot ${slot}.`
             );
           }
+
           if (Number(legMatch.played) !== 1) {
             throw new Error(
               "Cannot award trophy bonuses while knockout matches remain unfinished."
             );
           }
+
           const homeScore = Number(legMatch.home_score);
           const awayScore = Number(legMatch.away_score);
+
           if (
             !Number.isInteger(homeScore) ||
             !Number.isInteger(awayScore) ||
             homeScore < 0 ||
             awayScore < 0
           ) {
-            throw new Error("A knockout match has an invalid score.");
+            throw new Error(
+              "A knockout match has an invalid score."
+            );
           }
+
           if (
             !legMatch.home_team_id ||
             !legMatch.away_team_id ||
@@ -7519,21 +7558,26 @@ async function awardTournamentTrophyBonuses(
               "A knockout match does not have two valid teams."
             );
           }
+
           legs.push({
             ...legMatch,
             home_score: homeScore,
             away_score: awayScore
           });
         }
+
         const teamA = legs[0].home_team_id;
         const teamB = legs[0].away_team_id;
+
         let teamAScore = 0;
         let teamBScore = 0;
+
         for (const legMatch of legs) {
           const validTeams = [
             legMatch.home_team_id,
             legMatch.away_team_id
           ];
+
           if (
             !validTeams.includes(teamA) ||
             !validTeams.includes(teamB) ||
@@ -7543,6 +7587,7 @@ async function awardTournamentTrophyBonuses(
               "The legs of a knockout tie do not contain the same teams."
             );
           }
+
           if (legMatch.home_team_id === teamA) {
             teamAScore += legMatch.home_score;
             teamBScore += legMatch.away_score;
@@ -7551,19 +7596,19 @@ async function awardTournamentTrophyBonuses(
             teamBScore += legMatch.home_score;
           }
         }
+
         if (teamAScore === teamBScore) {
           throw new Error(
             `The aggregate score is tied in round ${roundIndex}, slot ${slot}. A winner must be resolved before awarding bonuses.`
           );
         }
+
         const winnerId =
-          teamAScore > teamBScore ?
-          teamA :
-          teamB;
+          teamAScore > teamBScore ? teamA : teamB;
+
         const loserId =
-          winnerId === teamA ?
-          teamB :
-          teamA;
+          winnerId === teamA ? teamB : teamA;
+
         completedTies.set(key, {
           roundIndex,
           slot,
@@ -7572,35 +7617,50 @@ async function awardTournamentTrophyBonuses(
         });
       }
     }
-    const finalTie =
-      completedTies.get(`${finalRoundIndex}:0`);
+
+    const finalTie = completedTies.get(
+      `${finalRoundIndex}:0`
+    );
+
     if (!finalTie) {
-      throw new Error("Could not determine the tournament final.");
+      throw new Error(
+        "Could not determine the tournament final."
+      );
     }
+
     placements.push({
       team_id: finalTie.winnerId,
       position: 1,
       bonus: rules.bonuses[1]
     });
+
     placements.push({
       team_id: finalTie.loserId,
       position: 2,
       bonus: rules.bonuses[2]
     });
-    const semifinalRoundIndex =
-      finalRoundIndex - 1;
+
+    const semifinalRoundIndex = finalRoundIndex - 1;
+
     if (semifinalRoundIndex >= 1) {
       const semifinalSlots =
         knockoutSize / Math.pow(2, semifinalRoundIndex);
+
       for (
-        let slot = 0; slot < semifinalSlots; slot++
+        let slot = 0;
+        slot < semifinalSlots;
+        slot++
       ) {
         const tie = completedTies.get(
           `${semifinalRoundIndex}:${slot}`
         );
+
         if (!tie) {
-          throw new Error("Could not determine all semi-finalists.");
+          throw new Error(
+            "Could not determine all semi-finalists."
+          );
         }
+
         placements.push({
           team_id: tie.loserId,
           position: 3,
@@ -7608,20 +7668,28 @@ async function awardTournamentTrophyBonuses(
         });
       }
     }
-    const quarterFinalRoundIndex =
-      finalRoundIndex - 2;
+
+    const quarterFinalRoundIndex = finalRoundIndex - 2;
+
     if (quarterFinalRoundIndex >= 1) {
       const quarterFinalSlots =
         knockoutSize / Math.pow(2, quarterFinalRoundIndex);
+
       for (
-        let slot = 0; slot < quarterFinalSlots; slot++
+        let slot = 0;
+        slot < quarterFinalSlots;
+        slot++
       ) {
         const tie = completedTies.get(
           `${quarterFinalRoundIndex}:${slot}`
         );
+
         if (!tie) {
-          throw new Error("Could not determine all quarter-finalists.");
+          throw new Error(
+            "Could not determine all quarter-finalists."
+          );
         }
+
         placements.push({
           team_id: tie.loserId,
           position: 4,
@@ -7629,14 +7697,19 @@ async function awardTournamentTrophyBonuses(
         });
       }
     }
+
     const champion = await db.prepare(`
       SELECT id, name
       FROM teams
       WHERE id = ?
     `).bind(finalTie.winnerId).first();
+
     if (!champion) {
-      throw new Error("Tournament champion team was not found.");
+      throw new Error(
+        "Tournament champion team was not found."
+      );
     }
+
     await db.prepare(`
       UPDATE tournaments
       SET
@@ -7651,6 +7724,7 @@ async function awardTournamentTrophyBonuses(
       tournamentId
     ).run();
   }
+
   const statements = placements.map(placement =>
     db.prepare(`
       INSERT INTO tournament_trophy_awards (
@@ -7683,9 +7757,45 @@ async function awardTournamentTrophyBonuses(
       placement.team_id
     )
   );
+
   if (statements.length) {
     await db.batch(statements);
   }
+
+  const championshipResult = await db.prepare(`
+    INSERT INTO tournament_championship_trophies (
+      tournament_id,
+      awarded_at
+    )
+    SELECT ?, ?
+    WHERE EXISTS (
+      SELECT 1
+      FROM tournament_trophy_awards
+      WHERE tournament_id = ?
+        AND position = 1
+    )
+    ON CONFLICT (tournament_id) DO NOTHING
+  `).bind(
+    tournamentId,
+    Date.now(),
+    tournamentId
+  ).run();
+
+  if (championshipResult.meta?.changes === 1) {
+    await db.prepare(`
+      UPDATE users
+      SET trophies_won = COALESCE(trophies_won, 0) + 1
+      WHERE id = (
+        SELECT user_id
+        FROM tournament_trophy_awards
+        WHERE tournament_id = ?
+          AND position = 1
+        ORDER BY awarded_at ASC
+        LIMIT 1
+      )
+    `).bind(tournamentId).run();
+  }
+
   return {
     success: true,
     message: "Tournament trophy bonuses processed.",
