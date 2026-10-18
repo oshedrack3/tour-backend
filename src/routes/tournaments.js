@@ -466,17 +466,17 @@ export async function handleTournamentRequest(
   }
   
   if (
-  request.method === "GET" &&
-  /^\/tournaments\/[^/]+\/disciplinary-actions$/.test(pathname)
-) {
-  const tournamentId =
-    pathname.split("/")[2];
-  return await getTournamentDisciplinaryActionsRoute(
-    env,
-    tournamentId,
-    user
-  );
-}
+    request.method === "GET" &&
+    /^\/tournaments\/[^/]+\/disciplinary-actions$/.test(pathname)
+  ) {
+    const tournamentId =
+      pathname.split("/")[2];
+    return await getTournamentDisciplinaryActionsRoute(
+      env,
+      tournamentId,
+      user
+    );
+  }
   
   if (
     request.method === "GET" &&
@@ -6326,14 +6326,12 @@ async function updateTournamentRoute(
 ) {
   try {
     const body = await request.json();
-    
     const existing =
       await getTournamentForUser(
         env.DB,
         tournamentId,
         user.id
       );
-    
     if (!existing) {
       return Response.json({
         success: false,
@@ -6342,14 +6340,11 @@ async function updateTournamentRoute(
         status: 404
       });
     }
-    
     const updates = {};
     let completingTournament = false;
-    
     if (body.name !== undefined) {
       const name =
         String(body.name || "").trim();
-      
       if (!name) {
         return Response.json({
           success: false,
@@ -6358,10 +6353,8 @@ async function updateTournamentRoute(
           status: 400
         });
       }
-      
       updates.name = name;
     }
-    
     if (
       body.competition_id !== undefined ||
       body.competitionId !== undefined
@@ -6372,7 +6365,6 @@ async function updateTournamentRoute(
           body.competitionId ??
           ""
         ).trim();
-      
       if (!competition_id) {
         return Response.json({
           success: false,
@@ -6381,17 +6373,12 @@ async function updateTournamentRoute(
           status: 400
         });
       }
-      
       const competition =
-        await env.DB
-        .prepare(`
+        await env.DB.prepare(`
           SELECT id, owner_id
           FROM competitions
           WHERE id = ?
-        `)
-        .bind(competition_id)
-        .first();
-      
+        `).bind(competition_id).first();
       if (!competition) {
         return Response.json({
           success: false,
@@ -6400,7 +6387,6 @@ async function updateTournamentRoute(
           status: 404
         });
       }
-      
       if (competition.owner_id !== user.id) {
         return Response.json({
           success: false,
@@ -6409,15 +6395,11 @@ async function updateTournamentRoute(
           status: 403
         });
       }
-      
-      updates.competition_id =
-        competition_id;
+      updates.competition_id = competition_id;
     }
-    
     if (body.season !== undefined) {
       const season =
         String(body.season || "").trim();
-      
       if (!season) {
         return Response.json({
           success: false,
@@ -6426,14 +6408,11 @@ async function updateTournamentRoute(
           status: 400
         });
       }
-      
       updates.season = season;
     }
-    
     if (body.format !== undefined) {
       const format =
         String(body.format || "").trim();
-      
       if (!format) {
         return Response.json({
           success: false,
@@ -6442,10 +6421,8 @@ async function updateTournamentRoute(
           status: 400
         });
       }
-      
       updates.format = format;
     }
-    
     if (
       body.season_status !== undefined ||
       body.seasonStatus !== undefined ||
@@ -6458,24 +6435,24 @@ async function updateTournamentRoute(
           body.status ??
           ""
         ).trim();
-      
-      updates.season_status =
-        seasonStatus;
-      
       const existingStatus =
         existing.season_status ??
         existing.seasonStatus ??
         "";
-      
       if (
         seasonStatus === "completed" &&
         existingStatus !== "completed"
       ) {
         completingTournament = true;
+      }
+      updates.season_status = seasonStatus;
+      if (
+        seasonStatus === "completed" &&
+        existingStatus !== "completed"
+      ) {
         updates.completed_at = Date.now();
       }
     }
-    
     if (
       body.start_date !== undefined ||
       body.startDate !== undefined
@@ -6484,7 +6461,6 @@ async function updateTournamentRoute(
         body.start_date ??
         body.startDate;
     }
-    
     if (
       body.end_date !== undefined ||
       body.endDate !== undefined
@@ -6493,7 +6469,6 @@ async function updateTournamentRoute(
         body.end_date ??
         body.endDate;
     }
-    
     if (
       body.match_days !== undefined ||
       body.matchDays !== undefined
@@ -6501,20 +6476,17 @@ async function updateTournamentRoute(
       const match_days =
         body.match_days ??
         body.matchDays;
-      
       updates.match_days =
-        typeof match_days === "string" ?
-        match_days :
-        JSON.stringify(match_days);
+        typeof match_days === "string"
+          ? match_days
+          : JSON.stringify(match_days);
     }
-    
     if (body.settings !== undefined) {
       updates.settings =
-        typeof body.settings === "string" ?
-        body.settings :
-        JSON.stringify(body.settings);
+        typeof body.settings === "string"
+          ? body.settings
+          : JSON.stringify(body.settings);
     }
-    
     if (
       body.access_type !== undefined ||
       body.accessType !== undefined
@@ -6523,7 +6495,6 @@ async function updateTournamentRoute(
         body.access_type ??
         body.accessType;
     }
-    
     if (
       body.is_public !== undefined ||
       body.isPublic !== undefined
@@ -6531,20 +6502,16 @@ async function updateTournamentRoute(
       const is_public =
         body.is_public ??
         body.isPublic;
-      
-      updates.is_public =
-        is_public ? 1 : 0;
+      updates.is_public = is_public ? 1 : 0;
     }
-    
     const tournamentImage =
-      body.tournament_image !== undefined ?
-      body.tournament_image :
-      body.tournamentImage !== undefined ?
-      body.tournamentImage :
-      body.image !== undefined ?
-      body.image :
-      undefined;
-    
+      body.tournament_image !== undefined
+        ? body.tournament_image
+        : body.tournamentImage !== undefined
+          ? body.tournamentImage
+          : body.image !== undefined
+            ? body.image
+            : undefined;
     if (tournamentImage !== undefined) {
       if (
         tournamentImage === null ||
@@ -6564,7 +6531,6 @@ async function updateTournamentRoute(
             status: 400
           });
         }
-        
         const tournamentImageData =
           await uploadBase64Image(
             tournamentImage,
@@ -6572,47 +6538,239 @@ async function updateTournamentRoute(
             tournamentId,
             env
           );
-        
         updates.tournament_image =
           tournamentImageData.url;
-        
         updates.tournament_image_public_id =
           tournamentImageData.publicId;
       }
     }
-    
+    const format =
+      String(
+        updates.format ??
+        existing.format ??
+        ""
+      ).toLowerCase();
+    const competitionId =
+      updates.competition_id ??
+      existing.competition_id;
     if (completingTournament) {
-      const table =
-        await rebuildTable(
-          env.DB,
-          tournamentId
-        );
-      
-      if (!table.length) {
+      if (format === "league") {
+        const table =
+          await rebuildTable(
+            env.DB,
+            tournamentId
+          );
+        if (!table.length) {
+          return Response.json({
+            success: false,
+            message: "Cannot complete tournament without teams."
+          }, {
+            status: 400
+          });
+        }
+        updates.champion = table[0].id;
+        updates.champion_name = table[0].name;
+      } else if (format === "cup") {
+        const tournamentData =
+          await env.DB.prepare(`
+            SELECT settings
+            FROM tournaments
+            WHERE id = ?
+          `).bind(tournamentId).first();
+        let settings = {};
+        try {
+          settings =
+            typeof tournamentData?.settings === "string"
+              ? JSON.parse(tournamentData.settings || "{}")
+              : tournamentData?.settings || {};
+        } catch {
+          settings = {};
+        }
+        const knockoutSize =
+          Number(settings.knockoutSize);
+        if (
+          !Number.isInteger(knockoutSize) ||
+          ![2, 4, 8, 16, 32].includes(knockoutSize)
+        ) {
+          return Response.json({
+            success: false,
+            message: "Invalid knockout bracket size."
+          }, {
+            status: 400
+          });
+        }
+        const finalRoundIndex =
+          Math.log2(knockoutSize);
+        const finalResult =
+          await env.DB.prepare(`
+            SELECT
+              winner_team_id
+            FROM matches
+            WHERE tournament_id = ?
+              AND match_type = 'knockout'
+              AND round_index = ?
+              AND slot = 0
+              AND leg = 1
+              AND played = 1
+              AND winner_team_id IS NOT NULL
+            LIMIT 1
+          `).bind(
+            tournamentId,
+            finalRoundIndex
+          ).first();
+        if (!finalResult) {
+          return Response.json({
+            success: false,
+            message: "Cannot complete cup without a resolved final."
+          }, {
+            status: 400
+          });
+        }
+        const knockoutResult =
+          await env.DB.prepare(`
+            SELECT
+              round_index,
+              slot,
+              leg,
+              home_team_id,
+              away_team_id,
+              home_score,
+              away_score,
+              played
+            FROM matches
+            WHERE tournament_id = ?
+              AND match_type = 'knockout'
+            ORDER BY round_index, slot, leg
+          `).bind(tournamentId).all();
+        const matches =
+          knockoutResult.results || [];
+        const isDoubleLeg =
+          settings.knockoutRoundMode === "double";
+        const ties = new Map();
+        for (const match of matches) {
+          const key =
+            `${match.round_index}:${match.slot}`;
+          if (!ties.has(key)) {
+            ties.set(key, []);
+          }
+          ties.get(key).push(match);
+        }
+        for (
+          let roundIndex = 1;
+          roundIndex <= finalRoundIndex;
+          roundIndex++
+        ) {
+          const expectedSlots =
+            knockoutSize /
+            Math.pow(2, roundIndex);
+          const expectedLegs =
+            isDoubleLeg &&
+            roundIndex < finalRoundIndex
+              ? 2
+              : 1;
+          for (
+            let slot = 0;
+            slot < expectedSlots;
+            slot++
+          ) {
+            const tieMatches =
+              ties.get(`${roundIndex}:${slot}`) || [];
+            if (!tieMatches.length) {
+              return Response.json({
+                success: false,
+                message: "Cannot complete cup while knockout matches are missing."
+              }, {
+                status: 400
+              });
+            }
+            for (
+              let leg = 1;
+              leg <= expectedLegs;
+              leg++
+            ) {
+              const match =
+                tieMatches.find(
+                  item => Number(item.leg || 1) === leg
+                );
+              if (
+                !match ||
+                Number(match.played) !== 1 ||
+                !match.home_team_id ||
+                !match.away_team_id
+              ) {
+                return Response.json({
+                  success: false,
+                  message: "Cannot complete cup while knockout matches remain unfinished."
+                }, {
+                  status: 400
+                });
+              }
+              const homeScore =
+                Number(match.home_score);
+              const awayScore =
+                Number(match.away_score);
+              if (
+                !Number.isInteger(homeScore) ||
+                !Number.isInteger(awayScore) ||
+                homeScore < 0 ||
+                awayScore < 0
+              ) {
+                return Response.json({
+                  success: false,
+                  message: "A knockout match has an invalid score."
+                }, {
+                  status: 400
+                });
+              }
+            }
+          }
+        }
+        const champion =
+          await env.DB.prepare(`
+            SELECT id, name
+            FROM teams
+            WHERE id = ?
+          `).bind(
+            finalResult.winner_team_id
+          ).first();
+        if (!champion) {
+          return Response.json({
+            success: false,
+            message: "Cup champion team was not found."
+          }, {
+            status: 400
+          });
+        }
+        updates.champion = champion.id;
+        updates.champion_name = champion.name;
+      } else {
         return Response.json({
           success: false,
-          message: "Cannot complete tournament without teams."
+          message: "Unsupported tournament format."
         }, {
           status: 400
         });
       }
-      
-      const winner = table[0];
-      
-      updates.champion =
-        winner.id;
-      
-      updates.champion_name =
-        winner.name;
+      updates.completed_at = Date.now();
     }
-    
     if (!Object.keys(updates).length) {
+      let trophyAwards = null;
+      if (
+        (existing.season_status ??
+          existing.seasonStatus) === "completed"
+      ) {
+        trophyAwards =
+          await awardTournamentTrophyBonuses(
+            env.DB,
+            tournamentId
+          );
+      }
       return Response.json({
         success: true,
-        tournament: parseTournament(existing)
+        tournament: parseTournament(existing),
+        trophyAwards
       });
     }
-    
     const tournament =
       await updateTournament(
         env.DB,
@@ -6620,7 +6778,6 @@ async function updateTournamentRoute(
         updates,
         user.id
       );
-    
     if (!tournament) {
       return Response.json({
         success: false,
@@ -6629,18 +6786,40 @@ async function updateTournamentRoute(
         status: 500
       });
     }
-    
+    let trophyAwards = null;
+    const completedStatus =
+      updates.season_status ??
+      existing.season_status ??
+      existing.seasonStatus;
+    if (completedStatus === "completed") {
+      if (
+        competitionId ===
+        "724ec974-f388-47f3-b288-7cdd6bdbd715" &&
+        format !== "league"
+      ) {
+        return Response.json({
+          success: false,
+          message: "The GeSL league competition requires league format."
+        }, {
+          status: 400
+        });
+      }
+      trophyAwards =
+        await awardTournamentTrophyBonuses(
+          env.DB,
+          tournamentId
+        );
+    }
     return Response.json({
       success: true,
-      tournament: parseTournament(tournament)
+      tournament: parseTournament(tournament),
+      trophyAwards
     });
-    
   } catch (error) {
     console.error(
       "Update tournament error:",
       error
     );
-    
     return Response.json({
       success: false,
       message: error.message ||
@@ -7103,12 +7282,12 @@ async function getTournamentDisciplinaryActionsRoute(
         status: 401
       });
     }
-
+    
     const tournament = await getTournament(
       env.DB,
       tournamentId
     );
-
+    
     if (!tournament) {
       return Response.json({
         success: false,
@@ -7117,13 +7296,13 @@ async function getTournamentDisciplinaryActionsRoute(
         status: 404
       });
     }
-
+    
     const actions =
       await getTournamentDisciplinaryActions(
         env.DB,
         tournamentId
       );
-
+    
     return Response.json({
       success: true,
       actions
@@ -7131,11 +7310,385 @@ async function getTournamentDisciplinaryActionsRoute(
   } catch (error) {
     return Response.json({
       success: false,
-      message:
-        error.message ||
+      message: error.message ||
         "Failed to load disciplinary history."
     }, {
       status: 500
     });
   }
+}
+
+
+
+async function awardTournamentTrophyBonuses(
+  db,
+  tournamentId
+) {
+  const tournament = await db.prepare(`
+    SELECT
+      id,
+      competition_id,
+      format,
+      season_status,
+      settings
+    FROM tournaments
+    WHERE id = ?
+  `).bind(tournamentId).first();
+  if (!tournament) {
+    throw new Error("Tournament not found.");
+  }
+  if (tournament.season_status !== "completed") {
+    return {
+      success: false,
+      message: "Tournament is not completed."
+    };
+  }
+  const competitionRules = {
+    "724ec974-f388-47f3-b288-7cdd6bdbd715": {
+      format: "league",
+      bonuses: {
+        1: 60,
+        2: 35,
+        3: 25
+      }
+    },
+    "e79c881b-51bd-48ec-a747-8e4f72000853": {
+      format: "cup",
+      bonuses: {
+        1: 30,
+        2: 20,
+        3: 15,
+        4: 10
+      }
+    },
+    "9e8e6c43-1b8b-48fb-863a-16cc880fbbf2": {
+      format: "cup",
+      bonuses: {
+        1: 40,
+        2: 30,
+        3: 20,
+        4: 10
+      }
+    }
+  };
+  const rules =
+    competitionRules[tournament.competition_id];
+  if (!rules) {
+    return {
+      success: false,
+      message: "No trophy bonus rules configured for this competition."
+    };
+  }
+  const tournamentFormat =
+    String(tournament.format || "").toLowerCase();
+  if (tournamentFormat !== rules.format) {
+    return {
+      success: false,
+      message: "Tournament format does not match its competition rules."
+    };
+  }
+  let settings = {};
+  try {
+    settings =
+      typeof tournament.settings === "string" ?
+      JSON.parse(tournament.settings || "{}") :
+      tournament.settings || {};
+  } catch {
+    settings = {};
+  }
+  let placements = [];
+  if (tournamentFormat === "league") {
+    const table = await rebuildTable(
+      db,
+      tournamentId
+    );
+    if (!table.length) {
+      throw new Error("No league standings found.");
+    }
+    placements = table
+      .slice(0, 3)
+      .map((team, index) => ({
+        team_id: team.id,
+        position: index + 1,
+        bonus: rules.bonuses[index + 1]
+      }));
+  } else {
+    const knockoutSize =
+      Number(settings.knockoutSize);
+    if (
+      !Number.isInteger(knockoutSize) ||
+      ![2, 4, 8, 16, 32].includes(knockoutSize)
+    ) {
+      throw new Error("Invalid knockout bracket size.");
+    }
+    const finalRoundIndex =
+      Math.log2(knockoutSize);
+    const isDoubleLeg =
+      settings.knockoutRoundMode === "double";
+    const result = await db.prepare(`
+      SELECT
+        id,
+        round_index,
+        slot,
+        leg,
+        home_team_id,
+        away_team_id,
+        home_score,
+        away_score,
+        played
+      FROM matches
+      WHERE tournament_id = ?
+        AND match_type = 'knockout'
+      ORDER BY round_index, slot, leg
+    `).bind(tournamentId).all();
+    const matches = result.results || [];
+    if (!matches.length) {
+      throw new Error("No knockout matches found.");
+    }
+    const ties = new Map();
+    for (const match of matches) {
+      const roundIndex = Number(match.round_index);
+      const slot = Number(match.slot);
+      if (
+        !Number.isInteger(roundIndex) ||
+        !Number.isInteger(slot) ||
+        roundIndex < 1 ||
+        roundIndex > finalRoundIndex
+      ) {
+        continue;
+      }
+      const key = `${roundIndex}:${slot}`;
+      if (!ties.has(key)) {
+        ties.set(key, []);
+      }
+      ties.get(key).push(match);
+    }
+    const completedTies = new Map();
+    for (
+      let roundIndex = 1; roundIndex <= finalRoundIndex; roundIndex++
+    ) {
+      const expectedSlots =
+        knockoutSize / Math.pow(2, roundIndex);
+      const expectedLegs =
+        isDoubleLeg && roundIndex < finalRoundIndex ?
+        2 :
+        1;
+      for (
+        let slot = 0; slot < expectedSlots; slot++
+      ) {
+        const key = `${roundIndex}:${slot}`;
+        const tieMatches = ties.get(key) || [];
+        if (!tieMatches.length) {
+          throw new Error(
+            `Knockout match is missing for round ${roundIndex}, slot ${slot}.`
+          );
+        }
+        const legs = [];
+        for (
+          let legNumber = 1; legNumber <= expectedLegs; legNumber++
+        ) {
+          const legMatch = tieMatches.find(
+            item => Number(item.leg || 1) === legNumber
+          );
+          if (!legMatch) {
+            throw new Error(
+              `Knockout leg ${legNumber} is missing for round ${roundIndex}, slot ${slot}.`
+            );
+          }
+          if (Number(legMatch.played) !== 1) {
+            throw new Error(
+              "Cannot award trophy bonuses while knockout matches remain unfinished."
+            );
+          }
+          const homeScore = Number(legMatch.home_score);
+          const awayScore = Number(legMatch.away_score);
+          if (
+            !Number.isInteger(homeScore) ||
+            !Number.isInteger(awayScore) ||
+            homeScore < 0 ||
+            awayScore < 0
+          ) {
+            throw new Error("A knockout match has an invalid score.");
+          }
+          if (
+            !legMatch.home_team_id ||
+            !legMatch.away_team_id ||
+            legMatch.home_team_id === legMatch.away_team_id
+          ) {
+            throw new Error(
+              "A knockout match does not have two valid teams."
+            );
+          }
+          legs.push({
+            ...legMatch,
+            home_score: homeScore,
+            away_score: awayScore
+          });
+        }
+        const teamA = legs[0].home_team_id;
+        const teamB = legs[0].away_team_id;
+        let teamAScore = 0;
+        let teamBScore = 0;
+        for (const legMatch of legs) {
+          const validTeams = [
+            legMatch.home_team_id,
+            legMatch.away_team_id
+          ];
+          if (
+            !validTeams.includes(teamA) ||
+            !validTeams.includes(teamB) ||
+            new Set(validTeams).size !== 2
+          ) {
+            throw new Error(
+              "The legs of a knockout tie do not contain the same teams."
+            );
+          }
+          if (legMatch.home_team_id === teamA) {
+            teamAScore += legMatch.home_score;
+            teamBScore += legMatch.away_score;
+          } else {
+            teamAScore += legMatch.away_score;
+            teamBScore += legMatch.home_score;
+          }
+        }
+        if (teamAScore === teamBScore) {
+          throw new Error(
+            `The aggregate score is tied in round ${roundIndex}, slot ${slot}. A winner must be resolved before awarding bonuses.`
+          );
+        }
+        const winnerId =
+          teamAScore > teamBScore ?
+          teamA :
+          teamB;
+        const loserId =
+          winnerId === teamA ?
+          teamB :
+          teamA;
+        completedTies.set(key, {
+          roundIndex,
+          slot,
+          winnerId,
+          loserId
+        });
+      }
+    }
+    const finalTie =
+      completedTies.get(`${finalRoundIndex}:0`);
+    if (!finalTie) {
+      throw new Error("Could not determine the tournament final.");
+    }
+    placements.push({
+      team_id: finalTie.winnerId,
+      position: 1,
+      bonus: rules.bonuses[1]
+    });
+    placements.push({
+      team_id: finalTie.loserId,
+      position: 2,
+      bonus: rules.bonuses[2]
+    });
+    const semifinalRoundIndex =
+      finalRoundIndex - 1;
+    if (semifinalRoundIndex >= 1) {
+      const semifinalSlots =
+        knockoutSize / Math.pow(2, semifinalRoundIndex);
+      for (
+        let slot = 0; slot < semifinalSlots; slot++
+      ) {
+        const tie = completedTies.get(
+          `${semifinalRoundIndex}:${slot}`
+        );
+        if (!tie) {
+          throw new Error("Could not determine all semi-finalists.");
+        }
+        placements.push({
+          team_id: tie.loserId,
+          position: 3,
+          bonus: rules.bonuses[3]
+        });
+      }
+    }
+    const quarterFinalRoundIndex =
+      finalRoundIndex - 2;
+    if (quarterFinalRoundIndex >= 1) {
+      const quarterFinalSlots =
+        knockoutSize / Math.pow(2, quarterFinalRoundIndex);
+      for (
+        let slot = 0; slot < quarterFinalSlots; slot++
+      ) {
+        const tie = completedTies.get(
+          `${quarterFinalRoundIndex}:${slot}`
+        );
+        if (!tie) {
+          throw new Error("Could not determine all quarter-finalists.");
+        }
+        placements.push({
+          team_id: tie.loserId,
+          position: 4,
+          bonus: rules.bonuses[4]
+        });
+      }
+    }
+    const champion = await db.prepare(`
+      SELECT id, name
+      FROM teams
+      WHERE id = ?
+    `).bind(finalTie.winnerId).first();
+    if (!champion) {
+      throw new Error("Tournament champion team was not found.");
+    }
+    await db.prepare(`
+      UPDATE tournaments
+      SET
+        champion = ?,
+        champion_name = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).bind(
+      champion.id,
+      champion.name,
+      Date.now(),
+      tournamentId
+    ).run();
+  }
+  const statements = placements.map(placement =>
+    db.prepare(`
+      INSERT INTO tournament_trophy_awards (
+        id,
+        tournament_id,
+        user_id,
+        team_id,
+        position,
+        bonus,
+        awarded_at
+      )
+      SELECT
+        lower(hex(randomblob(16))),
+        tp.tournament_id,
+        tp.user_id,
+        tp.team_id,
+        ?,
+        ?,
+        ?
+      FROM tournament_players tp
+      WHERE tp.tournament_id = ?
+        AND tp.team_id = ?
+        AND tp.status = 'accepted'
+      ON CONFLICT (tournament_id, user_id) DO NOTHING
+    `).bind(
+      placement.position,
+      placement.bonus,
+      Date.now(),
+      tournamentId,
+      placement.team_id
+    )
+  );
+  if (statements.length) {
+    await db.batch(statements);
+  }
+  return {
+    success: true,
+    message: "Tournament trophy bonuses processed.",
+    placements
+  };
 }
