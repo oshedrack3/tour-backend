@@ -242,18 +242,14 @@ async function register(request, env) {
 async function login(request, env) {
   try {
     const body = await request.json();
-    
     const loginValue = String(body.login || "").trim().toLowerCase();
     const password = String(body.password || "");
-    
     if (!loginValue || !password) {
-      return Response.json(
-      {
+      return Response.json({
         success: false,
         message: "Login and password are required."
       }, { status: 400 });
     }
-    
     const user = await env.DB
       .prepare(`
         SELECT
@@ -270,42 +266,27 @@ async function login(request, env) {
       `)
       .bind(loginValue, loginValue)
       .first();
-    
     if (!user) {
-      return Response.json(
-      {
+      return Response.json({
         success: false,
         title: "Account Not Found",
         message: "No account exists with these login details."
       }, { status: 404 });
     }
-    
     const validPassword = await verifyPassword(
       password,
       user.password_hash
     );
-    
     if (!validPassword) {
-      return Response.json(
-      {
+      return Response.json({
         success: false,
         title: "Invalid Password",
         message: "The Password is incorrect, Please check and try again."
       }, { status: 401 });
     }
-    
-    await env.DB
-      .prepare(`
-        DELETE FROM sessions
-        WHERE user_id = ?
-      `)
-      .bind(user.id)
-      .run();
-    
     const token = uuid();
     const now = Date.now();
     const expiresAt = now + 30 * 24 * 60 * 60 * 1000;
-    
     await env.DB
       .prepare(`
         INSERT INTO sessions (
@@ -325,7 +306,6 @@ async function login(request, env) {
         1
       )
       .run();
-    
     return Response.json({
       success: true,
       token,
@@ -339,9 +319,7 @@ async function login(request, env) {
     });
   } catch (error) {
     console.error("Login error:", error);
-    
-    return Response.json(
-    {
+    return Response.json({
       success: false,
       message: error.message || "Login failed."
     }, { status: 500 });
