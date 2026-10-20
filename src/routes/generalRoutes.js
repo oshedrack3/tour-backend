@@ -251,6 +251,17 @@ export async function handleGeneralRequest(
   }
   
   if (
+  request.method === "POST" &&
+  pathname === "/admin/ratings/end-season"
+) {
+  return await endSeasonRatingsRoute(
+    request,
+    env,
+    user
+  );
+}
+  
+  if (
     request.method === "POST" &&
     pathname === "/admin/ratings/recalculate-history"
   ) {
@@ -1327,23 +1338,19 @@ async function getGlobalRankingsRoute(
   user
 ) {
   try {
-    const url =
-      new URL(request.url);
+    const url = new URL(request.url);
     
-    const limitParam =
-      url.searchParams.get("limit");
+    const limitParam = url.searchParams.get("limit");
     
-    const limit =
-      Math.min(
-        Math.max(
-          parseInt(limitParam, 10) || 100,
-          1
-        ),
-        100
-      );
+    const limit = Math.min(
+      Math.max(
+        parseInt(limitParam, 10) || 100,
+        1
+      ),
+      100
+    );
     
-    const result =
-      await env.DB
+    const result = await env.DB
       .prepare(`
         WITH all_stats AS (
           SELECT
@@ -1385,6 +1392,8 @@ async function getGlobalRankingsRoute(
           u.id,
           u.username,
           u.rating,
+          u.highest_rating,
+          u.highest_rank,
           COALESCE(u.trophies_won, 0)
             AS trophies_won,
           COALESCE(c.played, 0)
@@ -2201,6 +2210,291 @@ async function recalculateHistoricalRatingsRoute(
       step,
       errorName: error.name || "Error",
       message: error.message || String(error)
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+async function endSeasonRatingsRoute(
+  request,
+  env,
+  user
+) {
+  if (request.method !== "POST") {
+    return Response.json({
+      success: false,
+      message: "Method not allowed."
+    }, {
+      status: 405
+    });
+  }
+  
+  if (user?.role !== "admin") {
+    return Response.json({
+      success: false,
+      message: "Admin access required."
+    }, {
+      status: 403
+    });
+  }
+  
+  let seasonKey;
+  let registered = false;
+  let step = "validate_request";
+  
+  try {
+    const body = await request.json();
+    
+    seasonKey = String(
+      body.seasonKey || ""
+    ).trim();
+    
+    if (!seasonKey || seasonKey.length > 100) {
+      return Response.json({
+        success: false,
+        message: "A valid seasonKey is required."
+      }, {
+        status: 400
+      });
+    }
+    
+    step = "check_uncompleted_admin_tournaments";
+    
+    const uncompletedTournament = await env.DB
+      .prepare(`
+        SELECT
+          id,
+          name,
+          season,
+          season_status
+        FROM tournaments
+        WHERE admin_uid = ?
+          AND season_status != 'completed'
+        LIMIT 1
+      `)
+      .bind(user.id)
+      .first();
+    
+    if (uncompletedTournament) {
+      return Response.json({
+        success: false,
+        message: "Season ratings cannot be reset while you own a tournament that has not been completed.",
+        tournament: {
+          id: uncompletedTournament.id,
+          name: uncompletedTournament.name,
+          season: uncompletedTournament.season,
+          status: uncompletedTournament.season_status
+        }
+      }, {
+        status: 409
+      });
+    }
+    
+    step = "check_existing_reset";
+    
+    const existing = await env.DB
+      .prepare(`
+        SELECT
+          season_key,
+          status
+        FROM rating_season_resets
+        WHERE season_key = ?
+      `)
+      .bind(seasonKey)
+      .first();
+    
+    if (
+      existing &&
+      existing.status !== "failed"
+    ) {
+      return Response.json({
+        success: false,
+        message: existing.status === "completed" ?
+          "This season has already been processed." :
+          "This season-ending operation is already running.",
+        seasonKey,
+        status: existing.status
+      }, {
+        status: 409
+      });
+    }
+    
+    step = "register_reset";
+    
+    if (existing?.status === "failed") {
+      const retry = await env.DB
+        .prepare(`
+          UPDATE rating_season_resets
+          SET
+            status = 'running',
+            started_at = ?,
+            completed_at = NULL,
+            users_updated = NULL
+          WHERE season_key = ?
+            AND status = 'failed'
+        `)
+        .bind(
+          Date.now(),
+          seasonKey
+        )
+        .run();
+      
+      if (retry.meta?.changes !== 1) {
+        return Response.json({
+          success: false,
+          message: "The season-ending operation has already been claimed. Check its status."
+        }, {
+          status: 409
+        });
+      }
+    } else {
+      const inserted = await env.DB
+        .prepare(`
+          INSERT OR IGNORE INTO rating_season_resets (
+            season_key,
+            status,
+            started_at
+          )
+          VALUES (?, 'running', ?)
+        `)
+        .bind(
+          seasonKey,
+          Date.now()
+        )
+        .run();
+      
+      if (inserted.meta?.changes !== 1) {
+        return Response.json({
+          success: false,
+          message: "This season-ending operation has already been started."
+        }, {
+          status: 409
+        });
+      }
+    }
+    
+    registered = true;
+    
+    step = "save_highest_ratings";
+    
+    const saveHighestRatings = env.DB
+      .prepare(`
+        UPDATE users
+        SET highest_rating = rating
+        WHERE rating > COALESCE(highest_rating, 1500)
+      `);
+    
+    step = "save_highest_ranks";
+    
+    const saveHighestRanks = env.DB
+      .prepare(`
+        WITH ranked_users AS (
+          SELECT
+            id,
+            RANK() OVER (
+              ORDER BY rating DESC
+            ) AS current_rank
+          FROM users
+          WHERE is_test_account = 0
+        )
+        UPDATE users
+        SET highest_rank = (
+          SELECT current_rank
+          FROM ranked_users
+          WHERE ranked_users.id = users.id
+        )
+        WHERE is_test_account = 0
+          AND (
+            highest_rank IS NULL
+            OR highest_rank <= 0
+            OR (
+              SELECT current_rank
+              FROM ranked_users
+              WHERE ranked_users.id = users.id
+            ) < highest_rank
+          )
+      `);
+    
+    step = "reset_current_ratings";
+    
+    const resetCurrentRatings = env.DB
+      .prepare(`
+        UPDATE users
+        SET rating = 1500
+      `);
+    
+    step = "apply_season_end_updates";
+    
+    await env.DB.batch([
+      saveHighestRatings,
+      saveHighestRanks,
+      resetCurrentRatings
+    ]);
+    
+    step = "mark_completed";
+    
+    const completed = await env.DB
+      .prepare(`
+        UPDATE rating_season_resets
+        SET
+          status = 'completed',
+          completed_at = ?,
+          users_updated = (
+            SELECT COUNT(*)
+            FROM users
+          )
+        WHERE season_key = ?
+          AND status = 'running'
+      `)
+      .bind(
+        Date.now(),
+        seasonKey
+      )
+      .run();
+    
+    if (completed.meta?.changes !== 1) {
+      throw new Error(
+        "Ratings were reset, but the season reset could not be marked completed."
+      );
+    }
+    
+    return Response.json({
+      success: true,
+      message: "Season ended successfully. Higher ratings and improved career-best ranks were saved, and current ratings were reset to 1500.",
+      seasonKey,
+      initialRating: 1500,
+      usersUpdated: completed.meta?.changes,
+      ratingsReset: true
+    });
+  } catch (error) {
+    console.error(
+      "Season-ending rating reset error:",
+      step,
+      error
+    );
+    
+    if (registered && seasonKey) {
+      try {
+        await env.DB
+          .prepare(`
+            UPDATE rating_season_resets
+            SET status = 'failed'
+            WHERE season_key = ?
+              AND status = 'running'
+          `)
+          .bind(seasonKey)
+          .run();
+      } catch (ignored) {}
+      
+    }
+    
+    return Response.json({
+      success: false,
+      step,
+      message: error.message ||
+        "Failed to process season ending."
     }, {
       status: 500
     });

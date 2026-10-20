@@ -65,6 +65,16 @@ export async function handleTournamentRequest(
   }
   
   if (
+  request.method === "GET" &&
+  pathname === "/players/head-to-head"
+) {
+  return await getHeadToHeadComparisonRoute(
+    env,
+    url
+  );
+}
+  
+  if (
     request.method === "POST" &&
     pathname === "/tournaments/create"
   ) {
@@ -7801,4 +7811,253 @@ async function awardTournamentTrophyBonuses(
     message: "Tournament trophy bonuses processed.",
     placements
   };
+}
+
+
+async function getHeadToHeadComparisonRoute(
+  env,
+  url
+) {
+  try {
+    const player1Id = String(
+      url.searchParams.get("player1_id") || ""
+    ).trim();
+    
+    const player2Id = String(
+      url.searchParams.get("player2_id") || ""
+    ).trim();
+    
+    if (!player1Id || !player2Id) {
+      return Response.json({
+        success: false,
+        message: "Both player IDs are required."
+      }, {
+        status: 400
+      });
+    }
+    
+    if (player1Id === player2Id) {
+      return Response.json({
+        success: false,
+        message: "Select two different players."
+      }, {
+        status: 400
+      });
+    }
+    
+    const playersResult = await env.DB
+      .prepare(`
+        SELECT
+          id,
+          username,
+          rating
+        FROM users
+        WHERE id IN (?, ?)
+      `)
+      .bind(player1Id, player2Id)
+      .all();
+    
+    const players = playersResult.results || [];
+    
+    const player1 = players.find(
+      player => player.id === player1Id
+    );
+    
+    const player2 = players.find(
+      player => player.id === player2Id
+    );
+    
+    if (!player1 || !player2) {
+      return Response.json({
+        success: false,
+        message: "One or both players were not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    const matchesResult = await env.DB
+      .prepare(`
+        SELECT
+          m.id AS match_id,
+          m.tournament_id,
+          t.name AS tournament_name,
+          m.home_team_id,
+          m.away_team_id,
+          m.home_score,
+          m.away_score,
+          m.played_at,
+          m.created_at,
+          home_player.user_id AS home_player_id,
+          away_player.user_id AS away_player_id,
+          home_user.username AS home_player_name,
+          away_user.username AS away_player_name
+        FROM matches m
+        INNER JOIN tournament_players home_player
+          ON home_player.tournament_id = m.tournament_id
+          AND home_player.team_id = m.home_team_id
+        INNER JOIN tournament_players away_player
+          ON away_player.tournament_id = m.tournament_id
+          AND away_player.team_id = m.away_team_id
+        INNER JOIN tournaments t
+          ON t.id = m.tournament_id
+        INNER JOIN users home_user
+          ON home_user.id = home_player.user_id
+        INNER JOIN users away_user
+          ON away_user.id = away_player.user_id
+        WHERE m.played = 1
+          AND m.home_score IS NOT NULL
+          AND m.away_score IS NOT NULL
+          AND (
+            (
+              home_player.user_id = ?
+              AND away_player.user_id = ?
+            )
+            OR
+            (
+              home_player.user_id = ?
+              AND away_player.user_id = ?
+            )
+          )
+        ORDER BY
+          COALESCE(m.played_at, m.created_at) DESC
+      `)
+      .bind(
+        player1Id,
+        player2Id,
+        player2Id,
+        player1Id
+      )
+      .all();
+    
+    const matches = matchesResult.results || [];
+    
+    const createStats = () => ({
+      played: 0,
+      wins: 0,
+      draws: 0,
+      losses: 0,
+      goals_scored: 0,
+      goals_conceded: 0,
+      goal_difference: 0,
+      win_percentage: 0
+    });
+    
+    const player1Stats = createStats();
+    const player2Stats = createStats();
+    
+    const recentMatches = matches.map(match => {
+      const homeScore = Number(match.home_score);
+      const awayScore = Number(match.away_score);
+      
+      const player1IsHome =
+        match.home_player_id === player1Id;
+      
+      const player1Goals = player1IsHome ?
+        homeScore :
+        awayScore;
+      
+      const player2Goals = player1IsHome ?
+        awayScore :
+        homeScore;
+      
+      player1Stats.played++;
+      player2Stats.played++;
+      
+      player1Stats.goals_scored += player1Goals;
+      player1Stats.goals_conceded += player2Goals;
+      
+      player2Stats.goals_scored += player2Goals;
+      player2Stats.goals_conceded += player1Goals;
+      
+      let result;
+      
+      if (player1Goals > player2Goals) {
+        player1Stats.wins++;
+        player2Stats.losses++;
+        result = "player1_win";
+      } else if (player1Goals < player2Goals) {
+        player2Stats.wins++;
+        player1Stats.losses++;
+        result = "player2_win";
+      } else {
+        player1Stats.draws++;
+        player2Stats.draws++;
+        result = "draw";
+      }
+      
+      return {
+        match_id: match.match_id,
+        tournament_id: match.tournament_id,
+        tournament_name: match.tournament_name,
+        home_team_id: match.home_team_id,
+        away_team_id: match.away_team_id,
+        home_player_id: match.home_player_id,
+        away_player_id: match.away_player_id,
+        home_player_name: match.home_player_name,
+        away_player_name: match.away_player_name,
+        home_score: homeScore,
+        away_score: awayScore,
+        played_at: match.played_at,
+        result
+      };
+    });
+    
+    for (const stats of [
+        player1Stats,
+        player2Stats
+      ]) {
+      stats.goal_difference =
+        stats.goals_scored -
+        stats.goals_conceded;
+      
+      stats.win_percentage = stats.played ?
+        Number(
+          (
+            stats.wins /
+            stats.played *
+            100
+          ).toFixed(2)
+        ) :
+        0;
+    }
+    
+    return Response.json({
+      success: true,
+      players: {
+        player1: {
+          id: player1.id,
+          username: player1.username,
+          rating: player1.rating,
+          stats: player1Stats
+        },
+        player2: {
+          id: player2.id,
+          username: player2.username,
+          rating: player2.rating,
+          stats: player2Stats
+        }
+      },
+      head_to_head: {
+        total_matches: matches.length,
+        player1_wins: player1Stats.wins,
+        player2_wins: player2Stats.wins,
+        draws: player1Stats.draws
+      },
+      recent_matches: recentMatches.slice(0, 10)
+    });
+    
+  } catch (error) {
+    console.error(
+      "Head-to-head comparison error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: "Failed to compare player statistics."
+    }, {
+      status: 500
+    });
+  }
 }
