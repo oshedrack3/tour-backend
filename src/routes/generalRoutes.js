@@ -1915,7 +1915,6 @@ async function recalculateHistoricalRatingsRoute(
       status: 405
     });
   }
-  
   if (user?.role !== "admin") {
     return Response.json({
       success: false,
@@ -1924,10 +1923,9 @@ async function recalculateHistoricalRatingsRoute(
       status: 403
     });
   }
-  
-  const runId = "historical_elo_v1";
+  const runId = "historical_elo_active_v2";
+  const testingTournamentId = "165ec173-5226-4505-8e75-d54dfdaa5903";
   let step = "check_existing_run";
-  
   try {
     const existingRun = await env.DB
       .prepare(`
@@ -1937,39 +1935,46 @@ async function recalculateHistoricalRatingsRoute(
       `)
       .bind(runId)
       .first();
-    
     if (existingRun) {
       return Response.json({
         success: false,
-        message: "This recalculation has already been started. Do not run it again without checking the database.",
+        message: "This recalculation has already been started. Check its status before attempting another run.",
         status: existingRun.status
       }, {
         status: 409
       });
     }
-    
     step = "load_users";
-    
     const usersResult = await env.DB
       .prepare(`
         SELECT id, is_test_account
         FROM users
       `)
       .all();
-    
     const ratings = new Map();
     const testAccounts = new Set();
-    
     for (const player of usersResult.results || []) {
       ratings.set(player.id, 1500);
-      
       if (Number(player.is_test_account) === 1) {
         testAccounts.add(player.id);
       }
     }
-    
-    step = "load_completed_matches";
-    
+    step = "load_active_tournaments";
+    const tournamentsResult = await env.DB
+      .prepare(`
+        SELECT id
+        FROM tournaments
+        WHERE season_status = 'active'
+          AND id != ?
+      `)
+      .bind(testingTournamentId)
+      .all();
+    const activeTournamentIds = new Set(
+      (tournamentsResult.results || []).map(
+        tournament => tournament.id
+      )
+    );
+    step = "load_active_matches";
     const matchesResult = await env.DB
       .prepare(`
         SELECT
@@ -1984,6 +1989,8 @@ async function recalculateHistoricalRatingsRoute(
           hp.user_id AS home_user_id,
           ap.user_id AS away_user_id
         FROM matches m
+        JOIN tournaments t
+          ON t.id = m.tournament_id
         LEFT JOIN (
           SELECT
             tournament_id,
@@ -2009,26 +2016,25 @@ async function recalculateHistoricalRatingsRoute(
           ON ap.tournament_id = m.tournament_id
           AND ap.team_id = m.away_team_id
         WHERE m.played = 1
+          AND t.season_status = 'active'
+          AND t.id != ?
         ORDER BY
           COALESCE(m.played_at, m.created_at) ASC,
           m.created_at ASC,
           m.id ASC
       `)
+      .bind(testingTournamentId)
       .all();
-    
     const matches = matchesResult.results || [];
     const matchChanges = [];
-    
     let matchesProcessed = 0;
     let matchesSkipped = 0;
-    
     step = "calculate_ratings";
-    
     for (const match of matches) {
       const homeId = match.home_user_id;
       const awayId = match.away_user_id;
-      
       const valid =
+        activeTournamentIds.has(match.tournament_id) &&
         homeId &&
         awayId &&
         homeId !== awayId &&
@@ -2044,50 +2050,34 @@ async function recalculateHistoricalRatingsRoute(
         Number.isFinite(Number(match.away_score)) &&
         Number(match.home_score) >= 0 &&
         Number(match.away_score) >= 0;
-      
       if (!valid) {
         matchesSkipped++;
-        
-        matchChanges.push({
-          id: match.id,
-          homeChange: 0,
-          awayChange: 0
-        });
-        
         continue;
       }
-      
       const homeRating = ratings.get(homeId);
       const awayRating = ratings.get(awayId);
-      
       const elo = calculateElo(
         homeRating,
         awayRating,
         Number(match.home_score),
         Number(match.away_score)
       );
-      
       ratings.set(
         homeId,
         homeRating + elo.homeChange
       );
-      
       ratings.set(
         awayId,
         awayRating + elo.awayChange
       );
-      
       matchChanges.push({
         id: match.id,
         homeChange: elo.homeChange,
         awayChange: elo.awayChange
       });
-      
       matchesProcessed++;
     }
-    
     step = "register_recalculation";
-    
     const insertRun = await env.DB
       .prepare(`
         INSERT OR IGNORE INTO rating_recalculation_runs (
@@ -2099,7 +2089,6 @@ async function recalculateHistoricalRatingsRoute(
       `)
       .bind(runId, Date.now())
       .run();
-    
     if (
       !insertRun.meta ||
       insertRun.meta.changes !== 1
@@ -2111,54 +2100,55 @@ async function recalculateHistoricalRatingsRoute(
         status: 409
       });
     }
-    
     step = "prepare_database_updates";
-    
     const statements = [];
-    
     for (const [userId, rating] of ratings) {
       statements.push(
         env.DB
-        .prepare(`
+          .prepare(`
             UPDATE users
             SET rating = ?
             WHERE id = ?
           `)
-        .bind(rating, userId)
+          .bind(rating, userId)
       );
     }
-    
     for (const match of matchChanges) {
       statements.push(
         env.DB
-        .prepare(`
+          .prepare(`
             UPDATE matches
             SET
               home_rating_change = ?,
               away_rating_change = ?
             WHERE id = ?
               AND played = 1
+              AND tournament_id IN (
+                SELECT id
+                FROM tournaments
+                WHERE season_status = 'active'
+                  AND id != ?
+              )
           `)
-        .bind(
-          match.homeChange,
-          match.awayChange,
-          match.id
-        )
+          .bind(
+            match.homeChange,
+            match.awayChange,
+            match.id,
+            testingTournamentId
+          )
       );
     }
-    
     step = "write_database_batches";
-    
     for (
-      let i = 0; i < statements.length; i += 50
+      let i = 0;
+      i < statements.length;
+      i += 50
     ) {
       await env.DB.batch(
         statements.slice(i, i + 50)
       );
     }
-    
     step = "mark_completed";
-    
     await env.DB
       .prepare(`
         UPDATE rating_recalculation_runs
@@ -2179,24 +2169,22 @@ async function recalculateHistoricalRatingsRoute(
         runId
       )
       .run();
-    
     return Response.json({
       success: true,
-      message: "Historical rating recalculation completed.",
+      message: "Active tournament rating recalculation completed.",
       initialRating: 1500,
       kFactor: 32,
+      excludedTournamentId: testingTournamentId,
       usersUpdated: ratings.size,
       matchesProcessed,
       matchesSkipped
     });
-    
   } catch (error) {
     console.error(
       "Historical rating recalculation error:",
       step,
       error
     );
-    
     try {
       await env.DB
         .prepare(`
@@ -2208,10 +2196,9 @@ async function recalculateHistoricalRatingsRoute(
         .bind(runId)
         .run();
     } catch (ignored) {}
-    
     return Response.json({
       success: false,
-      step: step,
+      step,
       errorName: error.name || "Error",
       message: error.message || String(error)
     }, {
