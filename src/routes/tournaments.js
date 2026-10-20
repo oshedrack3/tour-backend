@@ -73,6 +73,16 @@ export async function handleTournamentRequest(
     url
   );
 }
+
+if (
+  request.method === "GET" &&
+  pathname === "/players/search"
+) {
+  return await searchPlayersRoute(
+    env,
+    url
+  );
+}
   
   if (
     request.method === "POST" &&
@@ -7328,8 +7338,6 @@ async function getTournamentDisciplinaryActionsRoute(
   }
 }
 
-
-
 async function awardTournamentTrophyBonuses(
   db,
   tournamentId
@@ -7822,11 +7830,9 @@ async function getHeadToHeadComparisonRoute(
     const player1Id = String(
       url.searchParams.get("player1_id") || ""
     ).trim();
-    
     const player2Id = String(
       url.searchParams.get("player2_id") || ""
     ).trim();
-    
     if (!player1Id || !player2Id) {
       return Response.json({
         success: false,
@@ -7835,7 +7841,6 @@ async function getHeadToHeadComparisonRoute(
         status: 400
       });
     }
-    
     if (player1Id === player2Id) {
       return Response.json({
         success: false,
@@ -7844,29 +7849,28 @@ async function getHeadToHeadComparisonRoute(
         status: 400
       });
     }
-    
     const playersResult = await env.DB
       .prepare(`
         SELECT
           id,
           username,
-          rating
+          rating,
+          highest_rating,
+          highest_rank,
+          COALESCE(trophies_won, 0) AS trophies_won
         FROM users
         WHERE id IN (?, ?)
+          AND is_test_account = 0
       `)
       .bind(player1Id, player2Id)
       .all();
-    
     const players = playersResult.results || [];
-    
     const player1 = players.find(
       player => player.id === player1Id
     );
-    
     const player2 = players.find(
       player => player.id === player2Id
     );
-    
     if (!player1 || !player2) {
       return Response.json({
         success: false,
@@ -7875,7 +7879,98 @@ async function getHeadToHeadComparisonRoute(
         status: 404
       });
     }
-    
+    const careerResult = await env.DB
+      .prepare(`
+        WITH all_stats AS (
+          SELECT
+            user_id,
+            played,
+            wins,
+            draws,
+            losses,
+            gf,
+            ga
+          FROM tournament_players
+          WHERE status = 'accepted'
+            AND user_id IN (?, ?)
+          UNION ALL
+          SELECT
+            user_id,
+            played,
+            wins,
+            draws,
+            losses,
+            gf,
+            ga
+          FROM tournament_player_knockout
+          WHERE user_id IN (?, ?)
+        ),
+        career AS (
+          SELECT
+            user_id,
+            SUM(played) AS played,
+            SUM(wins) AS wins,
+            SUM(draws) AS draws,
+            SUM(losses) AS losses,
+            SUM(gf) AS goals_for,
+            SUM(ga) AS goals_against
+          FROM all_stats
+          GROUP BY user_id
+        )
+        SELECT
+          user_id,
+          COALESCE(played, 0) AS played,
+          COALESCE(wins, 0) AS wins,
+          COALESCE(draws, 0) AS draws,
+          COALESCE(losses, 0) AS losses,
+          COALESCE(goals_for, 0) AS goals_scored,
+          COALESCE(goals_against, 0) AS goals_conceded,
+          COALESCE(goals_for, 0)
+            - COALESCE(goals_against, 0)
+            AS goal_difference,
+          ROUND(
+            100.0 * COALESCE(wins, 0)
+            / NULLIF(played, 0),
+            2
+          ) AS win_percentage
+        FROM career
+      `)
+      .bind(
+        player1Id,
+        player2Id,
+        player1Id,
+        player2Id
+      )
+      .all();
+    const careerRows = careerResult.results || [];
+    const createStats = () => ({
+      played: 0,
+      wins: 0,
+      draws: 0,
+      losses: 0,
+      goals_scored: 0,
+      goals_conceded: 0,
+      goal_difference: 0,
+      win_percentage: 0
+    });
+    const getCareerStats = playerId => {
+      const row = careerRows.find(
+        item => item.user_id === playerId
+      );
+      if (!row) {
+        return createStats();
+      }
+      return {
+        played: Number(row.played) || 0,
+        wins: Number(row.wins) || 0,
+        draws: Number(row.draws) || 0,
+        losses: Number(row.losses) || 0,
+        goals_scored: Number(row.goals_scored) || 0,
+        goals_conceded: Number(row.goals_conceded) || 0,
+        goal_difference: Number(row.goal_difference) || 0,
+        win_percentage: Number(row.win_percentage) || 0
+      };
+    };
     const matchesResult = await env.DB
       .prepare(`
         SELECT
@@ -7929,49 +8024,27 @@ async function getHeadToHeadComparisonRoute(
         player1Id
       )
       .all();
-    
     const matches = matchesResult.results || [];
-    
-    const createStats = () => ({
-      played: 0,
-      wins: 0,
-      draws: 0,
-      losses: 0,
-      goals_scored: 0,
-      goals_conceded: 0,
-      goal_difference: 0,
-      win_percentage: 0
-    });
-    
     const player1Stats = createStats();
     const player2Stats = createStats();
-    
     const recentMatches = matches.map(match => {
       const homeScore = Number(match.home_score);
       const awayScore = Number(match.away_score);
-      
       const player1IsHome =
         match.home_player_id === player1Id;
-      
-      const player1Goals = player1IsHome ?
-        homeScore :
-        awayScore;
-      
-      const player2Goals = player1IsHome ?
-        awayScore :
-        homeScore;
-      
+      const player1Goals = player1IsHome
+        ? homeScore
+        : awayScore;
+      const player2Goals = player1IsHome
+        ? awayScore
+        : homeScore;
       player1Stats.played++;
       player2Stats.played++;
-      
       player1Stats.goals_scored += player1Goals;
       player1Stats.goals_conceded += player2Goals;
-      
       player2Stats.goals_scored += player2Goals;
       player2Stats.goals_conceded += player1Goals;
-      
       let result;
-      
       if (player1Goals > player2Goals) {
         player1Stats.wins++;
         player2Stats.losses++;
@@ -7985,7 +8058,6 @@ async function getHeadToHeadComparisonRoute(
         player2Stats.draws++;
         result = "draw";
       }
-      
       return {
         match_id: match.match_id,
         tournament_id: match.tournament_id,
@@ -8002,26 +8074,23 @@ async function getHeadToHeadComparisonRoute(
         result
       };
     });
-    
     for (const stats of [
-        player1Stats,
-        player2Stats
-      ]) {
+      player1Stats,
+      player2Stats
+    ]) {
       stats.goal_difference =
         stats.goals_scored -
         stats.goals_conceded;
-      
-      stats.win_percentage = stats.played ?
-        Number(
-          (
-            stats.wins /
-            stats.played *
-            100
-          ).toFixed(2)
-        ) :
-        0;
+      stats.win_percentage = stats.played
+        ? Number(
+            (
+              stats.wins /
+              stats.played *
+              100
+            ).toFixed(2)
+          )
+        : 0;
     }
-    
     return Response.json({
       success: true,
       players: {
@@ -8029,12 +8098,20 @@ async function getHeadToHeadComparisonRoute(
           id: player1.id,
           username: player1.username,
           rating: player1.rating,
+          highest_rating: player1.highest_rating,
+          highest_rank: player1.highest_rank,
+          trophies_won: player1.trophies_won,
+          career_stats: getCareerStats(player1Id),
           stats: player1Stats
         },
         player2: {
           id: player2.id,
           username: player2.username,
           rating: player2.rating,
+          highest_rating: player2.highest_rating,
+          highest_rank: player2.highest_rank,
+          trophies_won: player2.trophies_won,
+          career_stats: getCareerStats(player2Id),
           stats: player2Stats
         }
       },
@@ -8046,16 +8123,75 @@ async function getHeadToHeadComparisonRoute(
       },
       recent_matches: recentMatches.slice(0, 10)
     });
-    
   } catch (error) {
     console.error(
       "Head-to-head comparison error:",
       error
     );
-    
     return Response.json({
       success: false,
       message: "Failed to compare player statistics."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function searchPlayersRoute(
+  env,
+  url
+) {
+  try {
+    const query = String(
+      url.searchParams.get("q") || ""
+    ).trim();
+    if (query.length < 2) {
+      return Response.json({
+        success: true,
+        players: []
+      });
+    }
+    const result = await env.DB
+      .prepare(`
+        SELECT
+          id,
+          username,
+          rating,
+          highest_rating,
+          highest_rank,
+          COALESCE(trophies_won, 0) AS trophies_won
+        FROM users
+        WHERE is_test_account = 0
+          AND username LIKE ? COLLATE NOCASE
+        ORDER BY
+          CASE
+            WHEN username = ? COLLATE NOCASE
+              THEN 0
+            WHEN username LIKE ? COLLATE NOCASE
+              THEN 1
+            ELSE 2
+          END,
+          username COLLATE NOCASE ASC
+        LIMIT 20
+      `)
+      .bind(
+        `%${query}%`,
+        query,
+        `${query}%`
+      )
+      .all();
+    return Response.json({
+      success: true,
+      players: result.results || []
+    });
+  } catch (error) {
+    console.error(
+      "Player search error:",
+      error
+    );
+    return Response.json({
+      success: false,
+      message: "Failed to search players."
     }, {
       status: 500
     });
