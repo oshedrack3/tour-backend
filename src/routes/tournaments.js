@@ -8462,6 +8462,7 @@ function generateChampionsLeagueGroupMatches(
   return matches;
 }
 
+
 function generateLimitedOpponentMatches(
   group,
   teamIds,
@@ -8469,11 +8470,9 @@ function generateLimitedOpponentMatches(
   groupRoundMode = "single"
 ) {
   const teamCount = teamIds.length;
-
   if (teamCount < 2) {
     return [];
   }
-
   if (
     !Number.isInteger(opponentsPerTeam) ||
     opponentsPerTeam < 1 ||
@@ -8483,224 +8482,100 @@ function generateLimitedOpponentMatches(
       `Opponents per team must be between 1 and ${teamCount - 1}.`
     );
   }
-
-  if (
-    groupRoundMode !== "single" &&
-    groupRoundMode !== "double"
-  ) {
+  if ((teamCount * opponentsPerTeam) % 2 !== 0) {
     throw new Error(
-      "Group round mode must be single or double."
+      "This number of teams and opponents per team cannot produce a valid schedule."
     );
   }
-
-  if (
-    (teamCount * opponentsPerTeam) % 2 !== 0
-  ) {
-    throw new Error(
-      "This number of teams and opponents per team cannot produce a schedule where every team has the same number of unique opponents."
-    );
-  }
-
   const teams = [...teamIds];
-
-  if (new Set(teams).size !== teamCount) {
-    throw new Error(
-      "Duplicate teams cannot be scheduled."
-    );
-  }
-
   for (let i = teams.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [teams[i], teams[j]] = [teams[j], teams[i]];
   }
-
-  const edges = [];
-
-  if (
-    teamCount % 2 === 1 ||
-    opponentsPerTeam % 2 === 0
+  const opponentCounts = {};
+  const playedPairs = new Set();
+  teams.forEach(id => {
+    opponentCounts[id] = 0;
+  });
+  const firstLegFixtures = [];
+  const maxAttempts = 1000;
+  let attempts = 0;
+  while (
+    teams.some(id => opponentCounts[id] < opponentsPerTeam) &&
+    attempts < maxAttempts
   ) {
-    const maxDistance = Math.floor(
-      opponentsPerTeam / 2
-    );
-
-    for (
-      let distance = 1;
-      distance <= maxDistance;
-      distance++
-    ) {
-      for (let i = 0; i < teamCount; i++) {
-        edges.push({
-          a: i,
-          b: (i + distance) % teamCount
-        });
-      }
-    }
-  } else {
-    const pairedOffsets =
-      (opponentsPerTeam - 1) / 2;
-
-    for (
-      let distance = 1;
-      distance <= pairedOffsets;
-      distance++
-    ) {
-      for (let i = 0; i < teamCount; i++) {
-        edges.push({
-          a: i,
-          b: (i + distance) % teamCount
-        });
-      }
-    }
-
-    for (
-      let i = 0;
-      i < teamCount / 2;
-      i++
-    ) {
-      edges.push({
-        a: i,
-        b: i + teamCount / 2
-      });
-    }
-  }
-
-  for (let i = edges.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [edges[i], edges[j]] = [edges[j], edges[i]];
-  }
-
-  const scheduledRounds = [];
-  let remainingEdges = [...edges];
-
-  while (remainingEdges.length > 0) {
-    for (
-      let i = remainingEdges.length - 1;
-      i > 0;
-      i--
-    ) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [remainingEdges[i], remainingEdges[j]] = [
-        remainingEdges[j],
-        remainingEdges[i]
-      ];
-    }
-
-    const usedTeams = new Set();
-    const roundEdges = [];
-    const nextRemainingEdges = [];
-
-    for (const edge of remainingEdges) {
-      if (
-        !usedTeams.has(edge.a) &&
-        !usedTeams.has(edge.b)
-      ) {
-        usedTeams.add(edge.a);
-        usedTeams.add(edge.b);
-        roundEdges.push(edge);
-      } else {
-        nextRemainingEdges.push(edge);
-      }
-    }
-
-    if (roundEdges.length === 0) {
-      throw new Error(
-        "Unable to schedule the remaining matches."
-      );
-    }
-
-    scheduledRounds.push(roundEdges);
-    remainingEdges = nextRemainingEdges;
-  }
-
-  const firstLegRounds = [];
-  const homeCounts = Array(teamCount).fill(0);
-  const awayCounts = Array(teamCount).fill(0);
-
-  for (
-    let roundIndex = 0;
-    roundIndex < scheduledRounds.length;
-    roundIndex++
-  ) {
+    attempts++;
     const roundFixtures = [];
-
-    for (
-      let slotIndex = 0;
-      slotIndex < scheduledRounds[roundIndex].length;
-      slotIndex++
-    ) {
-      const edge = scheduledRounds[roundIndex][slotIndex];
-
-      let homeIndex = edge.a;
-      let awayIndex = edge.b;
-
-      const homeBalance =
-        homeCounts[homeIndex] - awayCounts[homeIndex];
-
-      const awayBalance =
-        homeCounts[awayIndex] - awayCounts[awayIndex];
-
-      if (
-        homeBalance > awayBalance ||
-        (
-          homeBalance === awayBalance &&
-          Math.random() < 0.5
-        )
-      ) {
-        [homeIndex, awayIndex] = [
-          awayIndex,
-          homeIndex
-        ];
+    const usedInRound = new Set();
+    const availableTeams = [...teams].sort(
+      (a, b) =>
+      (opponentsPerTeam - opponentCounts[b]) -
+      (opponentsPerTeam - opponentCounts[a])
+    );
+    for (let i = 0; i < availableTeams.length; i++) {
+      const teamA = availableTeams[i];
+      if (usedInRound.has(teamA)) continue;
+      if (opponentCounts[teamA] >= opponentsPerTeam) continue;
+      for (let j = i + 1; j < availableTeams.length; j++) {
+        const teamB = availableTeams[j];
+        if (usedInRound.has(teamB)) continue;
+        if (opponentCounts[teamB] >= opponentsPerTeam) continue;
+        const pairKey1 = `${teamA}-${teamB}`;
+        const pairKey2 = `${teamB}-${teamA}`;
+        if (
+          !playedPairs.has(pairKey1) &&
+          !playedPairs.has(pairKey2)
+        ) {
+          playedPairs.add(pairKey1);
+          playedPairs.add(pairKey2);
+          usedInRound.add(teamA);
+          usedInRound.add(teamB);
+          opponentCounts[teamA]++;
+          opponentCounts[teamB]++;
+          const isHome = Math.random() < 0.5;
+          roundFixtures.push({
+            homeTeamId: isHome ? teamA : teamB,
+            awayTeamId: isHome ? teamB : teamA,
+            slot: roundFixtures.length + 1
+          });
+          break;
+        }
       }
-
-      homeCounts[homeIndex]++;
-      awayCounts[awayIndex]++;
-
-      roundFixtures.push({
-        homeTeamId: teams[homeIndex],
-        awayTeamId: teams[awayIndex],
-        slot: slotIndex + 1
-      });
     }
-
-    firstLegRounds.push(roundFixtures);
+    if (roundFixtures.length > 0) {
+      firstLegFixtures.push(roundFixtures);
+    } else {
+      break;
+    }
   }
-
   const matches = [];
-  const roundsPerLeg = firstLegRounds.length;
-
-  for (
-    let roundIndex = 0;
-    roundIndex < roundsPerLeg;
-    roundIndex++
-  ) {
-    for (const fixture of firstLegRounds[roundIndex]) {
+  let roundIndex = 1;
+  for (const roundFixtures of firstLegFixtures) {
+    for (const fixture of roundFixtures) {
       matches.push(
         createChampionsLeagueGroupMatch(
           group.id,
           fixture.homeTeamId,
           fixture.awayTeamId,
-          roundIndex + 1,
+          roundIndex,
           fixture.slot,
           1
         )
       );
     }
+    roundIndex++;
   }
-
   if (groupRoundMode === "double") {
-    for (
-      let roundIndex = 0;
-      roundIndex < roundsPerLeg;
-      roundIndex++
-    ) {
-      for (const fixture of firstLegRounds[roundIndex]) {
+    const roundsPerLeg = firstLegFixtures.length;
+    for (let i = 0; i < roundsPerLeg; i++) {
+      const fixtures = firstLegFixtures[i];
+      for (const fixture of fixtures) {
         matches.push(
           createChampionsLeagueGroupMatch(
             group.id,
             fixture.awayTeamId,
             fixture.homeTeamId,
-            roundsPerLeg + roundIndex + 1,
+            roundsPerLeg + i + 1,
             fixture.slot,
             2
           )
@@ -8708,7 +8583,6 @@ function generateLimitedOpponentMatches(
       }
     }
   }
-
   return matches;
 }
 
