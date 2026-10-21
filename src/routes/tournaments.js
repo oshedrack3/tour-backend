@@ -65,24 +65,24 @@ export async function handleTournamentRequest(
   }
   
   if (
-  request.method === "GET" &&
-  pathname === "/players/head-to-head"
-) {
-  return await getHeadToHeadComparisonRoute(
-    env,
-    url
-  );
-}
-
-if (
-  request.method === "GET" &&
-  pathname === "/players/search"
-) {
-  return await searchPlayersRoute(
-    env,
-    url
-  );
-}
+    request.method === "GET" &&
+    pathname === "/players/head-to-head"
+  ) {
+    return await getHeadToHeadComparisonRoute(
+      env,
+      url
+    );
+  }
+  
+  if (
+    request.method === "GET" &&
+    pathname === "/players/search"
+  ) {
+    return await searchPlayersRoute(
+      env,
+      url
+    );
+  }
   
   if (
     request.method === "POST" &&
@@ -418,6 +418,18 @@ if (
   }
   
   
+  if (
+    request.method === "POST" &&
+    /^\/tournaments\/[^/]+\/generate-champions-league$/.test(pathname)
+  ) {
+    const id = pathname.split("/")[2];
+    return await generateChampionsLeagueRoute(
+      request,
+      env,
+      id,
+      user
+    );
+  }
   if (
     request.method === "PUT" &&
     /^\/matches\/[^/]+$/.test(pathname)
@@ -4746,6 +4758,8 @@ async function getCupQualifiedTeams(
     qualifiedTeams
   };
 }
+
+
 async function checkGroupStageCompletion(
   db,
   tournamentId,
@@ -4762,17 +4776,13 @@ async function checkGroupStageCompletion(
     
     try {
       if (
-        typeof tournament.settings ===
-        "string"
+        typeof tournament.settings === "string"
       ) {
         settings =
-          JSON.parse(
-            tournament.settings
-          ) || {};
+          JSON.parse(tournament.settings) || {};
       } else if (
         tournament.settings &&
-        typeof tournament.settings ===
-        "object"
+        typeof tournament.settings === "object"
       ) {
         settings = {
           ...tournament.settings
@@ -4782,18 +4792,13 @@ async function checkGroupStageCompletion(
       settings = {};
     }
     
-    if (
-      settings.enableGroups !== true
-    ) {
+    if (settings.enableGroups !== true) {
       return {
         complete: false
       };
     }
     
-    if (
-      settings.groupStageComplete ===
-      true
-    ) {
+    if (settings.groupStageComplete === true) {
       return {
         complete: true,
         alreadyComplete: true
@@ -4812,33 +4817,249 @@ async function checkGroupStageCompletion(
       ).first();
     
     const remaining =
-      Number(
-        remainingResult?.remaining
-      ) || 0;
+      Number(remainingResult?.remaining) || 0;
     
-    if (
-      remaining > 0
-    ) {
+    if (remaining > 0) {
       return {
         complete: false,
         remaining
       };
     }
     
-    const teamsQualify =
-      Number(
-        settings.teamsQualify
+    if (
+      settings.tournamentMode ===
+      "champions_league"
+    ) {
+      const directQualifiers =
+        Number(settings.directQualifiers);
+      
+      const playoffStartPosition =
+        Number(settings.playoffStartPosition);
+      
+      const playoffEndPosition =
+        Number(settings.playoffEndPosition);
+      
+      const knockoutSize =
+        Number(settings.knockoutSize);
+      
+      const playoffTeamCount =
+        playoffEndPosition -
+        playoffStartPosition +
+        1;
+      
+      if (
+        !Number.isInteger(directQualifiers) ||
+        directQualifiers < 0
+      ) {
+        throw new Error(
+          "Invalid number of direct qualifiers."
+        );
+      }
+      
+      if (
+        !Number.isInteger(playoffStartPosition) ||
+        !Number.isInteger(playoffEndPosition) ||
+        playoffStartPosition !== directQualifiers + 1 ||
+        playoffEndPosition < playoffStartPosition
+      ) {
+        throw new Error(
+          "Invalid Champions League playoff positions."
+        );
+      }
+      
+      if (
+        playoffTeamCount < 2 ||
+        playoffTeamCount % 2 !== 0
+      ) {
+        throw new Error(
+          "The number of playoff teams must be even and at least two."
+        );
+      }
+      
+      if (
+        !Number.isInteger(knockoutSize) ||
+        ![2, 4, 8, 16, 32].includes(knockoutSize)
+      ) {
+        throw new Error(
+          "Invalid knockout bracket size."
+        );
+      }
+      
+      const expectedKnockoutSize =
+        directQualifiers +
+        playoffTeamCount / 2;
+      
+      if (
+        expectedKnockoutSize !== knockoutSize
+      ) {
+        throw new Error(
+          "The direct qualifiers and playoff winners do not match the configured knockout bracket size."
+        );
+      }
+      
+      const qualification =
+        await getCupQualifiedTeams(
+          db,
+          tournamentId,
+          playoffEndPosition
+        );
+      
+      const rankedTeams =
+        qualification.qualifiedTeams || [];
+      
+      if (
+        rankedTeams.length !== playoffEndPosition
+      ) {
+        throw new Error(
+          `Expected ${playoffEndPosition} ranked teams, but found ${rankedTeams.length}.`
+        );
+      }
+      
+      const rankedPositions =
+        new Set(
+          rankedTeams.map(
+            team => Number(team.pos)
+          )
+        );
+      
+      for (
+        let position = 1; position <= playoffEndPosition; position++
+      ) {
+        if (!rankedPositions.has(position)) {
+          throw new Error(
+            `League standings are missing position ${position}.`
+          );
+        }
+      }
+      
+      const existingPlayoffs =
+        await db.prepare(`
+          SELECT COUNT(*) AS total
+          FROM matches
+          WHERE tournament_id = ?
+          AND match_type = 'knockout'
+          AND round = 'Playoff'
+        `).bind(
+          tournamentId
+        ).first();
+      
+      if (
+        Number(existingPlayoffs?.total) > 0
+      ) {
+        throw new Error(
+          "Champions League playoff matches already exist."
+        );
+      }
+      
+      const playoffRoundMode =
+        settings.playoffRoundMode === "double" ?
+        "double" :
+        "single";
+      
+      const now = Date.now();
+      
+      const playoffMatches = [];
+      
+      for (
+        let i = 0; i < playoffTeamCount / 2; i++
+      ) {
+        const higherRankedTeam =
+          rankedTeams.find(
+            team =>
+            Number(team.pos) ===
+            playoffStartPosition + i
+          );
+        
+        const lowerRankedTeam =
+          rankedTeams.find(
+            team =>
+            Number(team.pos) ===
+            playoffEndPosition - i
+          );
+        
+        if (
+          !higherRankedTeam ||
+          !lowerRankedTeam
+        ) {
+          throw new Error(
+            `Unable to pair playoff tie ${i + 1}.`
+          );
+        }
+        
+        const firstLeg = {
+          id: crypto.randomUUID(),
+          tournament_id: tournamentId,
+          home_team_id: higherRankedTeam.id,
+          away_team_id: lowerRankedTeam.id,
+          home_score: null,
+          away_score: null,
+          played: 0,
+          played_at: null,
+          match_type: "knockout",
+          group_id: null,
+          round: "Playoff",
+          round_index: 0,
+          slot: i,
+          leg: 1,
+          winner_team_id: null,
+          scheduled_at: null,
+          created_at: now,
+          updated_at: null,
+          submission_status: null
+        };
+        
+        playoffMatches.push(firstLeg);
+        
+        if (playoffRoundMode === "double") {
+          playoffMatches.push({
+            ...firstLeg,
+            id: crypto.randomUUID(),
+            home_team_id: lowerRankedTeam.id,
+            away_team_id: higherRankedTeam.id,
+            leg: 2
+          });
+        }
+      }
+      
+      await createMatchesBatch(
+        db,
+        playoffMatches
       );
+      
+      await db.prepare(`
+        UPDATE tournaments
+        SET
+          settings = ?,
+          updated_at = ?
+        WHERE id = ?
+      `).bind(
+        JSON.stringify({
+          ...settings,
+          groupStageComplete: true,
+          playoffsGenerated: true,
+          playoffsComplete: false,
+          knockoutGenerated: false
+        }),
+        now,
+        tournamentId
+      ).run();
+      
+      return {
+        complete: true,
+        playoffsGenerated: true,
+        knockoutGenerated: false,
+        playoffMatches
+      };
+    }
+    
+    const teamsQualify =
+      Number(settings.teamsQualify);
     
     const knockoutSize =
-      Number(
-        settings.knockoutSize
-      );
+      Number(settings.knockoutSize);
     
     if (
-      !Number.isInteger(
-        teamsQualify
-      ) ||
+      !Number.isInteger(teamsQualify) ||
       teamsQualify < 1
     ) {
       throw new Error(
@@ -4847,12 +5068,8 @@ async function checkGroupStageCompletion(
     }
     
     if (
-      !Number.isInteger(
-        knockoutSize
-      ) ||
-      ![2, 4, 8, 16, 32].includes(
-        knockoutSize
-      )
+      !Number.isInteger(knockoutSize) ||
+      ![2, 4, 8, 16, 32].includes(knockoutSize)
     ) {
       throw new Error(
         "Invalid knockout bracket size."
@@ -4870,8 +5087,7 @@ async function checkGroupStageCompletion(
       qualification.qualifiedTeams;
     
     if (
-      qualifiedTeams.length !==
-      knockoutSize
+      qualifiedTeams.length !== knockoutSize
     ) {
       throw new Error(
         `The group stage produced ${qualifiedTeams.length} qualified teams, but the knockout requires ${knockoutSize}.`
@@ -4879,8 +5095,7 @@ async function checkGroupStageCompletion(
     }
     
     if (
-      settings.knockoutPairingMode ===
-      "manual"
+      settings.knockoutPairingMode === "manual"
     ) {
       await db.prepare(`
         UPDATE tournaments
@@ -4922,14 +5137,12 @@ async function checkGroupStageCompletion(
     }
     
     const knockoutRoundMode =
-      settings.knockoutRoundMode ===
-      "double" ?
+      settings.knockoutRoundMode === "double" ?
       "double" :
       "single";
     
     const thirdPlaceMatch =
-      settings.thirdPlaceMatch ===
-      true;
+      settings.thirdPlaceMatch === true;
     
     const knockoutMatches =
       generateDirectKnockoutMatches(
@@ -4946,17 +5159,11 @@ async function checkGroupStageCompletion(
         knockoutPairs
       );
     
-    const now =
-      Date.now();
+    const now = Date.now();
     
-    for (
-      const match of knockoutMatches
-    ) {
-      match.tournament_id =
-        tournamentId;
-      
-      match.created_at =
-        now;
+    for (const match of knockoutMatches) {
+      match.tournament_id = tournamentId;
+      match.created_at = now;
     }
     
     await createMatchesBatch(
@@ -4985,7 +5192,6 @@ async function checkGroupStageCompletion(
       knockoutGenerated: true,
       knockoutMatches
     };
-    
   } catch (error) {
     console.error(
       "checkGroupStageCompletion error:",
@@ -5124,6 +5330,19 @@ async function processKnockoutResult(
     }
   } catch {
     settings = {};
+  }
+  
+  if (
+    settings.tournamentMode ===
+    "champions_league" &&
+    match.round === "Playoff"
+  ) {
+    return await processChampionsLeaguePlayoffResult(
+      db,
+      tournamentId,
+      match,
+      settings
+    );
   }
   
   const isDoubleLeg =
@@ -6497,15 +6716,15 @@ async function updateTournamentRoute(
         body.match_days ??
         body.matchDays;
       updates.match_days =
-        typeof match_days === "string"
-          ? match_days
-          : JSON.stringify(match_days);
+        typeof match_days === "string" ?
+        match_days :
+        JSON.stringify(match_days);
     }
     if (body.settings !== undefined) {
       updates.settings =
-        typeof body.settings === "string"
-          ? body.settings
-          : JSON.stringify(body.settings);
+        typeof body.settings === "string" ?
+        body.settings :
+        JSON.stringify(body.settings);
     }
     if (
       body.access_type !== undefined ||
@@ -6525,13 +6744,13 @@ async function updateTournamentRoute(
       updates.is_public = is_public ? 1 : 0;
     }
     const tournamentImage =
-      body.tournament_image !== undefined
-        ? body.tournament_image
-        : body.tournamentImage !== undefined
-          ? body.tournamentImage
-          : body.image !== undefined
-            ? body.image
-            : undefined;
+      body.tournament_image !== undefined ?
+      body.tournament_image :
+      body.tournamentImage !== undefined ?
+      body.tournamentImage :
+      body.image !== undefined ?
+      body.image :
+      undefined;
     if (tournamentImage !== undefined) {
       if (
         tournamentImage === null ||
@@ -6600,9 +6819,9 @@ async function updateTournamentRoute(
         let settings = {};
         try {
           settings =
-            typeof tournamentData?.settings === "string"
-              ? JSON.parse(tournamentData.settings || "{}")
-              : tournamentData?.settings || {};
+            typeof tournamentData?.settings === "string" ?
+            JSON.parse(tournamentData.settings || "{}") :
+            tournamentData?.settings || {};
         } catch {
           settings = {};
         }
@@ -6676,22 +6895,18 @@ async function updateTournamentRoute(
           ties.get(key).push(match);
         }
         for (
-          let roundIndex = 1;
-          roundIndex <= finalRoundIndex;
-          roundIndex++
+          let roundIndex = 1; roundIndex <= finalRoundIndex; roundIndex++
         ) {
           const expectedSlots =
             knockoutSize /
             Math.pow(2, roundIndex);
           const expectedLegs =
             isDoubleLeg &&
-            roundIndex < finalRoundIndex
-              ? 2
-              : 1;
+            roundIndex < finalRoundIndex ?
+            2 :
+            1;
           for (
-            let slot = 0;
-            slot < expectedSlots;
-            slot++
+            let slot = 0; slot < expectedSlots; slot++
           ) {
             const tieMatches =
               ties.get(`${roundIndex}:${slot}`) || [];
@@ -6704,9 +6919,7 @@ async function updateTournamentRoute(
               });
             }
             for (
-              let leg = 1;
-              leg <= expectedLegs;
-              leg++
+              let leg = 1; leg <= expectedLegs; leg++
             ) {
               const match =
                 tieMatches.find(
@@ -7352,18 +7565,18 @@ async function awardTournamentTrophyBonuses(
     FROM tournaments
     WHERE id = ?
   `).bind(tournamentId).first();
-
+  
   if (!tournament) {
     throw new Error("Tournament not found.");
   }
-
+  
   if (tournament.season_status !== "completed") {
     return {
       success: false,
       message: "Tournament is not completed."
     };
   }
-
+  
   const competitionRules = {
     "724ec974-f388-47f3-b288-7cdd6bdbd715": {
       format: "league",
@@ -7392,47 +7605,47 @@ async function awardTournamentTrophyBonuses(
       }
     }
   };
-
+  
   const rules = competitionRules[tournament.competition_id];
-
+  
   if (!rules) {
     return {
       success: false,
       message: "No trophy bonus rules configured for this competition."
     };
   }
-
+  
   const tournamentFormat = String(
     tournament.format || ""
   ).toLowerCase();
-
+  
   if (tournamentFormat !== rules.format) {
     return {
       success: false,
       message: "Tournament format does not match its competition rules."
     };
   }
-
+  
   let settings = {};
-
+  
   try {
     settings =
-      typeof tournament.settings === "string"
-        ? JSON.parse(tournament.settings || "{}")
-        : tournament.settings || {};
+      typeof tournament.settings === "string" ?
+      JSON.parse(tournament.settings || "{}") :
+      tournament.settings || {};
   } catch {
     settings = {};
   }
-
+  
   let placements = [];
-
+  
   if (tournamentFormat === "league") {
     const table = await rebuildTable(db, tournamentId);
-
+    
     if (!table.length) {
       throw new Error("No league standings found.");
     }
-
+    
     placements = table
       .slice(0, 3)
       .map((team, index) => ({
@@ -7442,18 +7655,18 @@ async function awardTournamentTrophyBonuses(
       }));
   } else {
     const knockoutSize = Number(settings.knockoutSize);
-
+    
     if (
       !Number.isInteger(knockoutSize) ||
       ![2, 4, 8, 16, 32].includes(knockoutSize)
     ) {
       throw new Error("Invalid knockout bracket size.");
     }
-
+    
     const finalRoundIndex = Math.log2(knockoutSize);
     const isDoubleLeg =
       settings.knockoutRoundMode === "double";
-
+    
     const result = await db.prepare(`
       SELECT
         id,
@@ -7470,19 +7683,19 @@ async function awardTournamentTrophyBonuses(
         AND match_type = 'knockout'
       ORDER BY round_index, slot, leg
     `).bind(tournamentId).all();
-
+    
     const matches = result.results || [];
-
+    
     if (!matches.length) {
       throw new Error("No knockout matches found.");
     }
-
+    
     const ties = new Map();
-
+    
     for (const match of matches) {
       const roundIndex = Number(match.round_index);
       const slot = Number(match.slot);
-
+      
       if (
         !Number.isInteger(roundIndex) ||
         !Number.isInteger(slot) ||
@@ -7491,71 +7704,65 @@ async function awardTournamentTrophyBonuses(
       ) {
         continue;
       }
-
+      
       const key = `${roundIndex}:${slot}`;
-
+      
       if (!ties.has(key)) {
         ties.set(key, []);
       }
-
+      
       ties.get(key).push(match);
     }
-
+    
     const completedTies = new Map();
-
+    
     for (
-      let roundIndex = 1;
-      roundIndex <= finalRoundIndex;
-      roundIndex++
+      let roundIndex = 1; roundIndex <= finalRoundIndex; roundIndex++
     ) {
       const expectedSlots =
         knockoutSize / Math.pow(2, roundIndex);
-
+      
       const expectedLegs =
-        isDoubleLeg && roundIndex < finalRoundIndex
-          ? 2
-          : 1;
-
+        isDoubleLeg && roundIndex < finalRoundIndex ?
+        2 :
+        1;
+      
       for (
-        let slot = 0;
-        slot < expectedSlots;
-        slot++
+        let slot = 0; slot < expectedSlots; slot++
       ) {
         const key = `${roundIndex}:${slot}`;
         const tieMatches = ties.get(key) || [];
-
+        
         if (!tieMatches.length) {
           throw new Error(
             `Knockout match is missing for round ${roundIndex}, slot ${slot}.`
           );
         }
-
+        
         const legs = [];
-
+        
         for (
-          let legNumber = 1;
-          legNumber <= expectedLegs;
-          legNumber++
+          let legNumber = 1; legNumber <= expectedLegs; legNumber++
         ) {
           const legMatch = tieMatches.find(
             item => Number(item.leg || 1) === legNumber
           );
-
+          
           if (!legMatch) {
             throw new Error(
               `Knockout leg ${legNumber} is missing for round ${roundIndex}, slot ${slot}.`
             );
           }
-
+          
           if (Number(legMatch.played) !== 1) {
             throw new Error(
               "Cannot award trophy bonuses while knockout matches remain unfinished."
             );
           }
-
+          
           const homeScore = Number(legMatch.home_score);
           const awayScore = Number(legMatch.away_score);
-
+          
           if (
             !Number.isInteger(homeScore) ||
             !Number.isInteger(awayScore) ||
@@ -7566,7 +7773,7 @@ async function awardTournamentTrophyBonuses(
               "A knockout match has an invalid score."
             );
           }
-
+          
           if (
             !legMatch.home_team_id ||
             !legMatch.away_team_id ||
@@ -7576,26 +7783,26 @@ async function awardTournamentTrophyBonuses(
               "A knockout match does not have two valid teams."
             );
           }
-
+          
           legs.push({
             ...legMatch,
             home_score: homeScore,
             away_score: awayScore
           });
         }
-
+        
         const teamA = legs[0].home_team_id;
         const teamB = legs[0].away_team_id;
-
+        
         let teamAScore = 0;
         let teamBScore = 0;
-
+        
         for (const legMatch of legs) {
           const validTeams = [
             legMatch.home_team_id,
             legMatch.away_team_id
           ];
-
+          
           if (
             !validTeams.includes(teamA) ||
             !validTeams.includes(teamB) ||
@@ -7605,7 +7812,7 @@ async function awardTournamentTrophyBonuses(
               "The legs of a knockout tie do not contain the same teams."
             );
           }
-
+          
           if (legMatch.home_team_id === teamA) {
             teamAScore += legMatch.home_score;
             teamBScore += legMatch.away_score;
@@ -7614,19 +7821,19 @@ async function awardTournamentTrophyBonuses(
             teamBScore += legMatch.home_score;
           }
         }
-
+        
         if (teamAScore === teamBScore) {
           throw new Error(
             `The aggregate score is tied in round ${roundIndex}, slot ${slot}. A winner must be resolved before awarding bonuses.`
           );
         }
-
+        
         const winnerId =
           teamAScore > teamBScore ? teamA : teamB;
-
+        
         const loserId =
           winnerId === teamA ? teamB : teamA;
-
+        
         completedTies.set(key, {
           roundIndex,
           slot,
@@ -7635,50 +7842,48 @@ async function awardTournamentTrophyBonuses(
         });
       }
     }
-
+    
     const finalTie = completedTies.get(
       `${finalRoundIndex}:0`
     );
-
+    
     if (!finalTie) {
       throw new Error(
         "Could not determine the tournament final."
       );
     }
-
+    
     placements.push({
       team_id: finalTie.winnerId,
       position: 1,
       bonus: rules.bonuses[1]
     });
-
+    
     placements.push({
       team_id: finalTie.loserId,
       position: 2,
       bonus: rules.bonuses[2]
     });
-
+    
     const semifinalRoundIndex = finalRoundIndex - 1;
-
+    
     if (semifinalRoundIndex >= 1) {
       const semifinalSlots =
         knockoutSize / Math.pow(2, semifinalRoundIndex);
-
+      
       for (
-        let slot = 0;
-        slot < semifinalSlots;
-        slot++
+        let slot = 0; slot < semifinalSlots; slot++
       ) {
         const tie = completedTies.get(
           `${semifinalRoundIndex}:${slot}`
         );
-
+        
         if (!tie) {
           throw new Error(
             "Could not determine all semi-finalists."
           );
         }
-
+        
         placements.push({
           team_id: tie.loserId,
           position: 3,
@@ -7686,28 +7891,26 @@ async function awardTournamentTrophyBonuses(
         });
       }
     }
-
+    
     const quarterFinalRoundIndex = finalRoundIndex - 2;
-
+    
     if (quarterFinalRoundIndex >= 1) {
       const quarterFinalSlots =
         knockoutSize / Math.pow(2, quarterFinalRoundIndex);
-
+      
       for (
-        let slot = 0;
-        slot < quarterFinalSlots;
-        slot++
+        let slot = 0; slot < quarterFinalSlots; slot++
       ) {
         const tie = completedTies.get(
           `${quarterFinalRoundIndex}:${slot}`
         );
-
+        
         if (!tie) {
           throw new Error(
             "Could not determine all quarter-finalists."
           );
         }
-
+        
         placements.push({
           team_id: tie.loserId,
           position: 4,
@@ -7715,19 +7918,19 @@ async function awardTournamentTrophyBonuses(
         });
       }
     }
-
+    
     const champion = await db.prepare(`
       SELECT id, name
       FROM teams
       WHERE id = ?
     `).bind(finalTie.winnerId).first();
-
+    
     if (!champion) {
       throw new Error(
         "Tournament champion team was not found."
       );
     }
-
+    
     await db.prepare(`
       UPDATE tournaments
       SET
@@ -7742,7 +7945,7 @@ async function awardTournamentTrophyBonuses(
       tournamentId
     ).run();
   }
-
+  
   const statements = placements.map(placement =>
     db.prepare(`
       INSERT INTO tournament_trophy_awards (
@@ -7775,11 +7978,11 @@ async function awardTournamentTrophyBonuses(
       placement.team_id
     )
   );
-
+  
   if (statements.length) {
     await db.batch(statements);
   }
-
+  
   const championshipResult = await db.prepare(`
     INSERT INTO tournament_championship_trophies (
       tournament_id,
@@ -7798,7 +8001,7 @@ async function awardTournamentTrophyBonuses(
     Date.now(),
     tournamentId
   ).run();
-
+  
   if (championshipResult.meta?.changes === 1) {
     await db.prepare(`
       UPDATE users
@@ -7813,7 +8016,7 @@ async function awardTournamentTrophyBonuses(
       )
     `).bind(tournamentId).run();
   }
-
+  
   return {
     success: true,
     message: "Tournament trophy bonuses processed.",
@@ -8032,12 +8235,12 @@ async function getHeadToHeadComparisonRoute(
       const awayScore = Number(match.away_score);
       const player1IsHome =
         match.home_player_id === player1Id;
-      const player1Goals = player1IsHome
-        ? homeScore
-        : awayScore;
-      const player2Goals = player1IsHome
-        ? awayScore
-        : homeScore;
+      const player1Goals = player1IsHome ?
+        homeScore :
+        awayScore;
+      const player2Goals = player1IsHome ?
+        awayScore :
+        homeScore;
       player1Stats.played++;
       player2Stats.played++;
       player1Stats.goals_scored += player1Goals;
@@ -8075,21 +8278,21 @@ async function getHeadToHeadComparisonRoute(
       };
     });
     for (const stats of [
-      player1Stats,
-      player2Stats
-    ]) {
+        player1Stats,
+        player2Stats
+      ]) {
       stats.goal_difference =
         stats.goals_scored -
         stats.goals_conceded;
-      stats.win_percentage = stats.played
-        ? Number(
-            (
-              stats.wins /
-              stats.played *
-              100
-            ).toFixed(2)
-          )
-        : 0;
+      stats.win_percentage = stats.played ?
+        Number(
+          (
+            stats.wins /
+            stats.played *
+            100
+          ).toFixed(2)
+        ) :
+        0;
     }
     return Response.json({
       success: true,
@@ -8196,4 +8399,1181 @@ async function searchPlayersRoute(
       status: 500
     });
   }
+}
+
+
+
+
+
+
+function createChampionsLeagueGroupMatch(
+  groupId,
+  homeTeamId,
+  awayTeamId,
+  roundIndex,
+  slot,
+  leg
+) {
+  return {
+    id: crypto.randomUUID(),
+    tournament_id: null,
+    home_team_id: homeTeamId,
+    away_team_id: awayTeamId,
+    home_score: null,
+    away_score: null,
+    played: 0,
+    played_at: null,
+    match_type: "group",
+    group_id: groupId,
+    round: `League Stage - Round ${roundIndex}`,
+    round_index: roundIndex,
+    slot,
+    leg,
+    winner_team_id: null,
+    scheduled_at: null,
+    created_at: Date.now(),
+    updated_at: null,
+    submission_status: null
+  };
+}
+
+function generateChampionsLeagueGroupMatches(
+  group,
+  teamIds,
+  groupRoundMode = "single"
+) {
+  const matches = [];
+  const teams = [...teamIds];
+  if (teams.length < 2) {
+    return matches;
+  }
+  const doubleLeg = groupRoundMode === "double";
+  if (teams.length % 2 !== 0) {
+    teams.push(null);
+  }
+  const teamCount = teams.length;
+  const roundsPerLeg = teamCount - 1;
+  const matchesPerRound = teamCount / 2;
+  const firstLegFixtures = [];
+  let rotatingTeams = [...teams];
+  for (
+    let roundIndex = 1; roundIndex <= roundsPerLeg; roundIndex++
+  ) {
+    const roundFixtures = [];
+    for (
+      let slot = 0; slot < matchesPerRound; slot++
+    ) {
+      const firstTeam = rotatingTeams[slot];
+      const secondTeam =
+        rotatingTeams[teamCount - 1 - slot];
+      if (firstTeam && secondTeam) {
+        const homeFirst =
+          (roundIndex + slot) % 2 === 0;
+        const fixture = {
+          homeTeamId: homeFirst ?
+            firstTeam :
+            secondTeam,
+          awayTeamId: homeFirst ?
+            secondTeam :
+            firstTeam,
+          slot: slot + 1
+        };
+        roundFixtures.push(fixture);
+        matches.push(
+          createChampionsLeagueGroupMatch(
+            group.id,
+            fixture.homeTeamId,
+            fixture.awayTeamId,
+            roundIndex,
+            fixture.slot,
+            1
+          )
+        );
+      }
+    }
+    firstLegFixtures.push(roundFixtures);
+    rotatingTeams = [
+      rotatingTeams[0],
+      rotatingTeams[teamCount - 1],
+      ...rotatingTeams.slice(1, teamCount - 1)
+    ];
+  }
+  if (doubleLeg) {
+    for (
+      let roundIndex = 1; roundIndex <= roundsPerLeg; roundIndex++
+    ) {
+      const fixtures =
+        firstLegFixtures[roundIndex - 1];
+      for (const fixture of fixtures) {
+        matches.push(
+          createChampionsLeagueGroupMatch(
+            group.id,
+            fixture.awayTeamId,
+            fixture.homeTeamId,
+            roundsPerLeg + roundIndex,
+            fixture.slot,
+            2
+          )
+        );
+      }
+    }
+  }
+  return matches;
+}
+
+function generateLimitedOpponentMatches(
+group,
+teamIds,
+opponentsPerTeam,
+groupRoundMode = “single”
+) {
+const teamCount = teamIds.length;
+
+if (teamCount < 2) {
+return [];
+}
+
+if (
+!Number.isInteger(opponentsPerTeam) ||
+opponentsPerTeam < 1 ||
+opponentsPerTeam >= teamCount
+) {
+throw new Error(
+Opponents per team must be between 1 and ${teamCount - 1}.
+);
+}
+
+if (
+groupRoundMode !== “single” &&
+groupRoundMode !== “double”
+) {
+throw new Error(
+“Group round mode must be single or double.”
+);
+}
+
+const teams = […teamIds];
+
+if (new Set(teams).size !== teams.length) {
+throw new Error(“Duplicate teams cannot be scheduled.”);
+}
+
+for (let i = teams.length - 1; i > 0; i–) {
+const j = Math.floor(Math.random() * (i + 1));
+[teams[i], teams[j]] = [teams[j], teams[i]];
+}
+
+const doubleLeg = groupRoundMode === “double”;
+const rotationTeams = […teams];
+
+if (rotationTeams.length % 2 !== 0) {
+rotationTeams.push(null);
+}
+
+const totalSlots = rotationTeams.length;
+const roundsPerCycle = totalSlots - 1;
+const requiredRounds = opponentsPerTeam;
+const firstLegRounds = [];
+
+for (
+let roundIndex = 0;
+roundIndex < requiredRounds;
+roundIndex++
+) {
+const roundFixtures = [];
+const roundRotation =
+roundIndex % roundsPerCycle;
+
+for (
+  let i = 0;
+  i < totalSlots / 2;
+  i++
+) {
+  const firstIndex = i;
+  const secondIndex = totalSlots - 1 - i;
+  const firstTeam = rotationTeams[firstIndex];
+  const secondTeam = rotationTeams[secondIndex];
+  if (firstTeam === null || secondTeam === null) {
+    continue;
+  }
+  const homeFirst = Math.random() < 0.5;
+  roundFixtures.push({
+    homeTeamId: homeFirst ? firstTeam : secondTeam,
+    awayTeamId: homeFirst ? secondTeam : firstTeam,
+    slot: roundFixtures.length + 1
+  });
+}
+firstLegRounds.push(roundFixtures);
+const lastTeam = rotationTeams.pop();
+rotationTeams.splice(1, 0, lastTeam);
+
+}
+
+const matches = [];
+
+for (
+let roundIndex = 0;
+roundIndex < firstLegRounds.length;
+roundIndex++
+) {
+for (const fixture of firstLegRounds[roundIndex]) {
+matches.push(
+createChampionsLeagueGroupMatch(
+group.id,
+fixture.homeTeamId,
+fixture.awayTeamId,
+roundIndex + 1,
+fixture.slot,
+1
+)
+);
+}
+}
+
+if (doubleLeg) {
+const roundsPerLeg = firstLegRounds.length;
+
+for (
+  let roundIndex = 0;
+  roundIndex < roundsPerLeg;
+  roundIndex++
+) {
+  for (const fixture of firstLegRounds[roundIndex]) {
+    matches.push(
+      createChampionsLeagueGroupMatch(
+        group.id,
+        fixture.awayTeamId,
+        fixture.homeTeamId,
+        roundsPerLeg + roundIndex + 1,
+        fixture.slot,
+        2
+      )
+    );
+  }
+}
+
+}
+
+return matches;
+}
+async function generateChampionsLeagueRoute(
+  request,
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournamentForUser(
+        env.DB,
+        tournamentId,
+        user.id
+      );
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    if (tournament.admin_uid !== user.id) {
+      return Response.json({
+        success: false,
+        message: "Only the tournament admin can generate the Champions League."
+      }, {
+        status: 403
+      });
+    }
+    const body = await request.json();
+    const settings =
+      body.settings &&
+      typeof body.settings === "object" &&
+      !Array.isArray(body.settings) ?
+      body.settings :
+      body;
+    const groupRoundMode =
+      settings.groupRoundMode === "double" ?
+      "double" :
+      "single";
+    const groupScheduleMode =
+      settings.groupScheduleMode === "limited" ?
+      "limited" :
+      "full";
+    const opponentsPerTeam =
+      Number(settings.opponentsPerTeam);
+    const directQualifiers =
+      Number(settings.directQualifiers);
+    const playoffStartPosition =
+      Number(settings.playoffStartPosition);
+    const playoffEndPosition =
+      Number(settings.playoffEndPosition);
+    
+    const requestedPlayoffRoundMode =
+      settings.playoffRoundMode ?? "single";
+    
+    if (
+      requestedPlayoffRoundMode !== "single" &&
+      requestedPlayoffRoundMode !== "double"
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid playoff round mode."
+      }, {
+        status: 400
+      });
+    }
+    
+    const playoffRoundMode =
+      requestedPlayoffRoundMode;
+    
+    const requestedKnockoutRoundMode =
+      settings.knockoutRoundMode ?? "single";
+    if (
+      requestedKnockoutRoundMode !== "single" &&
+      requestedKnockoutRoundMode !== "double"
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid knockout round mode."
+      }, {
+        status: 400
+      });
+    }
+    const knockoutRoundMode =
+      requestedKnockoutRoundMode;
+    const thirdPlaceMatch =
+      settings.thirdPlaceMatch === true;
+    const teams =
+      await getTeamsByTournament(
+        env.DB,
+        tournamentId
+      );
+    if (!teams || teams.length < 4) {
+      return Response.json({
+        success: false,
+        message: "At least 4 teams are required for the Champions League."
+      }, {
+        status: 400
+      });
+    }
+    if (
+      new Set(teams.map(team => team.id)).size !==
+      teams.length
+    ) {
+      return Response.json({
+        success: false,
+        message: "Duplicate team registrations were found. Resolve them before generating fixtures."
+      }, {
+        status: 400
+      });
+    }
+    if (
+      !Number.isInteger(directQualifiers) ||
+      directQualifiers < 0 ||
+      directQualifiers >= teams.length
+    ) {
+      return Response.json({
+        success: false,
+        message: "Direct qualifiers must be a whole number from 0 to one less than the number of registered teams."
+      }, {
+        status: 400
+      });
+    }
+    if (
+      !Number.isInteger(playoffStartPosition) ||
+      !Number.isInteger(playoffEndPosition) ||
+      playoffStartPosition < 1 ||
+      playoffEndPosition > teams.length ||
+      playoffEndPosition < playoffStartPosition
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid playoff positions."
+      }, {
+        status: 400
+      });
+    }
+    if (
+      playoffStartPosition !==
+      directQualifiers + 1
+    ) {
+      return Response.json({
+        success: false,
+        message: "Playoffs must start immediately after the direct qualifiers."
+      }, {
+        status: 400
+      });
+    }
+    const playoffTeamCount =
+      playoffEndPosition -
+      playoffStartPosition +
+      1;
+    if (
+      playoffTeamCount < 2 ||
+      playoffTeamCount % 2 !== 0
+    ) {
+      return Response.json({
+        success: false,
+        message: "The playoff positions must contain an even number of at least 2 teams."
+      }, {
+        status: 400
+      });
+    }
+    const knockoutSize =
+      directQualifiers +
+      playoffTeamCount / 2;
+    if (
+      ![2, 4, 8, 16, 32].includes(knockoutSize)
+    ) {
+      return Response.json({
+        success: false,
+        message: "Direct qualifiers plus playoff winners must produce a valid knockout bracket of 2, 4, 8, 16, or 32 teams."
+      }, {
+        status: 400
+      });
+    }
+    if (
+      thirdPlaceMatch &&
+      knockoutSize < 4
+    ) {
+      return Response.json({
+        success: false,
+        message: "A third-place match requires at least 4 knockout teams."
+      }, {
+        status: 400
+      });
+    }
+    if (
+      groupScheduleMode === "limited" &&
+      (
+        !Number.isInteger(opponentsPerTeam) ||
+        opponentsPerTeam < 1 ||
+        opponentsPerTeam >= teams.length
+      )
+    ) {
+      return Response.json({
+        success: false,
+        message: `Opponents per team must be between 1 and ${teams.length - 1}.`
+      }, {
+        status: 400
+      });
+    }
+    if (
+      groupScheduleMode === "limited" &&
+      (
+        teams.length * opponentsPerTeam
+      ) % 2 !== 0
+    ) {
+      return Response.json({
+        success: false,
+        message: "This number of teams and opponents per team cannot produce a valid schedule. Choose a different opponents-per-team value."
+      }, {
+        status: 400
+      });
+    }
+    const now = Date.now();
+    const group = {
+      id: crypto.randomUUID(),
+      tournament_id: tournamentId,
+      name: "League Stage",
+      created_at: now
+    };
+    const teamIds =
+      teams.map(team => team.id);
+    let groupMatches;
+    try {
+      groupMatches =
+        groupScheduleMode === "limited" ?
+        generateLimitedOpponentMatches(
+          group,
+          teamIds,
+          opponentsPerTeam,
+          groupRoundMode
+        ) :
+        generateChampionsLeagueGroupMatches(
+          group,
+          teamIds,
+          groupRoundMode
+        );
+    } catch (error) {
+      return Response.json({
+        success: false,
+        message: error.message ||
+          "Unable to generate league-stage fixtures."
+      }, {
+        status: 400
+      });
+    }
+    for (const match of groupMatches) {
+      match.tournament_id = tournamentId;
+      match.created_at = now;
+    }
+    const existingSettings = (() => {
+      try {
+        if (typeof tournament.settings === "string") {
+          return JSON.parse(tournament.settings) || {};
+        }
+        if (
+          tournament.settings &&
+          typeof tournament.settings === "object"
+        ) {
+          return { ...tournament.settings };
+        }
+        return {};
+      } catch {
+        return {};
+      }
+    })();
+    const updatedSettings = {
+      ...existingSettings,
+      tournamentMode: "champions_league",
+      enableGroups: true,
+      groupingMode: "auto",
+      groupScheduleMode,
+      opponentsPerTeam: groupScheduleMode === "limited" ?
+        opponentsPerTeam :
+        null,
+      groupRoundMode,
+      directQualifiers,
+      playoffStartPosition,
+      playoffEndPosition,
+      playoffRoundMode,
+      knockoutSize,
+      knockoutRoundMode,
+      thirdPlaceMatch,
+      groupStageComplete: false,
+      knockoutGenerated: false
+    };
+    await deleteTournamentCupData(
+      env.DB,
+      tournamentId
+    );
+    await env.DB.prepare(`
+      UPDATE tournament_players
+      SET
+        played = 0,
+        wins = 0,
+        draws = 0,
+        losses = 0,
+        gf = 0,
+        ga = 0,
+        points = 0
+      WHERE tournament_id = ?
+    `).bind(
+      tournamentId
+    ).run();
+    await createGroupsBatch(
+      env.DB,
+      [group]
+    );
+    await createMatchesBatch(
+      env.DB,
+      groupMatches
+    );
+    await env.DB.prepare(`
+      UPDATE tournaments
+      SET
+        settings = ?,
+        champion = NULL,
+        champion_name = NULL,
+        updated_at = ?
+      WHERE id = ?
+    `).bind(
+      JSON.stringify(updatedSettings),
+      Date.now(),
+      tournamentId
+    ).run();
+    return Response.json({
+      success: true,
+      message: "Champions League league stage generated successfully.",
+      tournamentId,
+      settings: updatedSettings,
+      groups: [group],
+      groupMatches,
+      knockoutMatches: []
+    });
+  } catch (error) {
+    console.error(
+      "generateChampionsLeagueRoute error:",
+      error
+    );
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to generate Champions League."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function generateChampionsLeagueMainKnockout(
+  db,
+  tournamentId,
+  settings
+) {
+  const directQualifiers =
+    Number(settings.directQualifiers);
+  
+  const playoffStartPosition =
+    Number(settings.playoffStartPosition);
+  
+  const playoffEndPosition =
+    Number(settings.playoffEndPosition);
+  
+  const knockoutSize =
+    Number(settings.knockoutSize);
+  
+  const qualification =
+    await getCupQualifiedTeams(
+      db,
+      tournamentId,
+      playoffEndPosition
+    );
+  
+  const rankedTeams =
+    qualification.qualifiedTeams || [];
+  
+  const directTeams =
+    rankedTeams.filter(
+      team =>
+      Number(team.pos) <= directQualifiers
+    );
+  
+  if (
+    directTeams.length !== directQualifiers
+  ) {
+    throw new Error(
+      "Unable to retrieve all direct qualifiers."
+    );
+  }
+  
+  const playoffMatchesResult =
+    await db.prepare(`
+      SELECT
+        id,
+        slot,
+        leg,
+        played,
+        winner_team_id
+      FROM matches
+      WHERE tournament_id = ?
+      AND match_type = 'knockout'
+      AND round = 'Playoff'
+      AND round_index = 0
+      ORDER BY slot ASC, leg ASC
+    `).bind(
+      tournamentId
+    ).all();
+  
+  const playoffMatches =
+    playoffMatchesResult.results || [];
+  
+  const playoffTeamCount =
+    playoffEndPosition -
+    playoffStartPosition +
+    1;
+  
+  const expectedLegs =
+    settings.playoffRoundMode === "double" ?
+    2 :
+    1;
+  
+  const expectedPlayoffMatches =
+    playoffTeamCount / 2 *
+    expectedLegs;
+  
+  if (
+    playoffMatches.length !==
+    expectedPlayoffMatches
+  ) {
+    throw new Error(
+      "The playoff match count is incorrect."
+    );
+  }
+  
+  if (
+    playoffMatches.some(
+      match =>
+      Number(match.played) !== 1
+    )
+  ) {
+    return {
+      generated: false,
+      reason: "Playoffs are not complete."
+    };
+  }
+  
+  const playoffWinners = [];
+  
+  const playoffSlots = [
+    ...new Set(
+      playoffMatches.map(
+        match => Number(match.slot)
+      )
+    )
+  ].sort(
+    (a, b) => a - b
+  );
+  
+  for (const slot of playoffSlots) {
+    const tie =
+      playoffMatches.filter(
+        match =>
+        Number(match.slot) === slot
+      );
+    
+    if (
+      tie.length !== expectedLegs ||
+      tie.some(
+        match => !match.winner_team_id
+      )
+    ) {
+      throw new Error(
+        `Playoff tie ${slot + 1} has no confirmed winner.`
+      );
+    }
+    
+    const winnerIds = [
+      ...new Set(
+        tie.map(
+          match => String(match.winner_team_id)
+        )
+      )
+    ];
+    
+    if (winnerIds.length !== 1) {
+      throw new Error(
+        `Playoff tie ${slot + 1} has inconsistent winners.`
+      );
+    }
+    
+    const winnerId =
+      tie[0].winner_team_id;
+    
+    const rankedWinner =
+      rankedTeams.find(
+        team =>
+        String(team.id) ===
+        String(winnerId)
+      );
+    
+    if (!rankedWinner) {
+      throw new Error(
+        `Unable to find the league position for playoff winner ${winnerId}.`
+      );
+    }
+    
+    playoffWinners.push({
+      id: rankedWinner.id,
+      name: rankedWinner.name,
+      seed: playoffEndPosition - slot
+    });
+  }
+  
+  const participants = [
+    ...directTeams.map(
+      team => ({
+        id: team.id,
+        name: team.name,
+        seed: Number(team.pos)
+      })
+    ),
+    ...playoffWinners
+  ];
+  
+  if (
+    participants.length !== knockoutSize
+  ) {
+    throw new Error(
+      `The main knockout requires ${knockoutSize} teams, but ${participants.length} are available.`
+    );
+  }
+  
+  if (
+    new Set(
+      participants.map(
+        team => String(team.id)
+      )
+    ).size !== participants.length
+  ) {
+    throw new Error(
+      "Duplicate teams were found in the main knockout participants."
+    );
+  }
+  
+  participants.sort(
+    (a, b) => a.seed - b.seed
+  );
+  
+  const knockoutPairs = [];
+  
+  for (
+    let i = 0; i < participants.length / 2; i++
+  ) {
+    knockoutPairs.push([
+      participants[i].id,
+      participants[
+        participants.length - 1 - i
+      ].id
+    ]);
+  }
+  
+  const knockoutRoundMode =
+    settings.knockoutRoundMode === "double" ?
+    "double" :
+    "single";
+  
+  const knockoutMatches =
+    generateDirectKnockoutMatches(
+      participants.map(
+        team => ({
+          id: team.id,
+          name: team.name
+        })
+      ),
+      knockoutSize,
+      "manual",
+      knockoutRoundMode,
+      settings.thirdPlaceMatch === true,
+      knockoutPairs
+    );
+  
+  const now = Date.now();
+  
+  for (const match of knockoutMatches) {
+    match.tournament_id = tournamentId;
+    match.created_at = now;
+  }
+  
+  await createMatchesBatch(
+    db,
+    knockoutMatches
+  );
+  
+  await db.prepare(`
+    UPDATE tournaments
+    SET
+      settings = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).bind(
+    JSON.stringify({
+      ...settings,
+      groupStageComplete: true,
+      playoffsGenerated: true,
+      playoffsComplete: true,
+      knockoutGenerated: true
+    }),
+    now,
+    tournamentId
+  ).run();
+  
+  return {
+    generated: true,
+    knockoutMatches,
+    participants
+  };
+}
+
+async function processChampionsLeaguePlayoffResult(
+  db,
+  tournamentId,
+  match,
+  settings
+) {
+  const slot = Number(match.slot);
+  
+  if (
+    !Number.isInteger(slot) ||
+    slot < 0
+  ) {
+    throw new Error(
+      "Invalid playoff match slot."
+    );
+  }
+  
+  const isDoubleLeg =
+    settings.playoffRoundMode === "double";
+  
+  const expectedLegs =
+    isDoubleLeg ? 2 : 1;
+  
+  const tieResult =
+    await db.prepare(`
+      SELECT
+        id,
+        home_team_id,
+        away_team_id,
+        home_score,
+        away_score,
+        played,
+        winner_team_id,
+        leg,
+        slot
+      FROM matches
+      WHERE tournament_id = ?
+      AND match_type = 'knockout'
+      AND round = 'Playoff'
+      AND round_index = 0
+      AND slot = ?
+      ORDER BY leg ASC
+    `).bind(
+      tournamentId,
+      slot
+    ).all();
+  
+  const tie =
+    tieResult.results || [];
+  
+  if (
+    tie.length !== expectedLegs
+  ) {
+    return {
+      processed: false,
+      reason: "The playoff tie does not contain the expected number of legs."
+    };
+  }
+  
+  if (
+    tie.some(
+      item =>
+      Number(item.played) !== 1
+    )
+  ) {
+    return {
+      processed: false,
+      reason: isDoubleLeg ?
+        "Waiting for both playoff legs." : "The playoff match has not been completed."
+    };
+  }
+  
+  let winnerTeamId = null;
+  
+  if (isDoubleLeg) {
+    const leg1 =
+      tie.find(
+        item => Number(item.leg) === 1
+      );
+    
+    const leg2 =
+      tie.find(
+        item => Number(item.leg) === 2
+      );
+    
+    if (
+      !leg1 ||
+      !leg2 ||
+      !leg1.home_team_id ||
+      !leg1.away_team_id ||
+      !leg2.home_team_id ||
+      !leg2.away_team_id
+    ) {
+      return {
+        processed: false,
+        reason: "Both playoff legs must have valid teams."
+      };
+    }
+    
+    const teamA =
+      String(leg1.home_team_id);
+    
+    const teamB =
+      String(leg1.away_team_id);
+    
+    const leg2Teams = [
+      String(leg2.home_team_id),
+      String(leg2.away_team_id)
+    ];
+    
+    if (
+      teamA === teamB ||
+      !leg2Teams.includes(teamA) ||
+      !leg2Teams.includes(teamB)
+    ) {
+      return {
+        processed: false,
+        reason: "The playoff legs do not contain the same two teams."
+      };
+    }
+    
+    const scores = [
+      leg1.home_score,
+      leg1.away_score,
+      leg2.home_score,
+      leg2.away_score
+    ];
+    
+    if (
+      scores.some(
+        score =>
+        score === null ||
+        score === undefined ||
+        !Number.isInteger(Number(score)) ||
+        Number(score) < 0
+      )
+    ) {
+      return {
+        processed: false,
+        reason: "Invalid playoff scores."
+      };
+    }
+    
+    let teamAScore = 0;
+    let teamBScore = 0;
+    
+    if (
+      String(leg1.home_team_id) === teamA
+    ) {
+      teamAScore += Number(leg1.home_score);
+      teamBScore += Number(leg1.away_score);
+    } else {
+      teamAScore += Number(leg1.away_score);
+      teamBScore += Number(leg1.home_score);
+    }
+    
+    if (
+      String(leg2.home_team_id) === teamA
+    ) {
+      teamAScore += Number(leg2.home_score);
+      teamBScore += Number(leg2.away_score);
+    } else {
+      teamAScore += Number(leg2.away_score);
+      teamBScore += Number(leg2.home_score);
+    }
+    
+    if (teamAScore === teamBScore) {
+      return {
+        processed: false,
+        reason: "The playoff aggregate score is tied."
+      };
+    }
+    
+    winnerTeamId =
+      teamAScore > teamBScore ?
+      leg1.home_team_id === teamA ?
+      leg1.home_team_id :
+      leg1.away_team_id :
+      leg1.home_team_id === teamA ?
+      leg1.away_team_id :
+      leg1.home_team_id;
+  } else {
+    const homeScore =
+      Number(match.home_score);
+    
+    const awayScore =
+      Number(match.away_score);
+    
+    if (
+      !Number.isInteger(homeScore) ||
+      !Number.isInteger(awayScore) ||
+      homeScore < 0 ||
+      awayScore < 0
+    ) {
+      return {
+        processed: false,
+        reason: "Invalid playoff score."
+      };
+    }
+    
+    if (homeScore === awayScore) {
+      return {
+        processed: false,
+        reason: "The playoff match is tied."
+      };
+    }
+    
+    winnerTeamId =
+      homeScore > awayScore ?
+      match.home_team_id :
+      match.away_team_id;
+  }
+  
+  const now = Date.now();
+  
+  for (const leg of tie) {
+    await db.prepare(`
+      UPDATE matches
+      SET
+        winner_team_id = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).bind(
+      winnerTeamId,
+      now,
+      leg.id
+    ).run();
+  }
+  
+  const remainingResult =
+    await db.prepare(`
+      SELECT COUNT(*) AS remaining
+      FROM matches
+      WHERE tournament_id = ?
+      AND match_type = 'knockout'
+      AND round = 'Playoff'
+      AND played = 0
+    `).bind(
+      tournamentId
+    ).first();
+  
+  const remaining =
+    Number(remainingResult?.remaining) || 0;
+  
+  if (remaining > 0) {
+    return {
+      processed: true,
+      winnerTeamId,
+      playoffsComplete: false,
+      remaining
+    };
+  }
+  
+  const latestTournament =
+    await db.prepare(`
+      SELECT settings
+      FROM tournaments
+      WHERE id = ?
+    `).bind(
+      tournamentId
+    ).first();
+  
+  let latestSettings = {};
+  
+  try {
+    latestSettings =
+      typeof latestTournament?.settings === "string" ?
+      JSON.parse(latestTournament.settings) || {} :
+      latestTournament?.settings || {};
+  } catch {
+    latestSettings = {};
+  }
+  
+  if (
+    latestSettings.knockoutGenerated === true
+  ) {
+    return {
+      processed: true,
+      winnerTeamId,
+      playoffsComplete: true,
+      knockoutGenerated: true,
+      alreadyGenerated: true
+    };
+  }
+  
+  const knockoutResult =
+    await generateChampionsLeagueMainKnockout(
+      db,
+      tournamentId,
+      latestSettings
+    );
+  
+  return {
+    processed: true,
+    winnerTeamId,
+    playoffsComplete: true,
+    knockoutGenerated: knockoutResult.generated,
+    knockoutMatches: knockoutResult.knockoutMatches || []
+  };
 }
