@@ -8493,10 +8493,20 @@ function generateLimitedOpponentMatches(
     );
   }
 
+  if (
+    (teamCount * opponentsPerTeam) % 2 !== 0
+  ) {
+    throw new Error(
+      "This number of teams and opponents per team cannot produce a schedule where every team has the same number of unique opponents."
+    );
+  }
+
   const teams = [...teamIds];
 
-  if (new Set(teams).size !== teams.length) {
-    throw new Error("Duplicate teams cannot be scheduled.");
+  if (new Set(teams).size !== teamCount) {
+    throw new Error(
+      "Duplicate teams cannot be scheduled."
+    );
   }
 
   for (let i = teams.length - 1; i > 0; i--) {
@@ -8504,56 +8514,164 @@ function generateLimitedOpponentMatches(
     [teams[i], teams[j]] = [teams[j], teams[i]];
   }
 
-  const doubleLeg = groupRoundMode === "double";
-  const rotationTeams = [...teams];
+  const edges = [];
 
-  if (rotationTeams.length % 2 !== 0) {
-    rotationTeams.push(null);
-  }
-
-  const totalSlots = rotationTeams.length;
-  const roundsPerCycle = totalSlots - 1;
-  const requiredRounds = opponentsPerTeam;
-  const firstLegRounds = [];
-
-  for (
-    let roundIndex = 0;
-    roundIndex < requiredRounds;
-    roundIndex++
+  if (
+    teamCount % 2 === 1 ||
+    opponentsPerTeam % 2 === 0
   ) {
-    const roundFixtures = [];
-    const roundRotation =
-      roundIndex % roundsPerCycle;
+    const maxDistance = Math.floor(
+      opponentsPerTeam / 2
+    );
+
+    for (
+      let distance = 1;
+      distance <= maxDistance;
+      distance++
+    ) {
+      for (let i = 0; i < teamCount; i++) {
+        edges.push({
+          a: i,
+          b: (i + distance) % teamCount
+        });
+      }
+    }
+  } else {
+    const pairedOffsets =
+      (opponentsPerTeam - 1) / 2;
+
+    for (
+      let distance = 1;
+      distance <= pairedOffsets;
+      distance++
+    ) {
+      for (let i = 0; i < teamCount; i++) {
+        edges.push({
+          a: i,
+          b: (i + distance) % teamCount
+        });
+      }
+    }
 
     for (
       let i = 0;
-      i < totalSlots / 2;
+      i < teamCount / 2;
       i++
     ) {
-      const firstIndex = i;
-      const secondIndex = totalSlots - 1 - i;
-      const firstTeam = rotationTeams[firstIndex];
-      const secondTeam = rotationTeams[secondIndex];
-      if (firstTeam === null || secondTeam === null) {
-        continue;
-      }
-      const homeFirst = Math.random() < 0.5;
-      roundFixtures.push({
-        homeTeamId: homeFirst ? firstTeam : secondTeam,
-        awayTeamId: homeFirst ? secondTeam : firstTeam,
-        slot: roundFixtures.length + 1
+      edges.push({
+        a: i,
+        b: i + teamCount / 2
       });
     }
-    firstLegRounds.push(roundFixtures);
-    const lastTeam = rotationTeams.pop();
-    rotationTeams.splice(1, 0, lastTeam);
   }
 
-  const matches = [];
+  for (let i = edges.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [edges[i], edges[j]] = [edges[j], edges[i]];
+  }
+
+  const scheduledRounds = [];
+  let remainingEdges = [...edges];
+
+  while (remainingEdges.length > 0) {
+    for (
+      let i = remainingEdges.length - 1;
+      i > 0;
+      i--
+    ) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [remainingEdges[i], remainingEdges[j]] = [
+        remainingEdges[j],
+        remainingEdges[i]
+      ];
+    }
+
+    const usedTeams = new Set();
+    const roundEdges = [];
+    const nextRemainingEdges = [];
+
+    for (const edge of remainingEdges) {
+      if (
+        !usedTeams.has(edge.a) &&
+        !usedTeams.has(edge.b)
+      ) {
+        usedTeams.add(edge.a);
+        usedTeams.add(edge.b);
+        roundEdges.push(edge);
+      } else {
+        nextRemainingEdges.push(edge);
+      }
+    }
+
+    if (roundEdges.length === 0) {
+      throw new Error(
+        "Unable to schedule the remaining matches."
+      );
+    }
+
+    scheduledRounds.push(roundEdges);
+    remainingEdges = nextRemainingEdges;
+  }
+
+  const firstLegRounds = [];
+  const homeCounts = Array(teamCount).fill(0);
+  const awayCounts = Array(teamCount).fill(0);
 
   for (
     let roundIndex = 0;
-    roundIndex < firstLegRounds.length;
+    roundIndex < scheduledRounds.length;
+    roundIndex++
+  ) {
+    const roundFixtures = [];
+
+    for (
+      let slotIndex = 0;
+      slotIndex < scheduledRounds[roundIndex].length;
+      slotIndex++
+    ) {
+      const edge = scheduledRounds[roundIndex][slotIndex];
+
+      let homeIndex = edge.a;
+      let awayIndex = edge.b;
+
+      const homeBalance =
+        homeCounts[homeIndex] - awayCounts[homeIndex];
+
+      const awayBalance =
+        homeCounts[awayIndex] - awayCounts[awayIndex];
+
+      if (
+        homeBalance > awayBalance ||
+        (
+          homeBalance === awayBalance &&
+          Math.random() < 0.5
+        )
+      ) {
+        [homeIndex, awayIndex] = [
+          awayIndex,
+          homeIndex
+        ];
+      }
+
+      homeCounts[homeIndex]++;
+      awayCounts[awayIndex]++;
+
+      roundFixtures.push({
+        homeTeamId: teams[homeIndex],
+        awayTeamId: teams[awayIndex],
+        slot: slotIndex + 1
+      });
+    }
+
+    firstLegRounds.push(roundFixtures);
+  }
+
+  const matches = [];
+  const roundsPerLeg = firstLegRounds.length;
+
+  for (
+    let roundIndex = 0;
+    roundIndex < roundsPerLeg;
     roundIndex++
   ) {
     for (const fixture of firstLegRounds[roundIndex]) {
@@ -8570,9 +8688,7 @@ function generateLimitedOpponentMatches(
     }
   }
 
-  if (doubleLeg) {
-    const roundsPerLeg = firstLegRounds.length;
-
+  if (groupRoundMode === "double") {
     for (
       let roundIndex = 0;
       roundIndex < roundsPerLeg;
