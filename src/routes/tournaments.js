@@ -8522,140 +8522,140 @@ function generateChampionsLeagueGroupMatches(
 }
 
 function generateLimitedOpponentMatches(
-group,
-teamIds,
-opponentsPerTeam,
-groupRoundMode = “single”
+  group,
+  teamIds,
+  opponentsPerTeam,
+  groupRoundMode = "single"
 ) {
-const teamCount = teamIds.length;
+  const teamCount = teamIds.length;
 
-if (teamCount < 2) {
-return [];
-}
-
-if (
-!Number.isInteger(opponentsPerTeam) ||
-opponentsPerTeam < 1 ||
-opponentsPerTeam >= teamCount
-) {
-throw new Error(
-Opponents per team must be between 1 and ${teamCount - 1}.
-);
-}
-
-if (
-groupRoundMode !== “single” &&
-groupRoundMode !== “double”
-) {
-throw new Error(
-“Group round mode must be single or double.”
-);
-}
-
-const teams = […teamIds];
-
-if (new Set(teams).size !== teams.length) {
-throw new Error(“Duplicate teams cannot be scheduled.”);
-}
-
-for (let i = teams.length - 1; i > 0; i–) {
-const j = Math.floor(Math.random() * (i + 1));
-[teams[i], teams[j]] = [teams[j], teams[i]];
-}
-
-const doubleLeg = groupRoundMode === “double”;
-const rotationTeams = […teams];
-
-if (rotationTeams.length % 2 !== 0) {
-rotationTeams.push(null);
-}
-
-const totalSlots = rotationTeams.length;
-const roundsPerCycle = totalSlots - 1;
-const requiredRounds = opponentsPerTeam;
-const firstLegRounds = [];
-
-for (
-let roundIndex = 0;
-roundIndex < requiredRounds;
-roundIndex++
-) {
-const roundFixtures = [];
-const roundRotation =
-roundIndex % roundsPerCycle;
-
-for (
-  let i = 0;
-  i < totalSlots / 2;
-  i++
-) {
-  const firstIndex = i;
-  const secondIndex = totalSlots - 1 - i;
-  const firstTeam = rotationTeams[firstIndex];
-  const secondTeam = rotationTeams[secondIndex];
-  if (firstTeam === null || secondTeam === null) {
-    continue;
+  if (teamCount < 2) {
+    return [];
   }
-  const homeFirst = Math.random() < 0.5;
-  roundFixtures.push({
-    homeTeamId: homeFirst ? firstTeam : secondTeam,
-    awayTeamId: homeFirst ? secondTeam : firstTeam,
-    slot: roundFixtures.length + 1
-  });
-}
-firstLegRounds.push(roundFixtures);
-const lastTeam = rotationTeams.pop();
-rotationTeams.splice(1, 0, lastTeam);
 
-}
-
-const matches = [];
-
-for (
-let roundIndex = 0;
-roundIndex < firstLegRounds.length;
-roundIndex++
-) {
-for (const fixture of firstLegRounds[roundIndex]) {
-matches.push(
-createChampionsLeagueGroupMatch(
-group.id,
-fixture.homeTeamId,
-fixture.awayTeamId,
-roundIndex + 1,
-fixture.slot,
-1
-)
-);
-}
-}
-
-if (doubleLeg) {
-const roundsPerLeg = firstLegRounds.length;
-
-for (
-  let roundIndex = 0;
-  roundIndex < roundsPerLeg;
-  roundIndex++
-) {
-  for (const fixture of firstLegRounds[roundIndex]) {
-    matches.push(
-      createChampionsLeagueGroupMatch(
-        group.id,
-        fixture.awayTeamId,
-        fixture.homeTeamId,
-        roundsPerLeg + roundIndex + 1,
-        fixture.slot,
-        2
-      )
+  if (
+    !Number.isInteger(opponentsPerTeam) ||
+    opponentsPerTeam < 1 ||
+    opponentsPerTeam >= teamCount
+  ) {
+    throw new Error(
+      `Opponents per team must be between 1 and ${teamCount - 1}.`
     );
   }
+
+  if (
+    groupRoundMode !== "single" &&
+    groupRoundMode !== "double"
+  ) {
+    throw new Error(
+      "Group round mode must be single or double."
+    );
+  }
+
+  const teams = [...teamIds];
+
+  if (new Set(teams).size !== teams.length) {
+    throw new Error("Duplicate teams cannot be scheduled.");
+  }
+
+  for (let i = teams.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [teams[i], teams[j]] = [teams[j], teams[i]];
+  }
+
+  const doubleLeg = groupRoundMode === "double";
+  const rotationTeams = [...teams];
+
+  if (rotationTeams.length % 2 !== 0) {
+    rotationTeams.push(null);
+  }
+
+  const totalSlots = rotationTeams.length;
+  const roundsPerCycle = totalSlots - 1;
+  const requiredRounds = opponentsPerTeam;
+  const firstLegRounds = [];
+
+  for (
+    let roundIndex = 0;
+    roundIndex < requiredRounds;
+    roundIndex++
+  ) {
+    const roundFixtures = [];
+    const roundRotation =
+      roundIndex % roundsPerCycle;
+
+    for (
+      let i = 0;
+      i < totalSlots / 2;
+      i++
+    ) {
+      const firstIndex = i;
+      const secondIndex = totalSlots - 1 - i;
+      const firstTeam = rotationTeams[firstIndex];
+      const secondTeam = rotationTeams[secondIndex];
+      if (firstTeam === null || secondTeam === null) {
+        continue;
+      }
+      const homeFirst = Math.random() < 0.5;
+      roundFixtures.push({
+        homeTeamId: homeFirst ? firstTeam : secondTeam,
+        awayTeamId: homeFirst ? secondTeam : firstTeam,
+        slot: roundFixtures.length + 1
+      });
+    }
+    firstLegRounds.push(roundFixtures);
+    const lastTeam = rotationTeams.pop();
+    rotationTeams.splice(1, 0, lastTeam);
+  }
+
+  const matches = [];
+
+  for (
+    let roundIndex = 0;
+    roundIndex < firstLegRounds.length;
+    roundIndex++
+  ) {
+    for (const fixture of firstLegRounds[roundIndex]) {
+      matches.push(
+        createChampionsLeagueGroupMatch(
+          group.id,
+          fixture.homeTeamId,
+          fixture.awayTeamId,
+          roundIndex + 1,
+          fixture.slot,
+          1
+        )
+      );
+    }
+  }
+
+  if (doubleLeg) {
+    const roundsPerLeg = firstLegRounds.length;
+
+    for (
+      let roundIndex = 0;
+      roundIndex < roundsPerLeg;
+      roundIndex++
+    ) {
+      for (const fixture of firstLegRounds[roundIndex]) {
+        matches.push(
+          createChampionsLeagueGroupMatch(
+            group.id,
+            fixture.awayTeamId,
+            fixture.homeTeamId,
+            roundsPerLeg + roundIndex + 1,
+            fixture.slot,
+            2
+          )
+        );
+      }
+    }
+  }
+
+  return matches;
 }
 
-}
 
-return matches;
-}
 async function generateChampionsLeagueRoute(
   request,
   env,
