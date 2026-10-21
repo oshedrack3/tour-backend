@@ -4771,9 +4771,7 @@ async function checkGroupStageCompletion(
         complete: false
       };
     }
-    
     let settings = {};
-    
     try {
       if (
         typeof tournament.settings === "string"
@@ -4791,20 +4789,17 @@ async function checkGroupStageCompletion(
     } catch {
       settings = {};
     }
-    
     if (settings.enableGroups !== true) {
       return {
         complete: false
       };
     }
-    
     if (settings.groupStageComplete === true) {
       return {
         complete: true,
         alreadyComplete: true
       };
     }
-    
     const remainingResult =
       await db.prepare(`
         SELECT COUNT(*) AS remaining
@@ -4815,38 +4810,30 @@ async function checkGroupStageCompletion(
       `).bind(
         tournamentId
       ).first();
-    
     const remaining =
       Number(remainingResult?.remaining) || 0;
-    
     if (remaining > 0) {
       return {
         complete: false,
         remaining
       };
     }
-    
     if (
       settings.tournamentMode ===
       "champions_league"
     ) {
       const directQualifiers =
         Number(settings.directQualifiers);
-      
       const playoffStartPosition =
         Number(settings.playoffStartPosition);
-      
       const playoffEndPosition =
         Number(settings.playoffEndPosition);
-      
       const knockoutSize =
         Number(settings.knockoutSize);
-      
       const playoffTeamCount =
         playoffEndPosition -
         playoffStartPosition +
         1;
-      
       if (
         !Number.isInteger(directQualifiers) ||
         directQualifiers < 0
@@ -4855,7 +4842,6 @@ async function checkGroupStageCompletion(
           "Invalid number of direct qualifiers."
         );
       }
-      
       if (
         !Number.isInteger(playoffStartPosition) ||
         !Number.isInteger(playoffEndPosition) ||
@@ -4866,7 +4852,6 @@ async function checkGroupStageCompletion(
           "Invalid Champions League playoff positions."
         );
       }
-      
       if (
         playoffTeamCount < 2 ||
         playoffTeamCount % 2 !== 0
@@ -4875,7 +4860,6 @@ async function checkGroupStageCompletion(
           "The number of playoff teams must be even and at least two."
         );
       }
-      
       if (
         !Number.isInteger(knockoutSize) ||
         ![2, 4, 8, 16, 32].includes(knockoutSize)
@@ -4884,11 +4868,9 @@ async function checkGroupStageCompletion(
           "Invalid knockout bracket size."
         );
       }
-      
       const expectedKnockoutSize =
         directQualifiers +
         playoffTeamCount / 2;
-      
       if (
         expectedKnockoutSize !== knockoutSize
       ) {
@@ -4896,42 +4878,31 @@ async function checkGroupStageCompletion(
           "The direct qualifiers and playoff winners do not match the configured knockout bracket size."
         );
       }
-      
-      const qualification =
-        await getCupQualifiedTeams(
+      const table =
+        await rebuildTable(
           db,
-          tournamentId,
-          playoffEndPosition
+          tournamentId
         );
-      
-      const rankedTeams =
-        qualification.qualifiedTeams || [];
-      
       if (
-        rankedTeams.length !== playoffEndPosition
+        table.length < playoffEndPosition
       ) {
         throw new Error(
-          `Expected ${playoffEndPosition} ranked teams, but found ${rankedTeams.length}.`
+          `Expected at least ${playoffEndPosition} ranked teams, but found ${table.length}.`
         );
       }
-      
-      const rankedPositions =
-        new Set(
-          rankedTeams.map(
-            team => Number(team.pos)
-          )
+      const rankedTeams =
+        table.filter(
+          team =>
+            team.pos >= playoffStartPosition &&
+            team.pos <= playoffEndPosition
         );
-      
-      for (
-        let position = 1; position <= playoffEndPosition; position++
+      if (
+        rankedTeams.length !== playoffTeamCount
       ) {
-        if (!rankedPositions.has(position)) {
-          throw new Error(
-            `League standings are missing position ${position}.`
-          );
-        }
+        throw new Error(
+          "The League Stage standings do not contain all required playoff positions."
+        );
       }
-      
       const existingPlayoffs =
         await db.prepare(`
           SELECT COUNT(*) AS total
@@ -4942,7 +4913,6 @@ async function checkGroupStageCompletion(
         `).bind(
           tournamentId
         ).first();
-      
       if (
         Number(existingPlayoffs?.total) > 0
       ) {
@@ -4950,33 +4920,27 @@ async function checkGroupStageCompletion(
           "Champions League playoff matches already exist."
         );
       }
-      
       const playoffRoundMode =
-        settings.playoffRoundMode === "double" ?
-        "double" :
-        "single";
-      
+        settings.playoffRoundMode === "double"
+          ? "double"
+          : "single";
       const now = Date.now();
-      
       const playoffMatches = [];
-      
       for (
-        let i = 0; i < playoffTeamCount / 2; i++
+        let i = 0;
+        i < playoffTeamCount / 2;
+        i++
       ) {
         const higherRankedTeam =
-          rankedTeams.find(
+          table.find(
             team =>
-            Number(team.pos) ===
-            playoffStartPosition + i
+              team.pos === playoffStartPosition + i
           );
-        
         const lowerRankedTeam =
-          rankedTeams.find(
+          table.find(
             team =>
-            Number(team.pos) ===
-            playoffEndPosition - i
+              team.pos === playoffEndPosition - i
           );
-        
         if (
           !higherRankedTeam ||
           !lowerRankedTeam
@@ -4985,7 +4949,6 @@ async function checkGroupStageCompletion(
             `Unable to pair playoff tie ${i + 1}.`
           );
         }
-        
         const firstLeg = {
           id: crypto.randomUUID(),
           tournament_id: tournamentId,
@@ -5007,10 +4970,10 @@ async function checkGroupStageCompletion(
           updated_at: null,
           submission_status: null
         };
-        
         playoffMatches.push(firstLeg);
-        
-        if (playoffRoundMode === "double") {
+        if (
+          playoffRoundMode === "double"
+        ) {
           playoffMatches.push({
             ...firstLeg,
             id: crypto.randomUUID(),
@@ -5020,12 +4983,10 @@ async function checkGroupStageCompletion(
           });
         }
       }
-      
       await createMatchesBatch(
         db,
         playoffMatches
       );
-      
       await db.prepare(`
         UPDATE tournaments
         SET
@@ -5043,7 +5004,6 @@ async function checkGroupStageCompletion(
         now,
         tournamentId
       ).run();
-      
       return {
         complete: true,
         playoffsGenerated: true,
@@ -5051,13 +5011,10 @@ async function checkGroupStageCompletion(
         playoffMatches
       };
     }
-    
     const teamsQualify =
       Number(settings.teamsQualify);
-    
     const knockoutSize =
       Number(settings.knockoutSize);
-    
     if (
       !Number.isInteger(teamsQualify) ||
       teamsQualify < 1
@@ -5066,7 +5023,6 @@ async function checkGroupStageCompletion(
         "Invalid number of qualifying teams."
       );
     }
-    
     if (
       !Number.isInteger(knockoutSize) ||
       ![2, 4, 8, 16, 32].includes(knockoutSize)
@@ -5075,17 +5031,14 @@ async function checkGroupStageCompletion(
         "Invalid knockout bracket size."
       );
     }
-    
     const qualification =
       await getCupQualifiedTeams(
         db,
         tournamentId,
         teamsQualify
       );
-    
     const qualifiedTeams =
       qualification.qualifiedTeams;
-    
     if (
       qualifiedTeams.length !== knockoutSize
     ) {
@@ -5093,7 +5046,6 @@ async function checkGroupStageCompletion(
         `The group stage produced ${qualifiedTeams.length} qualified teams, but the knockout requires ${knockoutSize}.`
       );
     }
-    
     if (
       settings.knockoutPairingMode === "manual"
     ) {
@@ -5111,39 +5063,34 @@ async function checkGroupStageCompletion(
         Date.now(),
         tournamentId
       ).run();
-      
       return {
         complete: true,
         knockoutGenerated: false,
         manualPairingRequired: true
       };
     }
-    
     const pairedTeams =
       pairByGroupRules(
         qualifiedTeams,
         knockoutSize
       );
-    
     const knockoutPairs = [];
-    
     for (
-      let i = 0; i < pairedTeams.length; i += 2
+      let i = 0;
+      i < pairedTeams.length;
+      i += 2
     ) {
       knockoutPairs.push([
         pairedTeams[i].id,
         pairedTeams[i + 1].id
       ]);
     }
-    
     const knockoutRoundMode =
-      settings.knockoutRoundMode === "double" ?
-      "double" :
-      "single";
-    
+      settings.knockoutRoundMode === "double"
+        ? "double"
+        : "single";
     const thirdPlaceMatch =
       settings.thirdPlaceMatch === true;
-    
     const knockoutMatches =
       generateDirectKnockoutMatches(
         pairedTeams.map(
@@ -5158,19 +5105,15 @@ async function checkGroupStageCompletion(
         thirdPlaceMatch,
         knockoutPairs
       );
-    
     const now = Date.now();
-    
     for (const match of knockoutMatches) {
       match.tournament_id = tournamentId;
       match.created_at = now;
     }
-    
     await createMatchesBatch(
       db,
       knockoutMatches
     );
-    
     await db.prepare(`
       UPDATE tournaments
       SET
@@ -5186,7 +5129,6 @@ async function checkGroupStageCompletion(
       now,
       tournamentId
     ).run();
-    
     return {
       complete: true,
       knockoutGenerated: true,
@@ -5197,7 +5139,6 @@ async function checkGroupStageCompletion(
       "checkGroupStageCompletion error:",
       error
     );
-    
     throw error;
   }
 }
