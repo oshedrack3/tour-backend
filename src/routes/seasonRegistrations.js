@@ -514,6 +514,197 @@ async function handleMyRegistrations(env, user) {
   });
 }
 
+
+function secureStringEqual(a, b) {
+  if (
+    typeof a !== "string" ||
+    typeof b !== "string" ||
+    !a.length ||
+    a.length !== b.length
+  ) {
+    return false;
+  }
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+export async function handleFlutterwaveWebhook(request, env) {
+  if (!env.FLW_SECRET_KEY || !env.FLW_SECRET_HASH) {
+    console.error("Flutterwave webhook secrets are not configured.");
+    return json({
+      success: false,
+      message: "Webhook configuration error."
+    }, 500);
+  }
+  const signature = request.headers.get("verif-hash");
+  if (!secureStringEqual(signature, env.FLW_SECRET_HASH)) {
+    return json({
+      success: false,
+      message: "Unauthorized webhook."
+    }, 401);
+  }
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return json({
+      success: false,
+      message: "Invalid webhook payload."
+    }, 400);
+  }
+  if (
+    payload.event !== "charge.completed" ||
+    !payload.data
+  ) {
+    return json({
+      success: true,
+      message: "Webhook event ignored."
+    });
+  }
+  const reference = String(payload.data.tx_ref || "").trim();
+  if (!reference) {
+    return json({
+      success: true,
+      message: "Webhook has no transaction reference."
+    });
+  }
+  const registration = await env.DB.prepare(`
+    SELECT
+      id,
+      tournament_id,
+      user_id,
+      total_amount,
+      payment_status,
+      payment_reference
+    FROM season_registrations
+    WHERE payment_reference = ?
+    LIMIT 1
+  `).bind(reference).first();
+  if (!registration) {
+    console.error(
+      "Flutterwave webhook reference not found:",
+      reference
+    );
+    return json({
+      success: true,
+      message: "No matching registration."
+    });
+  }
+  if (registration.payment_status === "paid") {
+    return json({
+      success: true,
+      message: "Payment already processed."
+    });
+  }
+  if (
+    !["pending", "submitted"].includes(
+      registration.payment_status
+    )
+  ) {
+    return json({
+      success: true,
+      message: "Registration is not awaiting payment."
+    });
+  }
+  let verificationResponse;
+  try {
+    const response = await fetch(
+      `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${env.FLW_SECRET_KEY}`,
+          Accept: "application/json"
+        }
+      }
+    );
+    verificationResponse = await response.json();
+    if (
+      !response.ok ||
+      verificationResponse.status !== "success" ||
+      !verificationResponse.data
+    ) {
+      console.error(
+        "Flutterwave transaction verification failed:",
+        reference,
+        verificationResponse.message || response.status
+      );
+      return json({
+        success: false,
+        message: "Transaction verification failed."
+      }, 500);
+    }
+  } catch (error) {
+    console.error(
+      "Flutterwave verification request failed:",
+      error
+    );
+    return json({
+      success: false,
+      message: "Unable to verify transaction."
+    }, 500);
+  }
+  const payment = verificationResponse.data;
+  if (
+    payment.status !== "successful" ||
+    payment.tx_ref !== registration.payment_reference ||
+    payment.currency !== "NGN" ||
+    !Number.isFinite(Number(payment.amount)) ||
+    Number(payment.amount) < Number(registration.total_amount)
+  ) {
+    console.error(
+      "Flutterwave payment did not match registration:",
+      reference
+    );
+    return json({
+      success: false,
+      message: "Transaction does not match registration."
+    }, 400);
+  }
+  const now = Date.now();
+  const result = await env.DB.prepare(`
+    UPDATE season_registrations
+    SET
+      payment_status = 'paid',
+      submitted_at = COALESCE(submitted_at, ?),
+      updated_at = ?
+    WHERE id = ?
+      AND payment_reference = ?
+      AND payment_status IN ('pending', 'submitted')
+  `).bind(
+    now,
+    now,
+    registration.id,
+    reference
+  ).run();
+  if (!result.meta?.changes) {
+    const latest = await env.DB.prepare(`
+      SELECT payment_status
+      FROM season_registrations
+      WHERE id = ?
+      LIMIT 1
+    `).bind(registration.id).first();
+    if (latest?.payment_status !== "paid") {
+      return json({
+        success: false,
+        message: "Registration update failed."
+      }, 500);
+    }
+  }
+  console.log(
+    "Season registration payment verified:",
+    registration.id
+  );
+  return json({
+    success: true,
+    message: "Payment verified and registration updated."
+  });
+}
+
+
+
 export async function handleSeasonRegistrationRequest(
   request,
   env,

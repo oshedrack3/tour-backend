@@ -1,5 +1,8 @@
 import { handleAuthRequest } from "./auth.js";
-import { handleSeasonRegistrationRequest } from "./routes/seasonRegistrations.js";
+import {
+  handleSeasonRegistrationRequest,
+  handleFlutterwaveWebhook
+} from "./routes/seasonRegistrations.js";
 import { authenticate } from "./middleware.js";
 import { handleTeamRequest } from "./teams.js";
 import {
@@ -73,16 +76,24 @@ export default {
             request,
             env
           );
-        
         return addCors(response);
       }
-      
+      if (
+        request.method === "POST" &&
+        pathname === "/webhooks/flutterwave"
+      ) {
+        const response =
+          await handleFlutterwaveWebhook(
+            request,
+            env
+          );
+        return addCors(response);
+      }
       const auth =
         await authenticate(
           request,
           env
         );
-      
       if (!auth.success) {
         return json(
         {
@@ -96,16 +107,16 @@ export default {
       
       const user = auth.user;
       const seasonRegistrationResponse =
-  await handleSeasonRegistrationRequest(
-    request,
-    env,
-    pathname,
-    user
-  );
-
-if (seasonRegistrationResponse) {
-  return addCors(seasonRegistrationResponse);
-}
+        await handleSeasonRegistrationRequest(
+          request,
+          env,
+          pathname,
+          user
+        );
+      
+      if (seasonRegistrationResponse) {
+        return addCors(seasonRegistrationResponse);
+      }
       
       const generalResponse =
         await handleGeneralRequest(
@@ -187,112 +198,112 @@ if (seasonRegistrationResponse) {
     }
   },
   
-async scheduled(
-  event,
-  env,
-  ctx
-) {
-  try {
-    const expiredNotices =
-      await getExpiredNotices(
-        env.DB,
-        Date.now()
-      );
-    
-    for (
-      const notice of expiredNotices
-    ) {
-      const images =
-        notice.images || [];
-      
-      let cloudinaryFailed =
-        false;
+  async scheduled(
+    event,
+    env,
+    ctx
+  ) {
+    try {
+      const expiredNotices =
+        await getExpiredNotices(
+          env.DB,
+          Date.now()
+        );
       
       for (
-        const image of images
+        const notice of expiredNotices
       ) {
-        if (!image?.publicId) {
+        const images =
+          notice.images || [];
+        
+        let cloudinaryFailed =
+          false;
+        
+        for (
+          const image of images
+        ) {
+          if (!image?.publicId) {
+            continue;
+          }
+          
+          try {
+            await deleteCloudinaryImage(
+              image.publicId,
+              env
+            );
+          } catch (error) {
+            cloudinaryFailed = true;
+            
+            console.error(
+              `Failed to delete Cloudinary image ${image.publicId} for notice ${notice.id}:`,
+              error
+            );
+          }
+        }
+        
+        if (cloudinaryFailed) {
           continue;
         }
         
+        await deleteNotice(
+          env.DB,
+          notice.id
+        );
+      }
+      
+      const expiredSubmissions =
+        await getExpiredMatchSubmissions(
+          env.DB
+        );
+      
+      let deletedSubmissions = 0;
+      let failedSubmissions = 0;
+      
+      for (
+        const submission of expiredSubmissions
+      ) {
         try {
-          await deleteCloudinaryImage(
-            image.publicId,
-            env
+          if (
+            submission.screenshot_public_id
+          ) {
+            await deleteCloudinaryImage(
+              submission.screenshot_public_id,
+              env
+            );
+          }
+          
+          await deleteMatchSubmission(
+            env.DB,
+            submission.id
           );
+          
+          deletedSubmissions++;
+          
         } catch (error) {
-          cloudinaryFailed = true;
+          failedSubmissions++;
           
           console.error(
-            `Failed to delete Cloudinary image ${image.publicId} for notice ${notice.id}:`,
+            `Failed to clean match submission ${submission.id}:`,
             error
           );
         }
       }
       
-      if (cloudinaryFailed) {
-        continue;
-      }
+      console.log(
+        `Expired notices found: ${expiredNotices.length}`
+      );
       
-      await deleteNotice(
-        env.DB,
-        notice.id
+      console.log(
+        `Expired match submissions: ${expiredSubmissions.length}, deleted: ${deletedSubmissions}, failed: ${failedSubmissions}`
+      );
+      
+    } catch (error) {
+      console.error(
+        "Scheduled cleanup error:",
+        error
       );
     }
-    
-    const expiredSubmissions =
-      await getExpiredMatchSubmissions(
-        env.DB
-      );
-    
-    let deletedSubmissions = 0;
-    let failedSubmissions = 0;
-    
-    for (
-      const submission of expiredSubmissions
-    ) {
-      try {
-        if (
-          submission.screenshot_public_id
-        ) {
-          await deleteCloudinaryImage(
-            submission.screenshot_public_id,
-            env
-          );
-        }
-        
-        await deleteMatchSubmission(
-          env.DB,
-          submission.id
-        );
-        
-        deletedSubmissions++;
-        
-      } catch (error) {
-        failedSubmissions++;
-        
-        console.error(
-          `Failed to clean match submission ${submission.id}:`,
-          error
-        );
-      }
-    }
-    
-    console.log(
-      `Expired notices found: ${expiredNotices.length}`
-    );
-    
-    console.log(
-      `Expired match submissions: ${expiredSubmissions.length}, deleted: ${deletedSubmissions}, failed: ${failedSubmissions}`
-    );
-    
-  } catch (error) {
-    console.error(
-      "Scheduled cleanup error:",
-      error
-    );
   }
-}
 };
 
 function addCors(response) {
