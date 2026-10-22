@@ -1,4 +1,5 @@
 import { handleAuthRequest } from "./auth.js";
+import { handleSeasonRegistrationRequest } from "./routes/seasonRegistrations.js";
 import { authenticate } from "./middleware.js";
 import { handleTeamRequest } from "./teams.js";
 import {
@@ -94,6 +95,17 @@ export default {
       }
       
       const user = auth.user;
+      const seasonRegistrationResponse =
+  await handleSeasonRegistrationRequest(
+    request,
+    env,
+    pathname,
+    user
+  );
+
+if (seasonRegistrationResponse) {
+  return addCors(seasonRegistrationResponse);
+}
       
       const generalResponse =
         await handleGeneralRequest(
