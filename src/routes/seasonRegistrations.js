@@ -703,6 +703,226 @@ export async function handleFlutterwaveWebhook(request, env) {
   });
 }
 
+export async function handlePaymentHistory(
+  request,
+  env,
+  user
+) {
+  const url = new URL(request.url);
+  const tournamentId =
+    url.searchParams.get("tournament_id")?.trim();
+  
+  if (tournamentId) {
+    const tournament = await env.DB.prepare(`
+      SELECT id, name, season, admin_uid
+      FROM tournaments
+      WHERE id = ?
+      LIMIT 1
+    `).bind(tournamentId).first();
+    
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, { status: 404 });
+    }
+    
+    const isParticipant = await env.DB.prepare(`
+      SELECT 1
+      FROM tournament_players
+      WHERE tournament_id = ?
+        AND user_id = ?
+      LIMIT 1
+    `).bind(
+      tournamentId,
+      user.id
+    ).first();
+    
+    if (!isParticipant) {
+      return Response.json({
+        success: false,
+        message: "You are not a player in this tournament."
+      }, { status: 403 });
+    }
+    
+    const result = await env.DB.prepare(`
+      SELECT
+        sr.id AS registration_id,
+        sr.tournament_id,
+        sr.user_id,
+        u.username,
+        sr.league_entry_fee,
+        sr.admin_fee,
+        sr.total_amount,
+        sr.payment_status,
+        sr.payment_method,
+        sr.payment_reference,
+        sr.created_at,
+        sr.submitted_at,
+        sr.updated_at,
+        t.name AS tournament_name,
+        t.season
+      FROM season_registrations sr
+      INNER JOIN users u
+        ON u.id = sr.user_id
+      INNER JOIN tournaments t
+        ON t.id = sr.tournament_id
+      WHERE sr.tournament_id = ?
+      ORDER BY sr.created_at DESC
+    `).bind(tournamentId).all();
+    
+    const registrations = result.results || [];
+    
+    const summary = registrations.reduce(
+      (acc, registration) => {
+        acc.total_registrations++;
+        
+        if (registration.payment_status === "paid") {
+          acc.paid_registrations++;
+          acc.total_amount_paid +=
+            Number(registration.total_amount) || 0;
+        }
+        
+        if (
+          registration.payment_status === "pending" ||
+          registration.payment_status === "submitted"
+        ) {
+          acc.pending_registrations++;
+          acc.pending_amount +=
+            Number(registration.total_amount) || 0;
+        }
+        
+        if (registration.payment_status === "refunded") {
+          acc.refunded_registrations++;
+          acc.total_amount_refunded +=
+            Number(registration.total_amount) || 0;
+        }
+        
+        return acc;
+      },
+      {
+        total_registrations: 0,
+        paid_registrations: 0,
+        total_amount_paid: 0,
+        pending_registrations: 0,
+        pending_amount: 0,
+        refunded_registrations: 0,
+        total_amount_refunded: 0
+      }
+    );
+    
+    return Response.json({
+      success: true,
+      data: {
+        tournament: {
+          id: tournament.id,
+          name: tournament.name,
+          season: tournament.season
+        },
+        registrations,
+        summary
+      }
+    });
+  }
+  
+  if (user.role !== "admin") {
+    return Response.json({
+      success: false,
+      message: "Only administrators can view their tournament payment history."
+    }, { status: 403 });
+  }
+  
+  const result = await env.DB.prepare(`
+    SELECT
+      sr.id AS registration_id,
+      sr.tournament_id,
+      sr.user_id,
+      u.username,
+      sr.league_entry_fee,
+      sr.admin_fee,
+      sr.total_amount,
+      sr.payment_status,
+      sr.payment_method,
+      sr.payment_reference,
+      sr.created_at,
+      sr.submitted_at,
+      sr.updated_at,
+      t.name AS tournament_name,
+      t.season
+    FROM season_registrations sr
+    INNER JOIN tournaments t
+      ON t.id = sr.tournament_id
+    INNER JOIN users u
+      ON u.id = sr.user_id
+    WHERE t.admin_uid = ?
+    ORDER BY
+      t.created_at DESC,
+      sr.created_at DESC
+  `).bind(user.id).all();
+  
+  const registrations = result.results || [];
+  const tournamentsMap = new Map();
+  
+  for (const registration of registrations) {
+    let tournament =
+      tournamentsMap.get(registration.tournament_id);
+    
+    if (!tournament) {
+      tournament = {
+        tournament_id: registration.tournament_id,
+        tournament_name: registration.tournament_name,
+        season: registration.season,
+        registrations: [],
+        summary: {
+          total_registrations: 0,
+          paid_registrations: 0,
+          total_amount_paid: 0,
+          pending_registrations: 0,
+          pending_amount: 0,
+          refunded_registrations: 0,
+          total_amount_refunded: 0
+        }
+      };
+      
+      tournamentsMap.set(
+        registration.tournament_id,
+        tournament
+      );
+    }
+    
+    tournament.registrations.push(registration);
+    
+    const summary = tournament.summary;
+    const amount =
+      Number(registration.total_amount) || 0;
+    
+    summary.total_registrations++;
+    
+    if (registration.payment_status === "paid") {
+      summary.paid_registrations++;
+      summary.total_amount_paid += amount;
+    }
+    
+    if (
+      registration.payment_status === "pending" ||
+      registration.payment_status === "submitted"
+    ) {
+      summary.pending_registrations++;
+      summary.pending_amount += amount;
+    }
+    
+    if (registration.payment_status === "refunded") {
+      summary.refunded_registrations++;
+      summary.total_amount_refunded += amount;
+    }
+  }
+  
+  return Response.json({
+    success: true,
+    data: Array.from(tournamentsMap.values())
+  });
+}
+
 
 
 export async function handleSeasonRegistrationRequest(
@@ -717,28 +937,29 @@ export async function handleSeasonRegistrationRequest(
   ) {
     return handleAvailableSeasons(env);
   }
-
   if (
     request.method === "GET" &&
     pathname === "/season-registrations/my"
   ) {
     return handleMyRegistrations(env, user);
   }
-
   if (
     request.method === "POST" &&
     pathname === "/season-registrations/pay"
   ) {
     return handleCreateCheckout(request, env, user);
   }
-
   if (
     request.method === "GET" &&
     pathname === "/season-registrations/verify"
   ) {
     return handleVerifyPayment(request, env, user);
   }
-
+  if (
+    request.method === "GET" &&
+    pathname === "/season-registrations/history"
+  ) {
+    return handlePaymentHistory(request, env, user);
+  }
   return null;
 }
-
