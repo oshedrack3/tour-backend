@@ -1584,14 +1584,60 @@ export async function handlePayExpense(
   });
 }
 
-async function handleFinancialSummary(env, user) {
-  const admin = await requireFinancialAdmin(env, user);
+async function handleFinancialSummary(request, env, user) {
+  const denied = await requireFinancialAdmin(env, user);
   
-  if (admin instanceof Response) {
-    return admin;
+  if (denied) {
+    return denied;
   }
   
   try {
+    const url = new URL(request.url);
+    const tournamentId = String(
+      url.searchParams.get("tournament_id") || ""
+    ).trim();
+    
+    if (tournamentId) {
+      const tournament = await env.DB.prepare(`
+        SELECT id
+        FROM tournaments
+        WHERE id = ?
+          AND admin_uid = ?
+        LIMIT 1
+      `).bind(tournamentId, user.id).first();
+      
+      if (!tournament) {
+        return financialError(
+          "Tournament not found or you do not manage it.",
+          404
+        );
+      }
+    }
+    
+    const registrationFilter = tournamentId ?
+      "WHERE sr.tournament_id = ? AND t.admin_uid = ?" :
+      "WHERE t.admin_uid = ?";
+    
+    const prizeFilter = tournamentId ?
+      "WHERE p.tournament_id = ? AND t.admin_uid = ?" :
+      "WHERE t.admin_uid = ?";
+    
+    const expenseFilter = tournamentId ?
+      "WHERE e.created_by = ? AND e.tournament_id = ?" :
+      "WHERE e.created_by = ? AND (e.tournament_id IS NULL OR EXISTS (SELECT 1 FROM tournaments t WHERE t.id = e.tournament_id AND t.admin_uid = ?))";
+    
+    const registrationBindings = tournamentId ?
+      [tournamentId, user.id] :
+      [user.id];
+    
+    const prizeBindings = tournamentId ?
+      [tournamentId, user.id] :
+      [user.id];
+    
+    const expenseBindings = tournamentId ?
+      [user.id, tournamentId] :
+      [user.id, user.id];
+    
     const [
       registrations,
       prizes,
@@ -1600,47 +1646,66 @@ async function handleFinancialSummary(env, user) {
       env.DB.prepare(`
         SELECT
           COUNT(*) AS total_registrations,
-          SUM(CASE WHEN payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_registrations,
-          SUM(CASE WHEN payment_status = 'pending' THEN 1 ELSE 0 END) AS pending_registrations,
-          SUM(CASE WHEN payment_status = 'refunded' THEN 1 ELSE 0 END) AS refunded_registrations,
-          SUM(CASE WHEN payment_status = 'paid' THEN total_amount ELSE 0 END) AS total_amount_received,
-          SUM(CASE WHEN payment_status = 'pending' THEN total_amount ELSE 0 END) AS pending_registration_amount,
-          SUM(CASE WHEN payment_status = 'refunded' THEN total_amount ELSE 0 END) AS total_amount_refunded
-        FROM season_registrations
-      `).first(),
+          SUM(CASE WHEN sr.payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_registrations,
+          SUM(CASE WHEN sr.payment_status IN ('pending', 'submitted') THEN 1 ELSE 0 END) AS pending_registrations,
+          SUM(CASE WHEN sr.payment_status = 'refunded' THEN 1 ELSE 0 END) AS refunded_registrations,
+          SUM(CASE WHEN sr.payment_status = 'paid' THEN sr.total_amount ELSE 0 END) AS total_amount_received,
+          SUM(CASE WHEN sr.payment_status IN ('pending', 'submitted') THEN sr.total_amount ELSE 0 END) AS pending_registration_amount,
+          SUM(CASE WHEN sr.payment_status = 'refunded' THEN sr.total_amount ELSE 0 END) AS total_amount_refunded
+        FROM season_registrations sr
+        INNER JOIN tournaments t
+          ON t.id = sr.tournament_id
+        ${registrationFilter}
+      `).bind(...registrationBindings).first(),
       
       env.DB.prepare(`
         SELECT
           COUNT(*) AS total_prizes,
-          SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_prizes,
-          SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved_prizes,
-          SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) AS paid_prizes,
-          SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END) AS pending_prize_amount,
-          SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) AS approved_prize_amount,
-          SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) AS total_prize_amount_paid
-        FROM tournament_prize_payouts
-      `).first(),
+          SUM(CASE WHEN p.status = 'pending' THEN 1 ELSE 0 END) AS pending_prizes,
+          SUM(CASE WHEN p.status = 'approved' THEN 1 ELSE 0 END) AS approved_prizes,
+          SUM(CASE WHEN p.status = 'paid' THEN 1 ELSE 0 END) AS paid_prizes,
+          SUM(CASE WHEN p.status = 'pending' THEN p.amount ELSE 0 END) AS pending_prize_amount,
+          SUM(CASE WHEN p.status = 'approved' THEN p.amount ELSE 0 END) AS approved_prize_amount,
+          SUM(CASE WHEN p.status = 'paid' THEN p.amount ELSE 0 END) AS total_prize_amount_paid
+        FROM tournament_prize_payouts p
+        INNER JOIN tournaments t
+          ON t.id = p.tournament_id
+        ${prizeFilter}
+      `).bind(...prizeBindings).first(),
       
       env.DB.prepare(`
         SELECT
           COUNT(*) AS total_expenses,
-          SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_expenses,
-          SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved_expenses,
-          SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) AS paid_expenses,
-          SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END) AS pending_expense_amount,
-          SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) AS approved_expense_amount,
-          SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) AS total_expenses_paid
-        FROM financial_expenses
-      `).first()
+          SUM(CASE WHEN e.status = 'pending' THEN 1 ELSE 0 END) AS pending_expenses,
+          SUM(CASE WHEN e.status = 'approved' THEN 1 ELSE 0 END) AS approved_expenses,
+          SUM(CASE WHEN e.status = 'paid' THEN 1 ELSE 0 END) AS paid_expenses,
+          SUM(CASE WHEN e.status = 'pending' THEN e.amount ELSE 0 END) AS pending_expense_amount,
+          SUM(CASE WHEN e.status = 'approved' THEN e.amount ELSE 0 END) AS approved_expense_amount,
+          SUM(CASE WHEN e.status = 'paid' THEN e.amount ELSE 0 END) AS total_expenses_paid
+        FROM financial_expenses e
+        ${expenseFilter}
+      `).bind(...expenseBindings).first()
     ]);
     
-    const registrationRevenue = Number(registrations?.total_amount_received || 0);
-    const refundedAmount = Number(registrations?.total_amount_refunded || 0);
-    const prizeAmountPaid = Number(prizes?.total_prize_amount_paid || 0);
-    const expensesPaid = Number(expenses?.total_expenses_paid || 0);
+    const registrationRevenue = Number(
+      registrations?.total_amount_received || 0
+    );
+    
+    const refundedAmount = Number(
+      registrations?.total_amount_refunded || 0
+    );
+    
+    const prizeAmountPaid = Number(
+      prizes?.total_prize_amount_paid || 0
+    );
+    
+    const expensesPaid = Number(
+      expenses?.total_expenses_paid || 0
+    );
     
     return json({
       success: true,
+      tournament_id: tournamentId || null,
       summary: {
         registrations: {
           total: Number(registrations?.total_registrations || 0),
@@ -1648,7 +1713,9 @@ async function handleFinancialSummary(env, user) {
           pending: Number(registrations?.pending_registrations || 0),
           refunded: Number(registrations?.refunded_registrations || 0),
           amount_received: registrationRevenue,
-          pending_amount: Number(registrations?.pending_registration_amount || 0),
+          pending_amount: Number(
+            registrations?.pending_registration_amount || 0
+          ),
           amount_refunded: refundedAmount
         },
         prizes: {
@@ -1656,8 +1723,12 @@ async function handleFinancialSummary(env, user) {
           pending: Number(prizes?.pending_prizes || 0),
           approved: Number(prizes?.approved_prizes || 0),
           paid: Number(prizes?.paid_prizes || 0),
-          pending_amount: Number(prizes?.pending_prize_amount || 0),
-          approved_amount: Number(prizes?.approved_prize_amount || 0),
+          pending_amount: Number(
+            prizes?.pending_prize_amount || 0
+          ),
+          approved_amount: Number(
+            prizes?.approved_prize_amount || 0
+          ),
           amount_paid: prizeAmountPaid
         },
         expenses: {
@@ -1665,8 +1736,12 @@ async function handleFinancialSummary(env, user) {
           pending: Number(expenses?.pending_expenses || 0),
           approved: Number(expenses?.approved_expenses || 0),
           paid: Number(expenses?.paid_expenses || 0),
-          pending_amount: Number(expenses?.pending_expense_amount || 0),
-          approved_amount: Number(expenses?.approved_expense_amount || 0),
+          pending_amount: Number(
+            expenses?.pending_expense_amount || 0
+          ),
+          approved_amount: Number(
+            expenses?.approved_expense_amount || 0
+          ),
           amount_paid: expensesPaid
         },
         net_balance: registrationRevenue - prizeAmountPaid - expensesPaid
@@ -1676,7 +1751,7 @@ async function handleFinancialSummary(env, user) {
     console.error("Financial summary error:", error);
     
     return financialError(
-      "Unable to load financial summary",
+      "Unable to load financial summary.",
       500
     );
   }
@@ -1941,16 +2016,16 @@ export async function handleSeasonRegistrationRequest(
     request.method === "GET" &&
     pathname === "/financial/summary"
   ) {
-    return handleFinancialSummary(env, user);
+    return handleFinancialSummary(request, env, user);
   }
   if (
-  request.method === "GET" &&
-  pathname === "/financial/prizes"
-) {
-  return handleGetFinancialPrizes(request, env, user);
-}  
-
-if (
+    request.method === "GET" &&
+    pathname === "/financial/prizes"
+  ) {
+    return handleGetFinancialPrizes(request, env, user);
+  }
+  
+  if (
     request.method === "POST" &&
     pathname === "/financial/prizes"
   ) {
@@ -2027,13 +2102,13 @@ if (
       expensePaymentMatch[1]
     );
   }
-    if (
+  if (
     request.method === "GET" &&
     pathname === "/financial/expenses"
   ) {
     return handleGetFinancialExpenses(request, env, user);
   }
-
+  
   if (
     request.method === "GET" &&
     pathname === "/season-registrations/my"
