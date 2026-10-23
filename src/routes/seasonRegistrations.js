@@ -1801,6 +1801,7 @@ async function handleGetFinancialPrizes(request, env, user) {
     );
   }
 }
+
 async function handleGetFinancialExpenses(request, env, user) {
   const denied = await requireFinancialAdmin(env, user);
   if (denied) {
@@ -1811,6 +1812,12 @@ async function handleGetFinancialExpenses(request, env, user) {
     const status = String(
       url.searchParams.get("status") || ""
     ).trim().toLowerCase();
+    const scope = String(
+      url.searchParams.get("scope") || ""
+    ).trim().toLowerCase();
+    const tournamentId = String(
+      url.searchParams.get("tournament_id") || ""
+    ).trim();
     const allowedStatuses = [
       "pending",
       "approved",
@@ -1820,6 +1827,19 @@ async function handleGetFinancialExpenses(request, env, user) {
     ];
     if (status && !allowedStatuses.includes(status)) {
       return financialError("Invalid expense status.");
+    }
+    if (scope && !["general", "tournament"].includes(scope)) {
+      return financialError("Invalid expense scope.");
+    }
+    if (scope === "general" && tournamentId) {
+      return financialError(
+        "General expenses cannot have a tournament ID."
+      );
+    }
+    if (scope === "tournament" && !tournamentId) {
+      return financialError(
+        "Tournament ID is required for tournament expenses."
+      );
     }
     let query = `
       SELECT
@@ -1845,6 +1865,15 @@ async function handleGetFinancialExpenses(request, env, user) {
       WHERE e.created_by = ?
     `;
     const bindings = [user.id];
+    if (scope === "general") {
+      query += ` AND e.tournament_id IS NULL`;
+    } else if (scope === "tournament") {
+      query += ` AND e.tournament_id = ?`;
+      bindings.push(tournamentId);
+    } else if (tournamentId) {
+      query += ` AND e.tournament_id = ?`;
+      bindings.push(tournamentId);
+    }
     if (status) {
       query += ` AND e.status = ?`;
       bindings.push(status);
@@ -1865,6 +1894,8 @@ async function handleGetFinancialExpenses(request, env, user) {
     );
   }
 }
+
+
 export async function handleSeasonRegistrationRequest(
   request,
   env,
