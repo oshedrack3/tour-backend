@@ -925,6 +925,735 @@ export async function handlePaymentHistory(
 
 
 
+
+function financialError(message, status = 400) {
+  return json({
+    success: false,
+    message
+  }, status);
+}
+
+async function requireFinancialAdmin(env, user) {
+  if (!user || user.role !== "admin") {
+    return financialError(
+      "Only administrators can manage financial records.",
+      403
+    );
+  }
+  
+  const admin = await env.DB.prepare(`
+    SELECT id
+    FROM users
+    WHERE id = ?
+      AND role = 'admin'
+    LIMIT 1
+  `).bind(user.id).first();
+  
+  if (!admin) {
+    return financialError(
+      "Administrator account not found.",
+      403
+    );
+  }
+  
+  return null;
+}
+
+async function readFinancialBody(request) {
+  try {
+    const body = await request.json();
+    
+    if (
+      !body ||
+      typeof body !== "object" ||
+      Array.isArray(body)
+    ) {
+      return null;
+    }
+    
+    return body;
+  } catch {
+    return null;
+  }
+}
+
+function isPositiveAmount(value) {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+export async function handleCreatePrize(request, env, user) {
+  const denied = await requireFinancialAdmin(env, user);
+  
+  if (denied) {
+    return denied;
+  }
+  
+  const body = await readFinancialBody(request);
+  
+  if (!body) {
+    return financialError("Invalid request body.");
+  }
+  
+  const tournamentId = String(
+    body.tournament_id || ""
+  ).trim();
+  
+  const userId = String(
+    body.user_id || ""
+  ).trim();
+  
+  const prizeName = String(
+    body.prize_name || ""
+  ).trim();
+  
+  const amount = body.amount;
+  
+  const position =
+    body.position === null ||
+    body.position === undefined ||
+    body.position === "" ?
+    null :
+    Number(body.position);
+  
+  if (!tournamentId || !userId || !prizeName) {
+    return financialError(
+      "Tournament, player, and prize name are required."
+    );
+  }
+  
+  if (
+    typeof amount !== "number" ||
+    !isPositiveAmount(amount)
+  ) {
+    return financialError(
+      "Prize amount must be a positive whole number in naira."
+    );
+  }
+  
+  if (
+    position !== null &&
+    (!Number.isSafeInteger(position) || position < 1)
+  ) {
+    return financialError(
+      "Prize position must be a positive whole number."
+    );
+  }
+  
+  const tournament = await env.DB.prepare(`
+    SELECT id, name
+    FROM tournaments
+    WHERE id = ?
+      AND admin_uid = ?
+    LIMIT 1
+  `).bind(tournamentId, user.id).first();
+  
+  if (!tournament) {
+    return financialError(
+      "Tournament not found or you do not manage it.",
+      404
+    );
+  }
+  
+  const player = await env.DB.prepare(`
+    SELECT id
+    FROM users
+    WHERE id = ?
+    LIMIT 1
+  `).bind(userId).first();
+  
+  if (!player) {
+    return financialError("Player not found.", 404);
+  }
+  
+  const participant = await env.DB.prepare(`
+    SELECT 1
+    FROM tournament_players
+    WHERE tournament_id = ?
+      AND user_id = ?
+    LIMIT 1
+  `).bind(tournamentId, userId).first();
+  
+  if (!participant) {
+    return financialError(
+      "The selected player is not registered in this tournament.",
+      400
+    );
+  }
+  
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  
+  await env.DB.prepare(`
+    INSERT INTO tournament_prize_payouts (
+      id,
+      tournament_id,
+      user_id,
+      prize_name,
+      position,
+      amount,
+      status,
+      awarded_at,
+      created_by,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+  `).bind(
+    id,
+    tournamentId,
+    userId,
+    prizeName,
+    position,
+    amount,
+    now,
+    user.id,
+    now,
+    now
+  ).run();
+  
+  return json({
+    success: true,
+    message: "Prize award recorded.",
+    data: {
+      id,
+      tournament_id: tournamentId,
+      user_id: userId,
+      prize_name: prizeName,
+      position,
+      amount,
+      status: "pending",
+      awarded_at: now
+    }
+  }, 201);
+}
+
+export async function handleApprovePrize(
+  request,
+  env,
+  user,
+  payoutId
+) {
+  const denied = await requireFinancialAdmin(env, user);
+  
+  if (denied) {
+    return denied;
+  }
+  
+  const payout = await env.DB.prepare(`
+    SELECT p.id, p.status
+    FROM tournament_prize_payouts p
+    INNER JOIN tournaments t
+      ON t.id = p.tournament_id
+    WHERE p.id = ?
+      AND t.admin_uid = ?
+    LIMIT 1
+  `).bind(payoutId, user.id).first();
+  
+  if (!payout) {
+    return financialError("Prize award not found.", 404);
+  }
+  
+  if (payout.status !== "pending") {
+    return financialError(
+      "Only pending prizes can be approved.",
+      409
+    );
+  }
+  
+  const now = Date.now();
+  
+  const result = await env.DB.prepare(`
+    UPDATE tournament_prize_payouts
+    SET
+      status = 'approved',
+      approved_by = ?,
+      approved_at = ?,
+      updated_at = ?
+    WHERE id = ?
+      AND status = 'pending'
+      AND EXISTS (
+        SELECT 1
+        FROM tournaments t
+        WHERE t.id = tournament_prize_payouts.tournament_id
+          AND t.admin_uid = ?
+      )
+  `).bind(
+    user.id,
+    now,
+    now,
+    payoutId,
+    user.id
+  ).run();
+  
+  if (!result.meta?.changes) {
+    return financialError(
+      "Prize status changed. Refresh and try again.",
+      409
+    );
+  }
+  
+  return json({
+    success: true,
+    message: "Prize approved."
+  });
+}
+
+export async function handlePayPrize(
+  request,
+  env,
+  user,
+  payoutId
+) {
+  const denied = await requireFinancialAdmin(env, user);
+  
+  if (denied) {
+    return denied;
+  }
+  
+  const body = await readFinancialBody(request);
+  
+  if (!body) {
+    return financialError("Invalid request body.");
+  }
+  
+  const reference = String(
+    body.payout_reference || ""
+  ).trim();
+  
+  const paymentMethod = String(
+    body.payment_method || ""
+  ).trim();
+  
+  if (!reference || !paymentMethod) {
+    return financialError(
+      "Payout reference and payment method are required."
+    );
+  }
+  
+  const payout = await env.DB.prepare(`
+    SELECT p.id, p.status
+    FROM tournament_prize_payouts p
+    INNER JOIN tournaments t
+      ON t.id = p.tournament_id
+    WHERE p.id = ?
+      AND t.admin_uid = ?
+    LIMIT 1
+  `).bind(payoutId, user.id).first();
+  
+  if (!payout) {
+    return financialError("Prize award not found.", 404);
+  }
+  
+  if (payout.status !== "approved") {
+    return financialError(
+      "Only approved prizes can be marked as paid.",
+      409
+    );
+  }
+  
+  const now = Date.now();
+  
+  const result = await env.DB.prepare(`
+    UPDATE tournament_prize_payouts
+    SET
+      status = 'paid',
+      payout_reference = ?,
+      payment_method = ?,
+      paid_at = ?,
+      updated_at = ?
+    WHERE id = ?
+      AND status = 'approved'
+      AND EXISTS (
+        SELECT 1
+        FROM tournaments t
+        WHERE t.id = tournament_prize_payouts.tournament_id
+          AND t.admin_uid = ?
+      )
+  `).bind(
+    reference,
+    paymentMethod,
+    now,
+    now,
+    payoutId,
+    user.id
+  ).run();
+  
+  if (!result.meta?.changes) {
+    return financialError(
+      "Prize status changed. Refresh and try again.",
+      409
+    );
+  }
+  
+  return json({
+    success: true,
+    message: "Prize payout recorded."
+  });
+}
+export async function handleCreateExpense(
+  request,
+  env,
+  user
+) {
+  const denied = await requireFinancialAdmin(env, user);
+  
+  if (denied) {
+    return denied;
+  }
+  
+  const body = await readFinancialBody(request);
+  
+  if (!body) {
+    return financialError("Invalid request body.");
+  }
+  
+  const description = String(
+    body.description || ""
+  ).trim();
+  
+  const category = String(
+    body.category || ""
+  ).trim();
+  
+  const amount = body.amount;
+  
+  const recipient = String(
+    body.recipient || ""
+  ).trim() || null;
+  
+  const tournamentId = String(
+    body.tournament_id || ""
+  ).trim() || null;
+  
+  const notes = String(
+    body.notes || ""
+  ).trim() || null;
+  
+  if (!description || !category) {
+    return financialError(
+      "Expense description and category are required."
+    );
+  }
+  
+  if (
+    typeof amount !== "number" ||
+    !isPositiveAmount(amount)
+  ) {
+    return financialError(
+      "Expense amount must be a positive whole number in naira."
+    );
+  }
+  
+  if (tournamentId) {
+    const tournament = await env.DB.prepare(`
+      SELECT id
+      FROM tournaments
+      WHERE id = ?
+        AND admin_uid = ?
+      LIMIT 1
+    `).bind(tournamentId, user.id).first();
+    
+    if (!tournament) {
+      return financialError(
+        "Tournament not found or you do not manage it.",
+        404
+      );
+    }
+  }
+  
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  
+  await env.DB.prepare(`
+    INSERT INTO financial_expenses (
+      id,
+      description,
+      category,
+      amount,
+      status,
+      recipient,
+      tournament_id,
+      expense_date,
+      notes,
+      created_by,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    description,
+    category,
+    amount,
+    recipient,
+    tournamentId,
+    now,
+    notes,
+    user.id,
+    now,
+    now
+  ).run();
+  
+  return json({
+    success: true,
+    message: "Expense recorded.",
+    data: {
+      id,
+      description,
+      category,
+      amount,
+      status: "pending",
+      tournament_id: tournamentId
+    }
+  }, 201);
+}
+export async function handleApproveExpense(
+  request,
+  env,
+  user,
+  expenseId
+) {
+  const denied = await requireFinancialAdmin(env, user);
+  
+  if (denied) {
+    return denied;
+  }
+  
+  const expense = await env.DB.prepare(`
+    SELECT id, status
+    FROM financial_expenses
+    WHERE id = ?
+      AND created_by = ?
+    LIMIT 1
+  `).bind(expenseId, user.id).first();
+  
+  if (!expense) {
+    return financialError("Expense not found.", 404);
+  }
+  
+  if (expense.status !== "pending") {
+    return financialError(
+      "Only pending expenses can be approved.",
+      409
+    );
+  }
+  
+  const now = Date.now();
+  
+  const result = await env.DB.prepare(`
+    UPDATE financial_expenses
+    SET
+      status = 'approved',
+      approved_by = ?,
+      approved_at = ?,
+      updated_at = ?
+    WHERE id = ?
+      AND created_by = ?
+      AND status = 'pending'
+  `).bind(
+    user.id,
+    now,
+    now,
+    expenseId,
+    user.id
+  ).run();
+  
+  if (!result.meta?.changes) {
+    return financialError(
+      "Expense status changed. Refresh and try again.",
+      409
+    );
+  }
+  
+  return json({
+    success: true,
+    message: "Expense approved."
+  });
+}
+export async function handlePayExpense(
+  request,
+  env,
+  user,
+  expenseId
+) {
+  const denied = await requireFinancialAdmin(env, user);
+  
+  if (denied) {
+    return denied;
+  }
+  
+  const body = await readFinancialBody(request);
+  
+  if (!body) {
+    return financialError("Invalid request body.");
+  }
+  
+  const reference = String(
+    body.payment_reference || ""
+  ).trim();
+  
+  const paymentMethod = String(
+    body.payment_method || ""
+  ).trim();
+  
+  if (!reference || !paymentMethod) {
+    return financialError(
+      "Payment reference and method are required."
+    );
+  }
+  
+  const expense = await env.DB.prepare(`
+    SELECT id, status
+    FROM financial_expenses
+    WHERE id = ?
+      AND created_by = ?
+    LIMIT 1
+  `).bind(expenseId, user.id).first();
+  
+  if (!expense) {
+    return financialError("Expense not found.", 404);
+  }
+  
+  if (expense.status !== "approved") {
+    return financialError(
+      "Only approved expenses can be marked as paid.",
+      409
+    );
+  }
+  
+  const now = Date.now();
+  
+  const result = await env.DB.prepare(`
+    UPDATE financial_expenses
+    SET
+      status = 'paid',
+      payment_reference = ?,
+      payment_method = ?,
+      paid_at = ?,
+      updated_at = ?
+    WHERE id = ?
+      AND created_by = ?
+      AND status = 'approved'
+  `).bind(
+    reference,
+    paymentMethod,
+    now,
+    now,
+    expenseId,
+    user.id
+  ).run();
+  
+  if (!result.meta?.changes) {
+    return financialError(
+      "Expense status changed. Refresh and try again.",
+      409
+    );
+  }
+  
+  return json({
+    success: true,
+    message: "Expense payment recorded."
+  });
+}
+
+async function handleFinancialSummary(env, user) {
+  const admin = await requireFinancialAdmin(env, user);
+  
+  if (admin instanceof Response) {
+    return admin;
+  }
+  
+  try {
+    const [
+      registrations,
+      prizes,
+      expenses
+    ] = await Promise.all([
+      env.DB.prepare(`
+        SELECT
+          COUNT(*) AS total_registrations,
+          SUM(CASE WHEN payment_status = 'paid' THEN 1 ELSE 0 END) AS paid_registrations,
+          SUM(CASE WHEN payment_status = 'pending' THEN 1 ELSE 0 END) AS pending_registrations,
+          SUM(CASE WHEN payment_status = 'refunded' THEN 1 ELSE 0 END) AS refunded_registrations,
+          SUM(CASE WHEN payment_status = 'paid' THEN total_amount ELSE 0 END) AS total_amount_received,
+          SUM(CASE WHEN payment_status = 'pending' THEN total_amount ELSE 0 END) AS pending_registration_amount,
+          SUM(CASE WHEN payment_status = 'refunded' THEN total_amount ELSE 0 END) AS total_amount_refunded
+        FROM season_registrations
+      `).first(),
+      
+      env.DB.prepare(`
+        SELECT
+          COUNT(*) AS total_prizes,
+          SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_prizes,
+          SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved_prizes,
+          SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) AS paid_prizes,
+          SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END) AS pending_prize_amount,
+          SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) AS approved_prize_amount,
+          SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) AS total_prize_amount_paid
+        FROM tournament_prize_payouts
+      `).first(),
+      
+      env.DB.prepare(`
+        SELECT
+          COUNT(*) AS total_expenses,
+          SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_expenses,
+          SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved_expenses,
+          SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) AS paid_expenses,
+          SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END) AS pending_expense_amount,
+          SUM(CASE WHEN status = 'approved' THEN amount ELSE 0 END) AS approved_expense_amount,
+          SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) AS total_expenses_paid
+        FROM financial_expenses
+      `).first()
+    ]);
+    
+    const registrationRevenue = Number(registrations?.total_amount_received || 0);
+    const refundedAmount = Number(registrations?.total_amount_refunded || 0);
+    const prizeAmountPaid = Number(prizes?.total_prize_amount_paid || 0);
+    const expensesPaid = Number(expenses?.total_expenses_paid || 0);
+    
+    return json({
+      success: true,
+      summary: {
+        registrations: {
+          total: Number(registrations?.total_registrations || 0),
+          paid: Number(registrations?.paid_registrations || 0),
+          pending: Number(registrations?.pending_registrations || 0),
+          refunded: Number(registrations?.refunded_registrations || 0),
+          amount_received: registrationRevenue,
+          pending_amount: Number(registrations?.pending_registration_amount || 0),
+          amount_refunded: refundedAmount
+        },
+        prizes: {
+          total: Number(prizes?.total_prizes || 0),
+          pending: Number(prizes?.pending_prizes || 0),
+          approved: Number(prizes?.approved_prizes || 0),
+          paid: Number(prizes?.paid_prizes || 0),
+          pending_amount: Number(prizes?.pending_prize_amount || 0),
+          approved_amount: Number(prizes?.approved_prize_amount || 0),
+          amount_paid: prizeAmountPaid
+        },
+        expenses: {
+          total: Number(expenses?.total_expenses || 0),
+          pending: Number(expenses?.pending_expenses || 0),
+          approved: Number(expenses?.approved_expenses || 0),
+          paid: Number(expenses?.paid_expenses || 0),
+          pending_amount: Number(expenses?.pending_expense_amount || 0),
+          approved_amount: Number(expenses?.approved_expense_amount || 0),
+          amount_paid: expensesPaid
+        },
+        net_balance: registrationRevenue - refundedAmount - prizeAmountPaid - expensesPaid
+      }
+    });
+  } catch (error) {
+    console.error("Financial summary error:", error);
+    
+    return financialError(
+      "Unable to load financial summary",
+      500
+    );
+  }
+}
+
 export async function handleSeasonRegistrationRequest(
   request,
   env,
@@ -937,6 +1666,90 @@ export async function handleSeasonRegistrationRequest(
   ) {
     return handleAvailableSeasons(env);
   }
+  if (
+  request.method === "GET" &&
+  pathname === "/financial/summary"
+) {
+  return handleFinancialSummary(env, user);
+}
+
+if (
+  request.method === "POST" &&
+  pathname === "/financial/prizes"
+) {
+  return handleCreatePrize(request, env, user);
+}
+
+const prizeApprovalMatch = pathname.match(
+  /^\/financial\/prizes\/([^/]+)\/approve$/
+);
+
+if (
+  request.method === "PATCH" &&
+  prizeApprovalMatch
+) {
+  return handleApprovePrize(
+    request,
+    env,
+    user,
+    prizeApprovalMatch[1]
+  );
+}
+
+const prizePaymentMatch = pathname.match(
+  /^\/financial\/prizes\/([^/]+)\/pay$/
+);
+
+if (
+  request.method === "PATCH" &&
+  prizePaymentMatch
+) {
+  return handlePayPrize(
+    request,
+    env,
+    user,
+    prizePaymentMatch[1]
+  );
+}
+
+if (
+  request.method === "POST" &&
+  pathname === "/financial/expenses"
+) {
+  return handleCreateExpense(request, env, user);
+}
+
+const expenseApprovalMatch = pathname.match(
+  /^\/financial\/expenses\/([^/]+)\/approve$/
+);
+
+if (
+  request.method === "PATCH" &&
+  expenseApprovalMatch
+) {
+  return handleApproveExpense(
+    request,
+    env,
+    user,
+    expenseApprovalMatch[1]
+  );
+}
+
+const expensePaymentMatch = pathname.match(
+  /^\/financial\/expenses\/([^/]+)\/pay$/
+);
+
+if (
+  request.method === "PATCH" &&
+  expensePaymentMatch
+) {
+  return handlePayExpense(
+    request,
+    env,
+    user,
+    expensePaymentMatch[1]
+  );
+}
   if (
     request.method === "GET" &&
     pathname === "/season-registrations/my"
