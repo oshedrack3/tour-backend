@@ -1626,25 +1626,17 @@ async function handleFinancialSummary(request, env, user) {
       "WHERE e.created_by = ? AND e.tournament_id = ?" :
       "WHERE e.created_by = ? AND (e.tournament_id IS NULL OR EXISTS (SELECT 1 FROM tournaments t WHERE t.id = e.tournament_id AND t.admin_uid = ?))";
     
-    const registrationBindings = tournamentId ?
-      [tournamentId, user.id] :
-      [user.id];
+    const registrationBindings = tournamentId ? [tournamentId, user.id] : [user.id];
     
-    const prizeBindings = tournamentId ?
-      [tournamentId, user.id] :
-      [user.id];
+    const prizeBindings = tournamentId ? [tournamentId, user.id] : [user.id];
     
-    const expenseBindings = tournamentId ?
-      [user.id, tournamentId] :
-      [user.id, user.id];
+    const expenseBindings = tournamentId ? [user.id, tournamentId] : [user.id, user.id];
     
     const contributionFilter = tournamentId ?
       "WHERE admin_uid = ? AND tournament_id = ?" :
       "WHERE admin_uid = ?";
     
-    const contributionBindings = tournamentId ?
-      [user.id, tournamentId] :
-      [user.id];
+    const contributionBindings = tournamentId ? [user.id, tournamentId] : [user.id];
     
     const [
       registrations,
@@ -1866,8 +1858,12 @@ async function handleGetFinancialPrizes(request, env, user) {
             p.approved_at,
             p.paid_at,
             p.created_at,
-            u.username,
-            t.name AS tournament_name
+         u.username,
+CASE WHEN p.status = 'approved' THEN u.payout_account_name END AS payout_account_name,
+CASE WHEN p.status = 'approved' THEN u.payout_account_number END AS payout_account_number,
+CASE WHEN p.status = 'approved' THEN u.payout_bank_name END AS payout_bank_name,
+t.name AS tournament_name
+
           FROM tournament_prize_payouts p
           INNER JOIN tournaments t
             ON t.id = p.tournament_id
@@ -2369,12 +2365,12 @@ export async function handleSeasonRegistrationRequest(
   }
   
   if (pathname === "/financial/contributions") {
-  return handleFinancialContributions(
-    request,
-    env,
-    user
-  );
-}
+    return handleFinancialContributions(
+      request,
+      env,
+      user
+    );
+  }
   if (
     request.method === "POST" &&
     pathname === "/financial/expenses"

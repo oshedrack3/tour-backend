@@ -2131,18 +2131,21 @@ export async function getUserProfile(
     teams
   ] = await Promise.all([
     db
-    .prepare(`
+      .prepare(`
         SELECT
           username,
-          phone
+          phone,
+          payout_account_name,
+          payout_account_number,
+          payout_bank_name
         FROM users
         WHERE id = ?
         LIMIT 1
       `)
-    .bind(userId)
-    .first(),
+      .bind(userId)
+      .first(),
     db
-    .prepare(`
+      .prepare(`
         SELECT
           id,
           name,
@@ -2151,8 +2154,8 @@ export async function getUserProfile(
         WHERE owner_uid = ?
         ORDER BY created_at ASC
       `)
-    .bind(userId)
-    .all()
+      .bind(userId)
+      .all()
   ]);
   if (!user) {
     return null;
@@ -2160,6 +2163,12 @@ export async function getUserProfile(
   return {
     username: user.username,
     phone: user.phone || "",
+    payout_account_name:
+      user.payout_account_name || "",
+    payout_account_number:
+      user.payout_account_number || "",
+    payout_bank_name:
+      user.payout_bank_name || "",
     teams: teams.results || []
   };
 }
@@ -2169,11 +2178,10 @@ export async function updateUserProfile(
   userId,
   updates
 ) {
-  const user =
-    await getUserById(
-      db,
-      userId
-    );
+  const user = await getUserById(
+    db,
+    userId
+  );
   if (!user) {
     return null;
   }
@@ -2181,52 +2189,73 @@ export async function updateUserProfile(
   const values = [];
   if (updates.username !== undefined) {
     const username =
-      String(updates.username || "")
-        .trim();
+      String(updates.username || "").trim();
     if (!username) {
       return {
         success: false,
-        message:
-          "Username is required."
+        message: "Username is required."
       };
     }
-    const existingUser =
-      await db
-        .prepare(`
-          SELECT id
-          FROM users
-          WHERE LOWER(username) =
-                LOWER(?)
+    const existingUser = await db
+      .prepare(`
+        SELECT id
+        FROM users
+        WHERE LOWER(username) = LOWER(?)
           AND id != ?
-          LIMIT 1
-        `)
-        .bind(
-          username,
-          userId
-        )
-        .first();
+        LIMIT 1
+      `)
+      .bind(username, userId)
+      .first();
     if (existingUser) {
       return {
         success: false,
-        message:
-          "Username is already taken."
+        message: "Username is already taken."
       };
     }
-    fields.push(
-      "username = ?"
-    );
+    fields.push("username = ?");
     values.push(username);
   }
   if (updates.phone !== undefined) {
     const phone =
-      String(updates.phone || "")
-        .trim();
-    fields.push(
-      "phone = ?"
-    );
-    values.push(
-      phone || null
-    );
+      String(updates.phone || "").trim();
+    fields.push("phone = ?");
+    values.push(phone || null);
+  }
+  const payoutFields = [
+    "payout_account_name",
+    "payout_account_number",
+    "payout_bank_name"
+  ];
+  for (const field of payoutFields) {
+    if (updates[field] !== undefined) {
+      const value =
+        String(updates[field] || "").trim();
+      if (value.length > 100) {
+        return {
+          success: false,
+          message: `${field.replaceAll("_", " ")} cannot exceed 100 characters.`
+        };
+      }
+      fields.push(`${field} = ?`);
+      values.push(value || null);
+    }
+  }
+  if (
+    updates.payout_account_number !== undefined
+  ) {
+    const accountNumber =
+      String(
+        updates.payout_account_number || ""
+      ).trim();
+    if (
+      accountNumber &&
+      !/^\d{10}$/.test(accountNumber)
+    ) {
+      return {
+        success: false,
+        message: "Bank account number must contain exactly 10 digits."
+      };
+    }
   }
   if (!fields.length) {
     return {
@@ -2243,17 +2272,15 @@ export async function updateUserProfile(
     `)
     .bind(...values)
     .run();
-  const updatedUser =
-    await getUserById(
-      db,
-      userId
-    );
+  const updatedUser = await getUserById(
+    db,
+    userId
+  );
   return {
     success: true,
     user: updatedUser
   };
 }
-
 
 export async function createGroupsBatch(
   db,

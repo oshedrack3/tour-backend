@@ -1153,18 +1153,19 @@ async function updateProfileRoute(
   user
 ) {
   try {
-    const body =
-      await request.json();
+    const body = await request.json();
     const updates = {
       username: body.username,
-      phone: body.phone
+      phone: body.phone,
+      payout_account_name: body.payout_account_name,
+      payout_account_number: body.payout_account_number,
+      payout_bank_name: body.payout_bank_name
     };
-    const result =
-      await updateUserProfile(
-        env.DB,
-        user.id,
-        updates
-      );
+    const result = await updateUserProfile(
+      env.DB,
+      user.id,
+      updates
+    );
     if (!result) {
       return Response.json({
         success: false,
@@ -1181,11 +1182,10 @@ async function updateProfileRoute(
         status: 400
       });
     }
-    const profile =
-      await getUserProfile(
-        env.DB,
-        user.id
-      );
+    const profile = await getUserProfile(
+      env.DB,
+      user.id
+    );
     return Response.json({
       success: true,
       message: "Profile updated successfully.",
@@ -1205,7 +1205,6 @@ async function updateProfileRoute(
     });
   }
 }
-
 
 async function subscribePushRoute(
   request,
