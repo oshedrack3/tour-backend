@@ -702,14 +702,23 @@ export async function handleFlutterwaveWebhook(request, env) {
   });
 }
 
+
 export async function handlePaymentHistory(
   request,
   env,
   user
 ) {
+  if (!user) {
+    return Response.json({
+      success: false,
+      message: "Please log in to continue."
+    }, { status: 401 });
+  }
+  
   const url = new URL(request.url);
-  const tournamentId =
-    url.searchParams.get("tournament_id")?.trim();
+  const tournamentId = url.searchParams
+    .get("tournament_id")
+    ?.trim();
   
   if (tournamentId) {
     const tournament = await env.DB.prepare(`
@@ -726,21 +735,35 @@ export async function handlePaymentHistory(
       }, { status: 404 });
     }
     
-    const isParticipant = await env.DB.prepare(`
-      SELECT 1
-      FROM tournament_players
-      WHERE tournament_id = ?
-        AND user_id = ?
-      LIMIT 1
-    `).bind(
-      tournamentId,
-      user.id
-    ).first();
-    
-    if (!isParticipant) {
+    if (user.role === "admin") {
+      if (tournament.admin_uid !== user.id) {
+        return Response.json({
+          success: false,
+          message: "You do not manage this tournament."
+        }, { status: 403 });
+      }
+    } else if (user.role === "player") {
+      const isParticipant = await env.DB.prepare(`
+        SELECT 1
+        FROM tournament_players
+        WHERE tournament_id = ?
+          AND user_id = ?
+        LIMIT 1
+      `).bind(
+        tournamentId,
+        user.id
+      ).first();
+      
+      if (!isParticipant) {
+        return Response.json({
+          success: false,
+          message: "You are not a player in this tournament."
+        }, { status: 403 });
+      }
+    } else {
       return Response.json({
         success: false,
-        message: "You are not a player in this tournament."
+        message: "You do not have permission to view payment history."
       }, { status: 403 });
     }
     
@@ -774,12 +797,14 @@ export async function handlePaymentHistory(
     
     const summary = registrations.reduce(
       (acc, registration) => {
+        const amount =
+          Number(registration.total_amount) || 0;
+        
         acc.total_registrations++;
         
         if (registration.payment_status === "paid") {
           acc.paid_registrations++;
-          acc.total_amount_paid +=
-            Number(registration.total_amount) || 0;
+          acc.total_amount_paid += amount;
         }
         
         if (
@@ -787,14 +812,12 @@ export async function handlePaymentHistory(
           registration.payment_status === "submitted"
         ) {
           acc.pending_registrations++;
-          acc.pending_amount +=
-            Number(registration.total_amount) || 0;
+          acc.pending_amount += amount;
         }
         
         if (registration.payment_status === "refunded") {
           acc.refunded_registrations++;
-          acc.total_amount_refunded +=
-            Number(registration.total_amount) || 0;
+          acc.total_amount_refunded += amount;
         }
         
         return acc;
@@ -827,8 +850,14 @@ export async function handlePaymentHistory(
   if (user.role !== "admin") {
     return Response.json({
       success: false,
-      message: "Only administrators can view their tournament payment history."
+      message: "Please open a tournament first to view payment history."
     }, { status: 403 });
+  }
+  
+  const denied = await requireFinancialAdmin(env, user);
+  
+  if (denied) {
+    return denied;
   }
   
   const result = await env.DB.prepare(`
@@ -863,8 +892,9 @@ export async function handlePaymentHistory(
   const tournamentsMap = new Map();
   
   for (const registration of registrations) {
-    let tournament =
-      tournamentsMap.get(registration.tournament_id);
+    let tournament = tournamentsMap.get(
+      registration.tournament_id
+    );
     
     if (!tournament) {
       tournament = {
@@ -921,7 +951,6 @@ export async function handlePaymentHistory(
     data: Array.from(tournamentsMap.values())
   });
 }
-
 
 
 
