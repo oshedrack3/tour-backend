@@ -1967,6 +1967,13 @@ if (
       expensePaymentMatch[1]
     );
   }
+    if (
+    request.method === "GET" &&
+    pathname === "/financial/expenses"
+  ) {
+    return handleGetFinancialExpenses(request, env, user);
+  }
+
   if (
     request.method === "GET" &&
     pathname === "/season-registrations/my"
