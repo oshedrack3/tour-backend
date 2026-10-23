@@ -41,7 +41,7 @@ async function getAvailableSeasons(env) {
 
 async function handleAvailableSeasons(env) {
   const result = await getAvailableSeasons(env);
-
+  
   const seasons = (result.results || [])
     .filter(tournament =>
       Number(tournament.registered_count) <
@@ -64,11 +64,10 @@ async function handleAvailableSeasons(env) {
       ),
       registration_fee: Number(tournament.registration_fee),
       admin_fee: Number(tournament.admin_fee),
-      total_amount:
-        Number(tournament.registration_fee) +
+      total_amount: Number(tournament.registration_fee) +
         Number(tournament.admin_fee)
     }));
-
+  
   return json({
     success: true,
     seasons
@@ -82,23 +81,23 @@ async function handleCreateCheckout(request, env, user) {
       message: "Payment service is not configured."
     }, 503);
   }
-
+  
   if (!env.FLW_REDIRECT_URL) {
     return json({
       success: false,
       message: "Payment return URL is not configured."
     }, 503);
   }
-
+  
   if (!user.email) {
     return json({
       success: false,
       message: "Your account needs a valid email address before payment."
     }, 400);
   }
-
+  
   let body;
-
+  
   try {
     body = await request.json();
   } catch {
@@ -107,18 +106,18 @@ async function handleCreateCheckout(request, env, user) {
       message: "Invalid request body."
     }, 400);
   }
-
+  
   const tournamentId = String(
     body.tournament_id || ""
   ).trim();
-
+  
   if (!tournamentId) {
     return json({
       success: false,
       message: "Tournament ID is required."
     }, 400);
   }
-
+  
   const tournament = await env.DB.prepare(`
     SELECT
       t.id,
@@ -136,14 +135,14 @@ async function handleCreateCheckout(request, env, user) {
     WHERE t.id = ?
     LIMIT 1
   `).bind(tournamentId).first();
-
+  
   if (!tournament) {
     return json({
       success: false,
       message: "Season not found."
     }, 404);
   }
-
+  
   if (
     tournament.registration_status !== "open" ||
     !["upcoming", "active"].includes(tournament.season_status) ||
@@ -158,11 +157,11 @@ async function handleCreateCheckout(request, env, user) {
       message: "Registration for this season is closed."
     }, 400);
   }
-
+  
   const entryFee = Number(tournament.registration_fee);
   const adminFee = Number(tournament.admin_fee);
   const totalAmount = entryFee + adminFee;
-
+  
   if (
     !Number.isSafeInteger(entryFee) ||
     !Number.isSafeInteger(adminFee) ||
@@ -175,7 +174,7 @@ async function handleCreateCheckout(request, env, user) {
       message: "The registration fee is not configured correctly."
     }, 400);
   }
-
+  
   const existing = await env.DB.prepare(`
     SELECT id, payment_status
     FROM season_registrations
@@ -183,21 +182,21 @@ async function handleCreateCheckout(request, env, user) {
       AND user_id = ?
     LIMIT 1
   `).bind(tournamentId, user.id).first();
-
+  
   if (existing?.payment_status === "paid") {
     return json({
       success: false,
       message: "You are already registered for this season."
     }, 409);
   }
-
+  
   const count = await env.DB.prepare(`
     SELECT COUNT(*) AS total
     FROM season_registrations
     WHERE tournament_id = ?
       AND payment_status = 'paid'
   `).bind(tournamentId).first();
-
+  
   if (
     Number(count?.total || 0) >=
     Number(tournament.registration_capacity)
@@ -207,20 +206,20 @@ async function handleCreateCheckout(request, env, user) {
       message: "This season has reached its registration capacity."
     }, 409);
   }
-
-  const registrationId = existing
-    ? (await env.DB.prepare(`
+  
+  const registrationId = existing ?
+    (await env.DB.prepare(`
         SELECT id
         FROM season_registrations
         WHERE tournament_id = ?
           AND user_id = ?
         LIMIT 1
-      `).bind(tournamentId, user.id).first()).id
-    : crypto.randomUUID();
-
+      `).bind(tournamentId, user.id).first()).id :
+    crypto.randomUUID();
+  
   const reference = createReference();
   const now = Date.now();
-
+  
   if (existing) {
     await env.DB.prepare(`
       UPDATE season_registrations
@@ -277,9 +276,9 @@ async function handleCreateCheckout(request, env, user) {
       now
     ).run();
   }
-
+  
   let paymentResponse;
-
+  
   try {
     const response = await fetch(
       "https://api.flutterwave.com/v3/payments",
@@ -310,15 +309,15 @@ async function handleCreateCheckout(request, env, user) {
         })
       }
     );
-
+    
     paymentResponse = await response.json();
-
+    
     if (!response.ok || paymentResponse.status !== "success") {
       console.error(
         "Flutterwave checkout error:",
         paymentResponse.message || "Checkout creation failed."
       );
-
+      
       return json({
         success: false,
         message: "Unable to initialize payment. Please try again."
@@ -326,13 +325,13 @@ async function handleCreateCheckout(request, env, user) {
     }
   } catch (error) {
     console.error("Flutterwave request failed:", error);
-
+    
     return json({
       success: false,
       message: "Unable to contact the payment provider."
     }, 502);
   }
-
+  
   return json({
     success: true,
     message: "Checkout created.",
@@ -351,17 +350,17 @@ async function handleVerifyPayment(request, env, user) {
       message: "Payment service is not configured."
     }, 503);
   }
-
+  
   const url = new URL(request.url);
   const reference = url.searchParams.get("reference");
-
+  
   if (!reference) {
     return json({
       success: false,
       message: "Payment reference is required."
     }, 400);
   }
-
+  
   const registration = await env.DB.prepare(`
     SELECT
       id,
@@ -375,14 +374,14 @@ async function handleVerifyPayment(request, env, user) {
       AND user_id = ?
     LIMIT 1
   `).bind(reference, user.id).first();
-
+  
   if (!registration) {
     return json({
       success: false,
       message: "Registration or payment reference not found."
     }, 404);
   }
-
+  
   if (registration.payment_status === "paid") {
     return json({
       success: true,
@@ -390,9 +389,9 @@ async function handleVerifyPayment(request, env, user) {
       payment_status: "paid"
     });
   }
-
+  
   let verificationResponse;
-
+  
   try {
     const response = await fetch(
       `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`,
@@ -403,9 +402,9 @@ async function handleVerifyPayment(request, env, user) {
         }
       }
     );
-
+    
     verificationResponse = await response.json();
-
+    
     if (
       !response.ok ||
       verificationResponse.status !== "success" ||
@@ -418,15 +417,15 @@ async function handleVerifyPayment(request, env, user) {
     }
   } catch (error) {
     console.error("Flutterwave verification failed:", error);
-
+    
     return json({
       success: false,
       message: "Unable to verify payment right now."
     }, 502);
   }
-
+  
   const payment = verificationResponse.data;
-
+  
   if (
     payment.status !== "successful" ||
     payment.tx_ref !== registration.payment_reference ||
@@ -438,7 +437,7 @@ async function handleVerifyPayment(request, env, user) {
       message: "The payment could not be verified against this registration."
     }, 400);
   }
-
+  
   const result = await env.DB.prepare(`
     UPDATE season_registrations
     SET
@@ -456,7 +455,7 @@ async function handleVerifyPayment(request, env, user) {
     user.id,
     reference
   ).run();
-
+  
   if (!result.meta?.changes) {
     const latest = await env.DB.prepare(`
       SELECT payment_status
@@ -465,7 +464,7 @@ async function handleVerifyPayment(request, env, user) {
         AND user_id = ?
       LIMIT 1
     `).bind(registration.id, user.id).first();
-
+    
     if (latest?.payment_status !== "paid") {
       return json({
         success: false,
@@ -473,7 +472,7 @@ async function handleVerifyPayment(request, env, user) {
       }, 409);
     }
   }
-
+  
   return json({
     success: true,
     message: "Payment verified successfully.",
@@ -507,7 +506,7 @@ async function handleMyRegistrations(env, user) {
     WHERE sr.user_id = ?
     ORDER BY sr.created_at DESC
   `).bind(user.id).all();
-
+  
   return json({
     success: true,
     registrations: result.results || []
@@ -1641,7 +1640,7 @@ async function handleFinancialSummary(env, user) {
           approved_amount: Number(expenses?.approved_expense_amount || 0),
           amount_paid: expensesPaid
         },
-        net_balance: registrationRevenue - refundedAmount - prizeAmountPaid - expensesPaid
+        net_balance: registrationRevenue - prizeAmountPaid - expensesPaid
       }
     });
   } catch (error) {
@@ -1653,7 +1652,219 @@ async function handleFinancialSummary(env, user) {
     );
   }
 }
-
+async function handleGetFinancialPrizes(request, env, user) {
+  if (!user) {
+    return financialError("Please log in to continue.", 401);
+  }
+  
+  try {
+    const url = new URL(request.url);
+    const tournamentId = String(
+      url.searchParams.get("tournament_id") || ""
+    ).trim();
+    
+    let result;
+    
+    if (user.role === "admin") {
+      const denied = await requireFinancialAdmin(env, user);
+      
+      if (denied) {
+        return denied;
+      }
+      
+      if (tournamentId) {
+        result = await env.DB.prepare(`
+          SELECT
+            p.id,
+            p.tournament_id,
+            p.user_id,
+            p.prize_name,
+            p.position,
+            p.amount,
+            p.status,
+            p.payout_reference,
+            p.payment_method,
+            p.notes,
+            p.awarded_at,
+            p.approved_at,
+            p.paid_at,
+            p.created_at,
+            u.username,
+            t.name AS tournament_name
+          FROM tournament_prize_payouts p
+          INNER JOIN tournaments t
+            ON t.id = p.tournament_id
+          INNER JOIN users u
+            ON u.id = p.user_id
+          WHERE t.admin_uid = ?
+            AND p.tournament_id = ?
+          ORDER BY p.created_at DESC
+        `)
+          .bind(user.id, tournamentId)
+          .all();
+      } else {
+        result = await env.DB.prepare(`
+          SELECT
+            p.id,
+            p.tournament_id,
+            p.user_id,
+            p.prize_name,
+            p.position,
+            p.amount,
+            p.status,
+            p.payout_reference,
+            p.payment_method,
+            p.notes,
+            p.awarded_at,
+            p.approved_at,
+            p.paid_at,
+            p.created_at,
+            u.username,
+            t.name AS tournament_name
+          FROM tournament_prize_payouts p
+          INNER JOIN tournaments t
+            ON t.id = p.tournament_id
+          INNER JOIN users u
+            ON u.id = p.user_id
+          WHERE t.admin_uid = ?
+          ORDER BY p.created_at DESC
+        `)
+          .bind(user.id)
+          .all();
+      }
+    } else if (user.role === "player") {
+      if (!tournamentId) {
+        return financialError(
+          "Tournament ID is required.",
+          400
+        );
+      }
+      
+      const participant = await env.DB.prepare(`
+        SELECT 1
+        FROM tournament_players
+        WHERE tournament_id = ?
+          AND user_id = ?
+        LIMIT 1
+      `)
+        .bind(tournamentId, user.id)
+        .first();
+      
+      if (!participant) {
+        return financialError(
+          "You are not a participant in this tournament.",
+          403
+        );
+      }
+      
+      result = await env.DB.prepare(`
+        SELECT
+          p.id,
+          p.tournament_id,
+          p.user_id,
+          p.prize_name,
+          p.position,
+          p.amount,
+          p.status,
+          p.awarded_at,
+          p.paid_at,
+          u.username,
+          t.name AS tournament_name
+        FROM tournament_prize_payouts p
+        INNER JOIN tournaments t
+          ON t.id = p.tournament_id
+        INNER JOIN users u
+          ON u.id = p.user_id
+        WHERE p.tournament_id = ?
+          AND p.status = 'paid'
+        ORDER BY p.paid_at DESC
+      `)
+        .bind(tournamentId)
+        .all();
+    } else {
+      return financialError(
+        "You do not have permission to view prize payouts.",
+        403
+      );
+    }
+    
+    return json({
+      success: true,
+      data: result.results || []
+    });
+  } catch (error) {
+    console.error("Get financial prizes error:", error);
+    
+    return financialError(
+      "Unable to load prize payouts.",
+      500
+    );
+  }
+}
+async function handleGetFinancialExpenses(request, env, user) {
+  const denied = await requireFinancialAdmin(env, user);
+  if (denied) {
+    return denied;
+  }
+  try {
+    const url = new URL(request.url);
+    const status = String(
+      url.searchParams.get("status") || ""
+    ).trim().toLowerCase();
+    const allowedStatuses = [
+      "pending",
+      "approved",
+      "paid",
+      "rejected",
+      "cancelled"
+    ];
+    if (status && !allowedStatuses.includes(status)) {
+      return financialError("Invalid expense status.");
+    }
+    let query = `
+      SELECT
+        e.id,
+        e.description,
+        e.category,
+        e.amount,
+        e.status,
+        e.payment_method,
+        e.payment_reference,
+        e.recipient,
+        e.tournament_id,
+        e.expense_date,
+        e.approved_at,
+        e.paid_at,
+        e.notes,
+        e.created_at,
+        e.updated_at,
+        t.name AS tournament_name
+      FROM financial_expenses e
+      LEFT JOIN tournaments t
+        ON t.id = e.tournament_id
+      WHERE e.created_by = ?
+    `;
+    const bindings = [user.id];
+    if (status) {
+      query += ` AND e.status = ?`;
+      bindings.push(status);
+    }
+    query += ` ORDER BY e.created_at DESC`;
+    const result = await env.DB.prepare(query)
+      .bind(...bindings)
+      .all();
+    return json({
+      success: true,
+      data: result.results || []
+    });
+  } catch (error) {
+    console.error("Get financial expenses error:", error);
+    return financialError(
+      "Unable to load financial expenses.",
+      500
+    );
+  }
+}
 export async function handleSeasonRegistrationRequest(
   request,
   env,
@@ -1667,89 +1878,95 @@ export async function handleSeasonRegistrationRequest(
     return handleAvailableSeasons(env);
   }
   if (
+    request.method === "GET" &&
+    pathname === "/financial/summary"
+  ) {
+    return handleFinancialSummary(env, user);
+  }
+  if (
   request.method === "GET" &&
-  pathname === "/financial/summary"
-) {
-  return handleFinancialSummary(env, user);
-}
-
-if (
-  request.method === "POST" &&
   pathname === "/financial/prizes"
 ) {
-  return handleCreatePrize(request, env, user);
-}
-
-const prizeApprovalMatch = pathname.match(
-  /^\/financial\/prizes\/([^/]+)\/approve$/
-);
+  return handleGetFinancialPrizes(request, env, user);
+}  
 
 if (
-  request.method === "PATCH" &&
-  prizeApprovalMatch
-) {
-  return handleApprovePrize(
-    request,
-    env,
-    user,
-    prizeApprovalMatch[1]
+    request.method === "POST" &&
+    pathname === "/financial/prizes"
+  ) {
+    return handleCreatePrize(request, env, user);
+  }
+  
+  const prizeApprovalMatch = pathname.match(
+    /^\/financial\/prizes\/([^/]+)\/approve$/
   );
-}
-
-const prizePaymentMatch = pathname.match(
-  /^\/financial\/prizes\/([^/]+)\/pay$/
-);
-
-if (
-  request.method === "PATCH" &&
-  prizePaymentMatch
-) {
-  return handlePayPrize(
-    request,
-    env,
-    user,
-    prizePaymentMatch[1]
+  
+  if (
+    request.method === "PATCH" &&
+    prizeApprovalMatch
+  ) {
+    return handleApprovePrize(
+      request,
+      env,
+      user,
+      prizeApprovalMatch[1]
+    );
+  }
+  
+  const prizePaymentMatch = pathname.match(
+    /^\/financial\/prizes\/([^/]+)\/pay$/
   );
-}
-
-if (
-  request.method === "POST" &&
-  pathname === "/financial/expenses"
-) {
-  return handleCreateExpense(request, env, user);
-}
-
-const expenseApprovalMatch = pathname.match(
-  /^\/financial\/expenses\/([^/]+)\/approve$/
-);
-
-if (
-  request.method === "PATCH" &&
-  expenseApprovalMatch
-) {
-  return handleApproveExpense(
-    request,
-    env,
-    user,
-    expenseApprovalMatch[1]
+  
+  if (
+    request.method === "PATCH" &&
+    prizePaymentMatch
+  ) {
+    return handlePayPrize(
+      request,
+      env,
+      user,
+      prizePaymentMatch[1]
+    );
+  }
+  
+  if (
+    request.method === "POST" &&
+    pathname === "/financial/expenses"
+  ) {
+    return handleCreateExpense(request, env, user);
+  }
+  
+  const expenseApprovalMatch = pathname.match(
+    /^\/financial\/expenses\/([^/]+)\/approve$/
   );
-}
-
-const expensePaymentMatch = pathname.match(
-  /^\/financial\/expenses\/([^/]+)\/pay$/
-);
-
-if (
-  request.method === "PATCH" &&
-  expensePaymentMatch
-) {
-  return handlePayExpense(
-    request,
-    env,
-    user,
-    expensePaymentMatch[1]
+  
+  if (
+    request.method === "PATCH" &&
+    expenseApprovalMatch
+  ) {
+    return handleApproveExpense(
+      request,
+      env,
+      user,
+      expenseApprovalMatch[1]
+    );
+  }
+  
+  const expensePaymentMatch = pathname.match(
+    /^\/financial\/expenses\/([^/]+)\/pay$/
   );
-}
+  
+  if (
+    request.method === "PATCH" &&
+    expensePaymentMatch
+  ) {
+    return handlePayExpense(
+      request,
+      env,
+      user,
+      expensePaymentMatch[1]
+    );
+  }
   if (
     request.method === "GET" &&
     pathname === "/season-registrations/my"
