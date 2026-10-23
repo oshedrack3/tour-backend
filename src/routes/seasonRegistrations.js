@@ -1638,10 +1638,19 @@ async function handleFinancialSummary(request, env, user) {
       [user.id, tournamentId] :
       [user.id, user.id];
     
+    const contributionFilter = tournamentId ?
+      "WHERE admin_uid = ? AND tournament_id = ?" :
+      "WHERE admin_uid = ?";
+    
+    const contributionBindings = tournamentId ?
+      [user.id, tournamentId] :
+      [user.id];
+    
     const [
       registrations,
       prizes,
-      expenses
+      expenses,
+      contributions
     ] = await Promise.all([
       env.DB.prepare(`
         SELECT
@@ -1684,7 +1693,38 @@ async function handleFinancialSummary(request, env, user) {
           SUM(CASE WHEN e.status = 'paid' THEN e.amount ELSE 0 END) AS total_expenses_paid
         FROM financial_expenses e
         ${expenseFilter}
-      `).bind(...expenseBindings).first()
+      `).bind(...expenseBindings).first(),
+      
+      env.DB.prepare(`
+        SELECT
+          COUNT(*) AS total_contributions,
+          SUM(
+            CASE
+              WHEN contribution_type = 'sponsorship'
+              THEN 1 ELSE 0
+            END
+          ) AS sponsorship_count,
+          SUM(
+            CASE
+              WHEN contribution_type = 'admin_contribution'
+              THEN 1 ELSE 0
+            END
+          ) AS admin_contribution_count,
+          SUM(
+            CASE
+              WHEN contribution_type = 'sponsorship'
+              THEN amount ELSE 0
+            END
+          ) AS sponsorship_amount,
+          SUM(
+            CASE
+              WHEN contribution_type = 'admin_contribution'
+              THEN amount ELSE 0
+            END
+          ) AS admin_contribution_amount
+        FROM financial_contributions
+        ${contributionFilter}
+      `).bind(...contributionBindings).first()
     ]);
     
     const registrationRevenue = Number(
@@ -1703,6 +1743,23 @@ async function handleFinancialSummary(request, env, user) {
       expenses?.total_expenses_paid || 0
     );
     
+    const sponsorshipIncome = Number(
+      contributions?.sponsorship_amount || 0
+    );
+    
+    const adminContributionIncome = Number(
+      contributions?.admin_contribution_amount || 0
+    );
+    
+    const totalAdditionalIncome =
+      sponsorshipIncome + adminContributionIncome;
+    
+    const totalFundsReceived =
+      registrationRevenue + totalAdditionalIncome;
+    
+    const netBalance =
+      totalFundsReceived - prizeAmountPaid - expensesPaid;
+    
     return json({
       success: true,
       tournament_id: tournamentId || null,
@@ -1717,6 +1774,20 @@ async function handleFinancialSummary(request, env, user) {
             registrations?.pending_registration_amount || 0
           ),
           amount_refunded: refundedAmount
+        },
+        contributions: {
+          total: Number(
+            contributions?.total_contributions || 0
+          ),
+          sponsorship_count: Number(
+            contributions?.sponsorship_count || 0
+          ),
+          admin_contribution_count: Number(
+            contributions?.admin_contribution_count || 0
+          ),
+          sponsorship_amount: sponsorshipIncome,
+          admin_contribution_amount: adminContributionIncome,
+          total_amount: totalAdditionalIncome
         },
         prizes: {
           total: Number(prizes?.total_prizes || 0),
@@ -1744,7 +1815,8 @@ async function handleFinancialSummary(request, env, user) {
           ),
           amount_paid: expensesPaid
         },
-        net_balance: registrationRevenue - prizeAmountPaid - expensesPaid
+        total_funds_received: totalFundsReceived,
+        net_balance: netBalance
       }
     });
   } catch (error) {
@@ -1756,6 +1828,7 @@ async function handleFinancialSummary(request, env, user) {
     );
   }
 }
+
 async function handleGetFinancialPrizes(request, env, user) {
   if (!user) {
     return financialError("Please log in to continue.", 401);
@@ -2000,6 +2073,237 @@ async function handleGetFinancialExpenses(request, env, user) {
 }
 
 
+async function handleFinancialContributions(request, env, user) {
+  const denied = await requireFinancialAdmin(env, user);
+  
+  if (denied) {
+    return denied;
+  }
+  
+  try {
+    const url = new URL(request.url);
+    
+    if (request.method === "GET") {
+      const tournamentId = String(
+        url.searchParams.get("tournament_id") || ""
+      ).trim();
+      
+      if (tournamentId) {
+        const tournament = await env.DB.prepare(`
+          SELECT id
+          FROM tournaments
+          WHERE id = ?
+            AND admin_uid = ?
+          LIMIT 1
+        `).bind(tournamentId, user.id).first();
+        
+        if (!tournament) {
+          return financialError(
+            "Tournament not found or you do not manage it.",
+            404
+          );
+        }
+      }
+      
+      const query = tournamentId ?
+        `
+          SELECT
+            id,
+            tournament_id,
+            contribution_type,
+            contributor_name,
+            amount,
+            payment_method,
+            payment_reference,
+            received_at,
+            notes,
+            created_at
+          FROM financial_contributions
+          WHERE admin_uid = ?
+            AND tournament_id = ?
+          ORDER BY received_at DESC, created_at DESC
+        ` :
+        `
+          SELECT
+            id,
+            tournament_id,
+            contribution_type,
+            contributor_name,
+            amount,
+            payment_method,
+            payment_reference,
+            received_at,
+            notes,
+            created_at
+          FROM financial_contributions
+          WHERE admin_uid = ?
+          ORDER BY received_at DESC, created_at DESC
+        `;
+      
+      const result = tournamentId ?
+        await env.DB.prepare(query)
+        .bind(user.id, tournamentId)
+        .all() :
+        await env.DB.prepare(query)
+        .bind(user.id)
+        .all();
+      
+      return json({
+        success: true,
+        contributions: result.results || []
+      });
+    }
+    
+    if (request.method === "POST") {
+      const body = await readFinancialBody(request);
+      
+      if (!body) {
+        return financialError("Invalid request body.");
+      }
+      
+      const contributionType = String(
+        body.contribution_type || ""
+      ).trim();
+      
+      const contributorName = String(
+        body.contributor_name || ""
+      ).trim();
+      
+      const amount = body.amount;
+      
+      const tournamentId = String(
+        body.tournament_id || ""
+      ).trim();
+      
+      const paymentMethod = String(
+        body.payment_method || ""
+      ).trim();
+      
+      const paymentReference = String(
+        body.payment_reference || ""
+      ).trim();
+      
+      const receivedAt = String(
+        body.received_at || ""
+      ).trim();
+      
+      const notes = String(
+        body.notes || ""
+      ).trim();
+      
+      if (
+        !["sponsorship", "admin_contribution"].includes(
+          contributionType
+        )
+      ) {
+        return financialError(
+          "Contribution type must be sponsorship or admin_contribution."
+        );
+      }
+      
+      if (!contributorName || contributorName.length > 150) {
+        return financialError(
+          "Enter a contributor name of up to 150 characters."
+        );
+      }
+      
+      if (!isPositiveAmount(amount)) {
+        return financialError(
+          "Amount must be a positive whole number in naira."
+        );
+      }
+      
+      if (paymentMethod.length > 100) {
+        return financialError("Payment method is too long.");
+      }
+      
+      if (paymentReference.length > 200) {
+        return financialError("Payment reference is too long.");
+      }
+      
+      if (notes.length > 2000) {
+        return financialError("Notes cannot exceed 2000 characters.");
+      }
+      
+      if (receivedAt && !Number.isFinite(Date.parse(receivedAt))) {
+        return financialError("Enter a valid date received.");
+      }
+      
+      if (tournamentId) {
+        const tournament = await env.DB.prepare(`
+          SELECT id
+          FROM tournaments
+          WHERE id = ?
+            AND admin_uid = ?
+          LIMIT 1
+        `).bind(tournamentId, user.id).first();
+        
+        if (!tournament) {
+          return financialError(
+            "Tournament not found or you do not manage it.",
+            404
+          );
+        }
+      }
+      
+      const id = crypto.randomUUID();
+      
+      await env.DB.prepare(`
+        INSERT INTO financial_contributions (
+          id,
+          admin_uid,
+          tournament_id,
+          contribution_type,
+          contributor_name,
+          amount,
+          payment_method,
+          payment_reference,
+          received_at,
+          notes
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), ?)
+      `).bind(
+        id,
+        user.id,
+        tournamentId || null,
+        contributionType,
+        contributorName,
+        amount,
+        paymentMethod || null,
+        paymentReference || null,
+        receivedAt || null,
+        notes || null
+      ).run();
+      
+      return json({
+        success: true,
+        message: "Contribution recorded successfully.",
+        contribution: {
+          id,
+          admin_uid: user.id,
+          tournament_id: tournamentId || null,
+          contribution_type: contributionType,
+          contributor_name: contributorName,
+          amount,
+          payment_method: paymentMethod || null,
+          payment_reference: paymentReference || null,
+          received_at: receivedAt || null,
+          notes: notes || null
+        }
+      }, 201);
+    }
+    
+    return financialError("Method not allowed.", 405);
+  } catch (error) {
+    console.error("Financial contributions error:", error);
+    
+    return financialError(
+      "Unable to process financial contributions.",
+      500
+    );
+  }
+}
+
 export async function handleSeasonRegistrationRequest(
   request,
   env,
@@ -2064,6 +2368,13 @@ export async function handleSeasonRegistrationRequest(
     );
   }
   
+  if (pathname === "/financial/contributions") {
+  return handleFinancialContributions(
+    request,
+    env,
+    user
+  );
+}
   if (
     request.method === "POST" &&
     pathname === "/financial/expenses"
