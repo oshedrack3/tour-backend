@@ -915,26 +915,38 @@ export async function deleteMatch(db, id) {
     .run();
   return true;
 }
+
 export async function getTeamsByTournament(
   db,
   tournamentId
 ) {
-  const result =
-    await db
+  const result = await db
     .prepare(`
-        SELECT DISTINCT
-          t.id,
-          t.name,
-          t.logo
-        FROM teams t
-        INNER JOIN tournament_players tp
-          ON tp.team_id = t.id
-        WHERE tp.tournament_id = ?
-        ORDER BY t.created_at ASC
-      `)
-    .bind(tournamentId)
+      SELECT id, name, logo
+      FROM teams
+      WHERE id IN (
+        SELECT team_id
+        FROM tournament_players
+        WHERE tournament_id = ?
+      )
+      OR id IN (
+        SELECT home_team_id
+        FROM matches
+        WHERE tournament_id = ?
+      )
+      OR id IN (
+        SELECT away_team_id
+        FROM matches
+        WHERE tournament_id = ?
+      )
+      ORDER BY name ASC
+    `)
+    .bind(
+      tournamentId,
+      tournamentId,
+      tournamentId
+    )
     .all();
-  
   return result.results || [];
 }
 export async function createMatchesBatch(
