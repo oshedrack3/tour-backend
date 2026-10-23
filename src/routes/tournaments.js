@@ -2006,13 +2006,11 @@ async function joinTournamentRoute(
   user
 ) {
   try {
-    const tournament =
-      await getTournament(
-        env.DB,
-        tournamentId,
-        user.id
-      );
-    
+    const tournament = await getTournament(
+      env.DB,
+      tournamentId,
+      user.id
+    );
     if (!tournament) {
       return Response.json({
         success: false,
@@ -2021,13 +2019,32 @@ async function joinTournamentRoute(
         status: 404
       });
     }
-    
-    const registeredSquad =
-      await getRegisteredSquad(
-        env.DB,
+    const payment = await env.DB
+      .prepare(`
+        SELECT id
+        FROM season_registrations
+        WHERE tournament_id = ?
+        AND user_id = ?
+        AND payment_status = 'paid'
+        LIMIT 1
+      `)
+      .bind(
+        tournamentId,
         user.id
-      );
-    
+      )
+      .first();
+    if (!payment) {
+      return Response.json({
+        success: false,
+        message: "You must complete your registration payment before joining this tournament. Please pay the required fee and wait for your payment to be verified."
+      }, {
+        status: 403
+      });
+    }
+    const registeredSquad = await getRegisteredSquad(
+      env.DB,
+      user.id
+    );
     if (!registeredSquad) {
       return Response.json({
         success: false,
@@ -2036,7 +2053,6 @@ async function joinTournamentRoute(
         status: 403
       });
     }
-    
     if (
       tournament.is_public === false ||
       tournament.is_public === 0
@@ -2048,9 +2064,7 @@ async function joinTournamentRoute(
         status: 403
       });
     }
-    
-    const playedMatch =
-      await env.DB
+    const playedMatch = await env.DB
       .prepare(`
         SELECT 1
         FROM matches
@@ -2060,7 +2074,6 @@ async function joinTournamentRoute(
       `)
       .bind(tournamentId)
       .first();
-    
     if (playedMatch) {
       return Response.json({
         success: false,
@@ -2069,26 +2082,19 @@ async function joinTournamentRoute(
         status: 409
       });
     }
-    
-    const body =
-      await request
+    const body = await request
       .json()
       .catch(() => ({}));
-    
-    let teamIds =
-      Array.isArray(body.team_ids) ?
-      body.team_ids : [];
-    
+    let teamIds = Array.isArray(body.team_ids) ?
+      body.team_ids :
+      [];
     teamIds = [
       ...new Set(
         teamIds
-        .map(id =>
-          String(id).trim()
-        )
+        .map(id => String(id).trim())
         .filter(Boolean)
       )
     ];
-    
     if (!teamIds.length) {
       return Response.json({
         success: false,
@@ -2097,29 +2103,21 @@ async function joinTournamentRoute(
         status: 400
       });
     }
-    
-    const maxTeams =
-      user.role === "admin" ?
-      20 :
-      1;
-    
+    const maxTeams = user.role === "admin" ? 20 : 1;
     if (teamIds.length > maxTeams) {
       return Response.json({
         success: false,
         message: user.role === "admin" ?
-          "You can register a maximum of 20 teams." : "You can register only one team."
+          "You can register a maximum of 20 teams." :
+          "You can register only one team."
       }, {
         status: 400
       });
     }
-    
-    const placeholders =
-      teamIds
+    const placeholders = teamIds
       .map(() => "?")
       .join(",");
-    
-    const ownedTeams =
-      await env.DB
+    const ownedTeams = await env.DB
       .prepare(`
         SELECT
           id,
@@ -2134,14 +2132,8 @@ async function joinTournamentRoute(
         ...teamIds
       )
       .all();
-    
-    const teams =
-      ownedTeams.results || [];
-    
-    if (
-      teams.length !==
-      teamIds.length
-    ) {
+    const teams = ownedTeams.results || [];
+    if (teams.length !== teamIds.length) {
       return Response.json({
         success: false,
         message: "One or more selected teams were not found or you do not own them."
@@ -2149,9 +2141,7 @@ async function joinTournamentRoute(
         status: 403
       });
     }
-    
-    const existing =
-      await env.DB
+    const existing = await env.DB
       .prepare(`
         SELECT team_id
         FROM tournament_players
@@ -2163,25 +2153,15 @@ async function joinTournamentRoute(
         ...teamIds
       )
       .all();
-    
-    const existingTeamIds =
-      new Set(
-        (existing.results || [])
-        .map(row =>
-          String(row.team_id)
-        )
-      );
-    
-    const alreadyRegistered =
-      teamIds.filter(id =>
-        existingTeamIds.has(
-          String(id)
-        )
-      );
-    
-    if (
-      alreadyRegistered.length
-    ) {
+    const existingTeamIds = new Set(
+      (existing.results || []).map(row =>
+        String(row.team_id)
+      )
+    );
+    const alreadyRegistered = teamIds.filter(id =>
+      existingTeamIds.has(String(id))
+    );
+    if (alreadyRegistered.length) {
       return Response.json({
         success: false,
         message: "One or more selected teams are already registered in this tournament."
@@ -2189,14 +2169,10 @@ async function joinTournamentRoute(
         status: 409
       });
     }
-    
-    const now =
-      Date.now();
-    
-    const statements =
-      teamIds.map(teamId =>
-        env.DB
-        .prepare(`
+    const now = Date.now();
+    const statements = teamIds.map(teamId =>
+      env.DB
+      .prepare(`
           INSERT INTO tournament_players (
             id,
             tournament_id,
@@ -2224,22 +2200,17 @@ async function joinTournamentRoute(
             0, 0, 0, 0, 0, 0, 0
           )
         `)
-        .bind(
-          crypto.randomUUID(),
-          tournamentId,
-          user.id,
-          teamId,
-          now,
-          now
-        )
-      );
-    
-    await env.DB.batch(
-      statements
+      .bind(
+        crypto.randomUUID(),
+        tournamentId,
+        user.id,
+        teamId,
+        now,
+        now
+      )
     );
-    
-    const registered =
-      await env.DB
+    await env.DB.batch(statements);
+    const registered = await env.DB
       .prepare(`
         SELECT
           tp.*,
@@ -2259,16 +2230,12 @@ async function joinTournamentRoute(
         ...teamIds
       )
       .all();
-    
-    const registeredTeams =
-      teams
+    const registeredTeams = teams
       .map(team => team.name)
       .join(", ");
-    
     if (
       tournament.admin_uid &&
-      String(tournament.admin_uid) !==
-      String(user.id)
+      String(tournament.admin_uid) !== String(user.id)
     ) {
       await sendPushToUser(
         env,
@@ -2278,19 +2245,16 @@ async function joinTournamentRoute(
         `/tournament/${tournamentId}`
       );
     }
-    
     return Response.json({
       success: true,
       message: "Successfully joined the tournament!",
       players: registered.results || []
     });
-    
   } catch (error) {
     console.error(
       "Join tournament error:",
       error
     );
-    
     return Response.json({
       success: false,
       message: error.message ||
