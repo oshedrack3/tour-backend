@@ -691,6 +691,7 @@ async function passkeyRegisterOptions(request, env) {
         transports: parseTransports(item.transports)
       })),
       authenticatorSelection: {
+        authenticatorAttachment: "platform",
         residentKey: "required",
         userVerification: "required"
       },
