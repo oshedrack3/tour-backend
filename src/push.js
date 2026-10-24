@@ -49,21 +49,43 @@ function concatBytes(...arrays) {
 }
 
 function pemToArrayBuffer(pem) {
+  if (typeof pem !== "string" || !pem.trim()) {
+    throw new Error("VAPID_PRIVATE_KEY is empty or invalid.");
+  }
+  
   const base64 = pem
-    .replace(/-----BEGIN PRIVATE KEY-----/, "")
-    .replace(/-----END PRIVATE KEY-----/, "")
+    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
+    .replace(/-----END PRIVATE KEY-----/g, "")
     .replace(/\s/g, "");
-
-  const binary = atob(base64);
+  
+  if (
+    !base64 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/.test(base64) ||
+    base64.length % 4 === 1
+  ) {
+    throw new Error(
+      "VAPID_PRIVATE_KEY is not a valid Base64-encoded PKCS#8 PEM key."
+    );
+  }
+  
+  let binary;
+  
+  try {
+    binary = atob(base64);
+  } catch {
+    throw new Error(
+      "Unable to decode VAPID_PRIVATE_KEY. Check its format in Cloudflare."
+    );
+  }
+  
   const bytes = new Uint8Array(binary.length);
-
+  
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
-
+  
   return bytes.buffer;
 }
-
 async function importPublicKey(key) {
   return await crypto.subtle.importKey(
     "raw",
