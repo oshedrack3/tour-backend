@@ -1,4 +1,10 @@
 import { v4 as uuid } from "uuid";
+import {
+  generateRegistrationOptions,
+  verifyRegistrationResponse,
+  generateAuthenticationOptions,
+  verifyAuthenticationResponse
+} from "@simplewebauthn/server";
 
 export async function handleAuthRequest(request, env) {
   const url = new URL(request.url);
@@ -24,6 +30,34 @@ export async function handleAuthRequest(request, env) {
   
   if (request.method === "POST" && pathname === "/auth/verify") {
     return await verify(request, env);
+  }
+  
+    if (
+    request.method === "POST" &&
+    pathname === "/auth/passkey/register-options"
+  ) {
+    return await passkeyRegisterOptions(request, env);
+  }
+  
+  if (
+    request.method === "POST" &&
+    pathname === "/auth/passkey/register-verify"
+  ) {
+    return await passkeyRegisterVerify(request, env);
+  }
+  
+  if (
+    request.method === "POST" &&
+    pathname === "/auth/passkey/login-options"
+  ) {
+    return await passkeyLoginOptions(request, env);
+  }
+  
+  if (
+    request.method === "POST" &&
+    pathname === "/auth/passkey/login-verify"
+  ) {
+    return await passkeyLoginVerify(request, env);
   }
   
   return Response.json(
@@ -613,4 +647,510 @@ async function resetPassword(request, env) {
       message: "Unable to reset password. Please try again."
     }, { status: 500 });
   }
+}
+
+
+
+async function passkeyRegisterOptions(request, env) {
+  try {
+    const body = await request.json();
+    const user = await getPasskeySessionUser(request, env, body.token);
+
+    if (!user) {
+      return Response.json({
+        success: false,
+        message: "Please log in before registering a passkey."
+      }, { status: 401 });
+    }
+
+    const rpID = env.RP_ID;
+    const rpName = env.RP_NAME || "Galatico eSport";
+
+    if (!rpID) {
+      return Response.json({
+        success: false,
+        message: "Passkey configuration is incomplete."
+      }, { status: 500 });
+    }
+
+    const existing = await env.DB.prepare(`
+      SELECT credential_id, transports
+      FROM passkey_credentials
+      WHERE user_id = ?
+    `).bind(user.id).all();
+
+    const options = await generateRegistrationOptions({
+      rpName,
+      rpID,
+      userID: new TextEncoder().encode(user.id),
+      userName: user.username,
+      userDisplayName: user.username,
+      attestationType: "none",
+      excludeCredentials: (existing.results || []).map(item => ({
+        id: item.credential_id,
+        transports: parseTransports(item.transports)
+      })),
+      authenticatorSelection: {
+        residentKey: "preferred",
+        userVerification: "required"
+      },
+      supportedAlgorithmIDs: [-7, -257]
+    });
+
+    const now = Date.now();
+    const challengeId = uuid();
+
+    await env.DB.prepare(`
+      DELETE FROM passkey_challenges
+      WHERE user_id = ?
+        AND purpose = 'register'
+    `).bind(user.id).run();
+
+    await env.DB.prepare(`
+      INSERT INTO passkey_challenges (
+        id, user_id, challenge, purpose, created_at, expires_at
+      )
+      VALUES (?, ?, ?, 'register', ?, ?)
+    `).bind(
+      challengeId,
+      user.id,
+      options.challenge,
+      now,
+      now + 5 * 60 * 1000
+    ).run();
+
+    return Response.json({
+      success: true,
+      challengeId,
+      options
+    });
+  } catch (error) {
+    console.error("Passkey registration options error:", error);
+
+    return Response.json({
+      success: false,
+      message: "Unable to start passkey registration."
+    }, { status: 500 });
+  }
+}
+
+async function passkeyRegisterVerify(request, env) {
+  try {
+    const body = await request.json();
+    const user = await getPasskeySessionUser(request, env, body.token);
+
+    if (!user) {
+      return Response.json({
+        success: false,
+        message: "Please log in before registering a passkey."
+      }, { status: 401 });
+    }
+
+    const challengeId = String(body.challengeId || "");
+    const response = body.response;
+
+    if (!challengeId || !response) {
+      return Response.json({
+        success: false,
+        message: "Passkey verification details are missing."
+      }, { status: 400 });
+    }
+
+    const challengeRecord = await env.DB.prepare(`
+      SELECT id, challenge
+      FROM passkey_challenges
+      WHERE id = ?
+        AND user_id = ?
+        AND purpose = 'register'
+        AND expires_at > ?
+      LIMIT 1
+    `).bind(
+      challengeId,
+      user.id,
+      Date.now()
+    ).first();
+
+    if (!challengeRecord) {
+      return Response.json({
+        success: false,
+        message: "The registration request expired. Please try again."
+      }, { status: 400 });
+    }
+
+    const rpID = env.RP_ID;
+    const expectedOrigin = `https://${rpID}`;
+
+    const verification = await verifyRegistrationResponse({
+      response,
+      expectedChallenge: challengeRecord.challenge,
+      expectedOrigin,
+      expectedRPID: rpID,
+      requireUserVerification: true
+    });
+
+    await env.DB.prepare(`
+      DELETE FROM passkey_challenges
+      WHERE id = ?
+    `).bind(challengeId).run();
+
+    if (!verification.verified || !verification.registrationInfo) {
+      return Response.json({
+        success: false,
+        message: "Passkey verification failed."
+      }, { status: 400 });
+    }
+
+    const credential = verification.registrationInfo.credential;
+    const credentialId = credential.id;
+    const publicKey = uint8ArrayToBase64Url(credential.publicKey);
+    const counter = credential.counter;
+    const transports = JSON.stringify(
+      response.response?.transports || []
+    );
+
+    await env.DB.prepare(`
+      INSERT INTO passkey_credentials (
+        id,
+        user_id,
+        credential_id,
+        public_key,
+        counter,
+        transports,
+        device_name,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      uuid(),
+      user.id,
+      credentialId,
+      publicKey,
+      counter,
+      transports,
+      String(body.deviceName || "Passkey").slice(0, 100),
+      Date.now()
+    ).run();
+
+    return Response.json({
+      success: true,
+      message: "Passkey registered successfully."
+    });
+  } catch (error) {
+    console.error("Passkey registration verification error:", error);
+
+    const message = String(error?.message || "").toLowerCase();
+
+    if (
+      message.includes("unique constraint") ||
+      message.includes("already exists")
+    ) {
+      return Response.json({
+        success: false,
+        message: "This passkey is already registered."
+      }, { status: 409 });
+    }
+
+    return Response.json({
+      success: false,
+      message: "Unable to verify the passkey. Please try again."
+    }, { status: 400 });
+  }
+}
+
+async function passkeyLoginOptions(request, env) {
+  try {
+    const body = await request.json();
+    const loginValue = String(body.login || "").trim().toLowerCase();
+
+    if (!loginValue) {
+      return Response.json({
+        success: false,
+        message: "Enter your username or email first."
+      }, { status: 400 });
+    }
+
+    const user = await env.DB.prepare(`
+      SELECT id, username, email
+      FROM users
+      WHERE LOWER(username) = ?
+         OR LOWER(email) = ?
+      LIMIT 1
+    `).bind(loginValue, loginValue).first();
+
+    if (!user) {
+      return Response.json({
+        success: false,
+        message: "Unable to find an account with a registered passkey."
+      }, { status: 404 });
+    }
+
+    const credentials = await env.DB.prepare(`
+      SELECT credential_id, transports
+      FROM passkey_credentials
+      WHERE user_id = ?
+    `).bind(user.id).all();
+
+    if (!credentials.results?.length) {
+      return Response.json({
+        success: false,
+        message: "This account has no registered passkey."
+      }, { status: 404 });
+    }
+
+    const options = await generateAuthenticationOptions({
+      rpID: env.RP_ID,
+      allowCredentials: credentials.results.map(item => ({
+        id: item.credential_id,
+        transports: parseTransports(item.transports)
+      })),
+      userVerification: "required"
+    });
+
+    const now = Date.now();
+    const challengeId = uuid();
+
+    await env.DB.prepare(`
+      DELETE FROM passkey_challenges
+      WHERE user_id = ?
+        AND purpose = 'login'
+    `).bind(user.id).run();
+
+    await env.DB.prepare(`
+      INSERT INTO passkey_challenges (
+        id, user_id, challenge, purpose, created_at, expires_at
+      )
+      VALUES (?, ?, ?, 'login', ?, ?)
+    `).bind(
+      challengeId,
+      user.id,
+      options.challenge,
+      now,
+      now + 5 * 60 * 1000
+    ).run();
+
+    return Response.json({
+      success: true,
+      challengeId,
+      options
+    });
+  } catch (error) {
+    console.error("Passkey login options error:", error);
+
+    return Response.json({
+      success: false,
+      message: "Unable to start passkey login."
+    }, { status: 500 });
+  }
+}
+
+async function passkeyLoginVerify(request, env) {
+  try {
+    const body = await request.json();
+    const challengeId = String(body.challengeId || "");
+    const response = body.response;
+
+    if (!challengeId || !response?.id) {
+      return Response.json({
+        success: false,
+        message: "Passkey verification details are missing."
+      }, { status: 400 });
+    }
+
+    const challengeRecord = await env.DB.prepare(`
+      SELECT id, user_id, challenge
+      FROM passkey_challenges
+      WHERE id = ?
+        AND purpose = 'login'
+        AND expires_at > ?
+      LIMIT 1
+    `).bind(
+      challengeId,
+      Date.now()
+    ).first();
+
+    if (!challengeRecord) {
+      return Response.json({
+        success: false,
+        message: "The login request expired. Please try again."
+      }, { status: 400 });
+    }
+
+    const passkey = await env.DB.prepare(`
+      SELECT
+        credential_id,
+        public_key,
+        counter,
+        transports
+      FROM passkey_credentials
+      WHERE user_id = ?
+        AND credential_id = ?
+      LIMIT 1
+    `).bind(
+      challengeRecord.user_id,
+      response.id
+    ).first();
+
+    if (!passkey) {
+      return Response.json({
+        success: false,
+        message: "This passkey is not registered to the account."
+      }, { status: 401 });
+    }
+
+    const verification = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge: challengeRecord.challenge,
+      expectedOrigin: `https://${env.RP_ID}`,
+      expectedRPID: env.RP_ID,
+      credential: {
+        id: passkey.credential_id,
+        publicKey: base64UrlToUint8Array(passkey.public_key),
+        counter: Number(passkey.counter),
+        transports: parseTransports(passkey.transports)
+      },
+      requireUserVerification: true
+    });
+
+    await env.DB.prepare(`
+      DELETE FROM passkey_challenges
+      WHERE id = ?
+    `).bind(challengeId).run();
+
+    if (!verification.verified) {
+      return Response.json({
+        success: false,
+        message: "Passkey verification failed."
+      }, { status: 401 });
+    }
+
+    const now = Date.now();
+
+    await env.DB.prepare(`
+      UPDATE passkey_credentials
+      SET counter = ?, last_used_at = ?
+      WHERE credential_id = ?
+    `).bind(
+      verification.authenticationInfo.newCounter,
+      now,
+      passkey.credential_id
+    ).run();
+
+    const user = await env.DB.prepare(`
+      SELECT id, username, email, role, created_at
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+    `).bind(challengeRecord.user_id).first();
+
+    if (!user) {
+      return Response.json({
+        success: false,
+        message: "Account not found."
+      }, { status: 404 });
+    }
+
+    const token = uuid();
+    const expiresAt = now + 30 * 24 * 60 * 60 * 1000;
+
+    await env.DB.prepare(`
+      INSERT INTO sessions (
+        token, user_id, created_at, expires_at, active
+      )
+      VALUES (?, ?, ?, ?, 1)
+    `).bind(
+      token,
+      user.id,
+      now,
+      expiresAt
+    ).run();
+
+    return Response.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        created_at: user.created_at
+      }
+    });
+  } catch (error) {
+    console.error("Passkey login verification error:", error);
+
+    return Response.json({
+      success: false,
+      message: "Unable to verify the passkey. Please try again."
+    }, { status: 400 });
+  }
+}
+
+async function getPasskeySessionUser(request, env, bodyToken) {
+  const authorization = request.headers.get("Authorization") || "";
+  const headerToken = authorization.replace(/^Bearer\s+/i, "").trim();
+  const token = headerToken || String(bodyToken || "").trim();
+
+  if (!token) {
+    return null;
+  }
+
+  const now = Date.now();
+
+  const session = await env.DB.prepare(`
+    SELECT
+      u.id,
+      u.username,
+      u.email,
+      u.role
+    FROM sessions s
+    INNER JOIN users u ON u.id = s.user_id
+    WHERE s.token = ?
+      AND s.active = 1
+      AND s.expires_at > ?
+    LIMIT 1
+  `).bind(token, now).first();
+
+  return session || null;
+}
+
+function parseTransports(value) {
+  try {
+    const parsed = JSON.parse(value || "[]");
+
+    return Array.isArray(parsed)
+      ? parsed.filter(item => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function uint8ArrayToBase64Url(value) {
+  const bytes = new Uint8Array(value);
+  let binary = "";
+
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function base64UrlToUint8Array(value) {
+  const base64 = value
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+
+  const padded = base64 + "=".repeat((4 - base64.length % 4) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  return bytes;
 }
