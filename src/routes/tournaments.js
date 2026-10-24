@@ -2912,144 +2912,111 @@ function checkMatchSubmissionDeadline(
 
 
 async function reviewMatchSubmissionRoute(
-    request,
-    env,
-    tournamentId,
-    submissionId,
-    user
-  ) {
-    try {
-      const tournament =
-        await getTournament(
-          env.DB,
-          tournamentId
-        );
-      
-      if (!tournament) {
-        return Response.json({
-          success: false,
-          message: "Tournament not found."
-        }, {
-          status: 404
-        });
-      }
-      
-      if (
-        user.role !== "admin" ||
-        String(tournament.admin_uid) !==
-        String(user.id)
-      ) {
-        return Response.json({
-          success: false,
-          message: "Tournament not found."
-        }, {
-          status: 404
-        });
-      }
-      
-      const submission =
-        await getMatchSubmission(
-          env.DB,
-          tournamentId,
-          submissionId
-        );
-      
-      if (!submission) {
-        return Response.json({
-          success: false,
-          message: "Submission not found."
-        }, {
-          status: 404
-        });
-      }
-      
-      if (
-        submission.status !== "pending"
-      ) {
-        return Response.json({
-          success: false,
-          message: "This submission has already been reviewed."
-        }, {
-          status: 409
-        });
-      }
-      
-      const body =
-        await request
-        .json()
-        .catch(() => ({}));
-      
-      const approved =
-        body.approved === true ||
-        body.status === "approved";
-      
-      const rejected =
-        body.approved === false ||
-        body.status === "rejected";
-      
-      if (
-        !approved &&
-        !rejected
-      ) {
-        return Response.json({
-          success: false,
-          message: "Specify whether the submission is approved or rejected."
-        }, {
-          status: 400
-        });
-      }
-      
-      const now =
-        Date.now();
-      
-      if (rejected) {
-        const rejectionReason =
-          String(
-            body.rejection_reason ||
-            body.reason ||
-            ""
-          ).trim();
-        
-        const updatedSubmission =
-          await updateMatchSubmission(
-            env.DB,
-            tournamentId,
-            submissionId,
-            {
-              status: "rejected",
-              reviewed_at: now,
-              reviewed_by: user.id,
-              rejection_reason: rejectionReason || null
-            }
-          );
-        
-        await env.DB
-          .prepare(`
-          UPDATE tournaments
-          SET updated_at = ?
-          WHERE id = ?
-        `)
-          .bind(
-            now,
-            tournamentId
-          )
-          .run();
-        
-        const [matchTeams] = await Promise.all([
-          env.DB.prepare(`
-    SELECT
-      ht.name AS home_team_name,
-      at.name AS away_team_name
-    FROM matches m
-    LEFT JOIN teams ht ON ht.id = m.home_team_id
-    LEFT JOIN teams at ON at.id = m.away_team_id
-    WHERE m.id = ?
-      AND m.tournament_id = ?
-    LIMIT 1
-  `)
-          .bind(submission.match_id, tournamentId)
-          .first()
-        ]);
+  request,
+  env,
+  tournamentId,
+  submissionId,
+  user
+) {
+  try {
+    const tournament = await getTournament(
+      env.DB,
+      tournamentId
+    );
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    if (
+      user.role !== "admin" ||
+      String(tournament.admin_uid) !== String(user.id)
+    ) {
+      return Response.json({
+        success: false,
+        message: "Access denied."
+      }, {
+        status: 403
+      });
+    }
+    const submission = await getMatchSubmission(
+      env.DB,
+      tournamentId,
+      submissionId
+    );
+    if (!submission) {
+      return Response.json({
+        success: false,
+        message: "Submission not found."
+      }, {
+        status: 404
+      });
+    }
+    if (submission.status !== "pending") {
+      return Response.json({
+        success: false,
+        message: "This submission has already been reviewed."
+      }, {
+        status: 409
+      });
+    }
+    const body = await request.json().catch(() => ({}));
+    const approved =
+      body.approved === true ||
+      body.status === "approved";
+    const rejected =
+      body.approved === false ||
+      body.status === "rejected";
+    if (!approved && !rejected) {
+      return Response.json({
+        success: false,
+        message: "Specify whether the submission is approved or rejected."
+      }, {
+        status: 400
+      });
+    }
+    const now = Date.now();
+    const matchTeams = await env.DB.prepare(`
+      SELECT
+        ht.name AS home_team_name,
+        at.name AS away_team_name
+      FROM matches m
+      LEFT JOIN teams ht ON ht.id = m.home_team_id
+      LEFT JOIN teams at ON at.id = m.away_team_id
+      WHERE m.id = ?
+        AND m.tournament_id = ?
+      LIMIT 1
+    `)
+      .bind(submission.match_id, tournamentId)
+      .first();
+    if (rejected) {
+      const rejectionReason = String(
+        body.rejection_reason ||
+        body.reason ||
+        ""
+      ).trim();
+      const updatedSubmission = await updateMatchSubmission(
+        env.DB,
+        tournamentId,
+        submissionId,
+        {
+          status: "rejected",
+          reviewed_at: now,
+          reviewed_by: user.id,
+          rejection_reason: rejectionReason || null
+        }
+      );
+      await env.DB.prepare(`
+        UPDATE tournaments
+        SET updated_at = ?
+        WHERE id = ?
+      `)
+        .bind(now, tournamentId)
+        .run();
+      try {
         await sendPushToUser(
           env,
           submission.submitted_by,
@@ -3057,333 +3024,268 @@ async function reviewMatchSubmissionRoute(
           `Your result for ${matchTeams?.home_team_name || "Home Team"} vs ${matchTeams?.away_team_name || "Away Team"} (${submission.home_goals}-${submission.away_goals}) in ${tournament.name} was rejected${rejectionReason ? `: ${rejectionReason}` : "."}`,
           `/tournament/${tournamentId}`
         );
-        return Response.json({
-          success: true,
-          message: "Submission rejected.",
-          submission: updatedSubmission
-        });
-        const match =
-          await getMatch(
-            env.DB,
-            submission.match_id
-          );
-        
-        if (
-          !match ||
-          String(match.tournament_id) !==
-          String(tournamentId)
-        ) {
-          return Response.json({
-            success: false,
-            message: "Match not found."
-          }, {
-            status: 404
-          });
-        }
-        
-        if (
-          Number(match.played) === 1
-        ) {
-          return Response.json({
-            success: false,
-            message: "This match has already been played."
-          }, {
-            status: 409
-          });
-        }
-        
-        const homeScore =
-          Number(
-            submission.home_goals
-          );
-        
-        const awayScore =
-          Number(
-            submission.away_goals
-          );
-        
-        let submittedStats =
-          null;
-        
-        if (submission.stats) {
-          try {
-            submittedStats =
-              typeof submission.stats === "string" ?
-              JSON.parse(submission.stats) :
-              submission.stats;
-          } catch {
-            return Response.json({
-              success: false,
-              message: "Submission contains invalid match statistics."
-            }, {
-              status: 400
-            });
-          }
-        }
-        
-        if (
-          !Number.isInteger(homeScore) ||
-          !Number.isInteger(awayScore) ||
-          homeScore < 0 ||
-          awayScore < 0
-        ) {
-          return Response.json({
-            success: false,
-            message: "Submission contains an invalid score."
-          }, {
-            status: 400
-          });
-        }
-        
-        const homePlayer =
-          await getTournamentPlayerByTeam(
-            env.DB,
-            tournamentId,
-            match.home_team_id
-          );
-        
-        const awayPlayer =
-          await getTournamentPlayerByTeam(
-            env.DB,
-            tournamentId,
-            match.away_team_id
-          );
-        
-        if (
-          !homePlayer ||
-          !awayPlayer
-        ) {
-          return Response.json({
-            success: false,
-            message: "One or both teams do not have tournament player records."
-          }, {
-            status: 400
-          });
-        }
-        
-        const currentHome = {
-          played: Number(homePlayer.played) || 0,
-          wins: Number(homePlayer.wins) || 0,
-          draws: Number(homePlayer.draws) || 0,
-          losses: Number(homePlayer.losses) || 0,
-          gf: Number(homePlayer.gf) || 0,
-          ga: Number(homePlayer.ga) || 0,
-          points: Number(homePlayer.points) || 0
-        };
-        
-        const currentAway = {
-          played: Number(awayPlayer.played) || 0,
-          wins: Number(awayPlayer.wins) || 0,
-          draws: Number(awayPlayer.draws) || 0,
-          losses: Number(awayPlayer.losses) || 0,
-          gf: Number(awayPlayer.gf) || 0,
-          ga: Number(awayPlayer.ga) || 0,
-          points: Number(awayPlayer.points) || 0
-        };
-        
-        const newStats =
-          getResultStats(
-            homeScore,
-            awayScore
-          );
-        
-        const newHomeStats =
-          applyStats(
-            currentHome,
-            newStats.home,
-            1
-          );
-        
-        const newAwayStats =
-          applyStats(
-            currentAway,
-            newStats.away,
-            1
-          );
-        
-        let winnerTeamId =
-          null;
-        
-        if (
-          homeScore > awayScore
-        ) {
-          winnerTeamId =
-            match.home_team_id;
-        } else if (
-          awayScore > homeScore
-        ) {
-          winnerTeamId =
-            match.away_team_id;
-        }
-        
-        const result =
-          await updateMatchResultAtomic(
-            env.DB,
-            match.id,
-            {
-              home_score: homeScore,
-              away_score: awayScore,
-              played: 1,
-              played_at: now,
-              winner_team_id: winnerTeamId,
-              stats: submittedStats ?
-                JSON.stringify(submittedStats) : null
-            },
-            match.home_team_id,
-            match.away_team_id,
-            newHomeStats,
-            newAwayStats,
-            tournamentId
-          );
-        
-        const updatedSubmission =
-          await updateMatchSubmission(
-            env.DB,
-            tournamentId,
-            submissionId,
-            {
-              status: "approved",
-              reviewed_at: now,
-              reviewed_by: user.id,
-              rejection_reason: null
-            }
-          );
-        
-        await env.DB
-          .prepare(`
-        UPDATE tournaments
-        SET updated_at = ?
-        WHERE id = ?
-      `)
-          .bind(
-            now,
-            tournamentId
-          )
-          .run();
-        
-        let groupStageResult =
-          null;
-        
-        let knockoutResult =
-          null;
-        
-        if (
-          match.match_type ===
-          "group"
-        ) {
-          groupStageResult =
-            await checkGroupStageCompletion(
-              env.DB,
-              tournamentId,
-              tournament
-            );
-        }
-        
-        if (
-          match.match_type === "knockout" ||
-          match.match_type === "third_place"
-        ) {
-          knockoutResult =
-            await processKnockoutResult(
-              env.DB,
-              tournamentId,
-              match.id
-            );
-        }
-        
-        const matchTeams = await env.DB.prepare(`
-  SELECT
-    ht.name AS home_team_name,
-    at.name AS away_team_name
-  FROM matches m
-  LEFT JOIN teams ht ON ht.id = m.home_team_id
-  LEFT JOIN teams at ON at.id = m.away_team_id
-  WHERE m.id = ?
-    AND m.tournament_id = ?
-  LIMIT 1
-`)
-          .bind(submission.match_id, tournamentId)
-          .first();
-        await sendPushToUser(
-          env,
-          submission.submitted_by,
-          "Match Result Approved",
-          `Your result for ${matchTeams?.home_team_name || "Home Team"} vs ${matchTeams?.away_team_name || "Away Team"} (${homeScore}-${awayScore}) in ${tournament.name} was approved.`,
-          `/tournament/${tournamentId}`
-        );
-        
-        return Response.json({
-          success: true,
-          message: "Submission approved.",
-          submission: updatedSubmission,
-          match: result.match,
-          players: result.players,
-          groupStage: groupStageResult,
-          knockout: knockoutResult
-        });
-        
-      } catch (error) {
+      } catch (pushError) {
         console.error(
-          "Review match submission error:",
-          error
+          "Match rejection notification failed:",
+          pushError.message
         );
-        
+      }
+      return Response.json({
+        success: true,
+        message: "Submission rejected.",
+        submission: updatedSubmission
+      });
+    }
+    const match = await getMatch(
+      env.DB,
+      submission.match_id
+    );
+    if (
+      !match ||
+      String(match.tournament_id) !== String(tournamentId)
+    ) {
+      return Response.json({
+        success: false,
+        message: "Match not found."
+      }, {
+        status: 404
+      });
+    }
+    if (Number(match.played) === 1) {
+      return Response.json({
+        success: false,
+        message: "This match has already been played."
+      }, {
+        status: 409
+      });
+    }
+    const homeScore = Number(submission.home_goals);
+    const awayScore = Number(submission.away_goals);
+    let submittedStats = null;
+    if (submission.stats) {
+      try {
+        submittedStats =
+          typeof submission.stats === "string" ?
+          JSON.parse(submission.stats) :
+          submission.stats;
+      } catch {
         return Response.json({
           success: false,
-          message: error.message ||
-            "Failed to review match submission."
+          message: "Submission contains invalid match statistics."
         }, {
-          status: 500
+          status: 400
         });
       }
     }
-    
-    async function deleteTournamentRoute(
-      env,
-      tournamentId,
-      user
+    if (
+      !Number.isInteger(homeScore) ||
+      !Number.isInteger(awayScore) ||
+      homeScore < 0 ||
+      awayScore < 0
     ) {
-      try {
-        const tournament =
-          await getTournament(
-            env.DB,
-            tournamentId
-          );
-        
-        if (!tournament) {
-          return Response.json(
-          {
-            success: false,
-            message: "Tournament not found."
-          },
-          {
-            status: 404
-          });
-        }
-        
-        if (
-          user.role !== "admin" ||
-          String(tournament.admin_uid) !==
-          String(user.id)
-        ) {
-          return Response.json(
-          {
-            success: false,
-            message: "Access denied."
-          },
-          {
-            status: 403
-          });
-        }
-        
-        await deleteTournament(
-          env.DB,
-          tournamentId
-        );
-        
-        if (tournament.competition_id) {
-          await env.DB
-            .prepare(`
+      return Response.json({
+        success: false,
+        message: "Submission contains an invalid score."
+      }, {
+        status: 400
+      });
+    }
+    const homePlayer = await getTournamentPlayerByTeam(
+      env.DB,
+      tournamentId,
+      match.home_team_id
+    );
+    const awayPlayer = await getTournamentPlayerByTeam(
+      env.DB,
+      tournamentId,
+      match.away_team_id
+    );
+    if (!homePlayer || !awayPlayer) {
+      return Response.json({
+        success: false,
+        message: "One or both teams do not have tournament player records."
+      }, {
+        status: 400
+      });
+    }
+    const currentHome = {
+      played: Number(homePlayer.played) || 0,
+      wins: Number(homePlayer.wins) || 0,
+      draws: Number(homePlayer.draws) || 0,
+      losses: Number(homePlayer.losses) || 0,
+      gf: Number(homePlayer.gf) || 0,
+      ga: Number(homePlayer.ga) || 0,
+      points: Number(homePlayer.points) || 0
+    };
+    const currentAway = {
+      played: Number(awayPlayer.played) || 0,
+      wins: Number(awayPlayer.wins) || 0,
+      draws: Number(awayPlayer.draws) || 0,
+      losses: Number(awayPlayer.losses) || 0,
+      gf: Number(awayPlayer.gf) || 0,
+      ga: Number(awayPlayer.ga) || 0,
+      points: Number(awayPlayer.points) || 0
+    };
+    const newStats = getResultStats(
+      homeScore,
+      awayScore
+    );
+    const newHomeStats = applyStats(
+      currentHome,
+      newStats.home,
+      1
+    );
+    const newAwayStats = applyStats(
+      currentAway,
+      newStats.away,
+      1
+    );
+    let winnerTeamId = null;
+    if (homeScore > awayScore) {
+      winnerTeamId = match.home_team_id;
+    } else if (awayScore > homeScore) {
+      winnerTeamId = match.away_team_id;
+    }
+    const result = await updateMatchResultAtomic(
+      env.DB,
+      match.id,
+      {
+        home_score: homeScore,
+        away_score: awayScore,
+        played: 1,
+        played_at: now,
+        winner_team_id: winnerTeamId,
+        stats: submittedStats ?
+          JSON.stringify(submittedStats) :
+          null
+      },
+      match.home_team_id,
+      match.away_team_id,
+      newHomeStats,
+      newAwayStats,
+      tournamentId
+    );
+    const updatedSubmission = await updateMatchSubmission(
+      env.DB,
+      tournamentId,
+      submissionId,
+      {
+        status: "approved",
+        reviewed_at: now,
+        reviewed_by: user.id,
+        rejection_reason: null
+      }
+    );
+    await env.DB.prepare(`
+      UPDATE tournaments
+      SET updated_at = ?
+      WHERE id = ?
+    `)
+      .bind(now, tournamentId)
+      .run();
+    let groupStageResult = null;
+    let knockoutResult = null;
+    if (match.match_type === "group") {
+      groupStageResult = await checkGroupStageCompletion(
+        env.DB,
+        tournamentId,
+        tournament
+      );
+    }
+    if (
+      match.match_type === "knockout" ||
+      match.match_type === "third_place"
+    ) {
+      knockoutResult = await processKnockoutResult(
+        env.DB,
+        tournamentId,
+        match.id
+      );
+    }
+    try {
+      await sendPushToUser(
+        env,
+        submission.submitted_by,
+        "Match Result Approved",
+        `Your result for ${matchTeams?.home_team_name || "Home Team"} vs ${matchTeams?.away_team_name || "Away Team"} (${homeScore}-${awayScore}) in ${tournament.name} was approved.`,
+        `/tournament/${tournamentId}`
+      );
+    } catch (pushError) {
+      console.error(
+        "Match approval notification failed:",
+        pushError.message
+      );
+    }
+    return Response.json({
+      success: true,
+      message: "Submission approved.",
+      submission: updatedSubmission,
+      match: result.match,
+      players: result.players,
+      groupStage: groupStageResult,
+      knockout: knockoutResult
+    });
+  } catch (error) {
+    console.error(
+      "Review match submission error:",
+      error
+    );
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to review match submission."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function deleteTournamentRoute(
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournament(
+        env.DB,
+        tournamentId
+      );
+    
+    if (!tournament) {
+      return Response.json(
+      {
+        success: false,
+        message: "Tournament not found."
+      },
+      {
+        status: 404
+      });
+    }
+    
+    if (
+      user.role !== "admin" ||
+      String(tournament.admin_uid) !==
+      String(user.id)
+    ) {
+      return Response.json(
+      {
+        success: false,
+        message: "Access denied."
+      },
+      {
+        status: 403
+      });
+    }
+    
+    await deleteTournament(
+      env.DB,
+      tournamentId
+    );
+    
+    if (tournament.competition_id) {
+      await env.DB
+        .prepare(`
           UPDATE competitions
           SET
             tournament_count =
@@ -3395,416 +3297,416 @@ async function reviewMatchSubmissionRoute(
             updated_at = ?
           WHERE id = ?
         `)
-            .bind(
-              Date.now(),
-              tournament.competition_id
-            )
-            .run();
-        }
-        
-        return Response.json({
-          success: true,
-          message: "Tournament deleted successfully."
-        });
-        
-      } catch (error) {
-        console.error(
-          "Delete tournament error:",
-          error
+        .bind(
+          Date.now(),
+          tournament.competition_id
+        )
+        .run();
+    }
+    
+    return Response.json({
+      success: true,
+      message: "Tournament deleted successfully."
+    });
+    
+  } catch (error) {
+    console.error(
+      "Delete tournament error:",
+      error
+    );
+    
+    return Response.json(
+    {
+      success: false,
+      message: error.message ||
+        "Failed to delete tournament."
+    },
+    {
+      status: 500
+    });
+  }
+}
+
+
+async function generateCupRoute(
+  request,
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournamentForUser(
+        env.DB,
+        tournamentId,
+        user.id
+      );
+    
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    if (
+      tournament.admin_uid !==
+      user.id
+    ) {
+      return Response.json({
+        success: false,
+        message: "Only the tournament admin can generate the tournament."
+      }, {
+        status: 403
+      });
+    }
+    
+    const body =
+      await request.json();
+    
+    const settings =
+      body.settings &&
+      typeof body.settings === "object" ?
+      body.settings :
+      body;
+    
+    const enableGroups =
+      settings.enableGroups === true;
+    
+    const groupingMode =
+      settings.groupingMode === "manual" ?
+      "manual" :
+      "auto";
+    
+    const groupRoundMode =
+      settings.groupRoundMode === "double" ?
+      "double" :
+      "single";
+    
+    const knockoutPairingMode =
+      settings.knockoutPairingMode === "manual" ?
+      "manual" :
+      "auto";
+    
+    const knockoutRoundMode =
+      settings.knockoutRoundMode === "double" ?
+      "double" :
+      "single";
+    
+    const thirdPlaceMatch =
+      settings.thirdPlaceMatch === true;
+    
+    const teamsPerGroup =
+      Number(settings.teamsPerGroup);
+    
+    const teamsQualify =
+      Number(settings.teamsQualify);
+    
+    const teams =
+      await getTeamsByTournament(
+        env.DB,
+        tournamentId
+      );
+    
+    if (
+      !teams ||
+      teams.length < 2
+    ) {
+      return Response.json({
+        success: false,
+        message: "At least 2 teams are required."
+      }, {
+        status: 400
+      });
+    }
+    
+    let knockoutSize =
+      Number(settings.knockoutSize);
+    
+    if (
+      enableGroups &&
+      settings.startFrom === "group"
+    ) {
+      const groupCount =
+        groupingMode === "manual" &&
+        Array.isArray(body.groups) &&
+        body.groups.length ?
+        body.groups.length :
+        Math.ceil(
+          teams.length /
+          teamsPerGroup
         );
+      
+      knockoutSize =
+        groupCount *
+        teamsQualify;
+    }
+    
+    if (
+      enableGroups &&
+      !Number.isInteger(knockoutSize)
+    ) {
+      if (
+        Number.isInteger(
+          teamsPerGroup
+        ) &&
+        Number.isInteger(
+          teamsQualify
+        )
+      ) {
+        const groupCount =
+          Math.ceil(
+            teams.length /
+            teamsPerGroup
+          );
         
-        return Response.json(
-        {
-          success: false,
-          message: error.message ||
-            "Failed to delete tournament."
-        },
-        {
-          status: 500
-        });
+        knockoutSize =
+          groupCount *
+          teamsQualify;
       }
     }
     
-    
-    async function generateCupRoute(
-      request,
-      env,
-      tournamentId,
-      user
+    if (
+      !Number.isInteger(knockoutSize) ||
+      ![2, 4, 8, 16, 32].includes(
+        knockoutSize
+      )
     ) {
+      return Response.json({
+        success: false,
+        message: "Invalid knockout bracket size."
+      }, {
+        status: 400
+      });
+    }
+    
+    if (
+      !["single", "double"].includes(
+        knockoutRoundMode
+      )
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid knockout round mode."
+      }, {
+        status: 400
+      });
+    }
+    
+    if (
+      thirdPlaceMatch &&
+      knockoutSize < 4
+    ) {
+      return Response.json({
+        success: false,
+        message: "A third-place match requires at least 4 teams."
+      }, {
+        status: 400
+      });
+    }
+    
+    let groups = [];
+    let groupMatches = [];
+    let knockoutMatches = [];
+    
+    if (enableGroups) {
+      if (
+        !Number.isInteger(
+          teamsPerGroup
+        ) ||
+        teamsPerGroup < 2
+      ) {
+        return Response.json({
+          success: false,
+          message: "Invalid teams per group."
+        }, {
+          status: 400
+        });
+      }
+      
+      if (
+        !Number.isInteger(
+          teamsQualify
+        ) ||
+        teamsQualify < 1 ||
+        teamsQualify >
+        teamsPerGroup
+      ) {
+        return Response.json({
+          success: false,
+          message: "Invalid number of qualifying teams."
+        }, {
+          status: 400
+        });
+      }
+      
       try {
-        const tournament =
-          await getTournamentForUser(
-            env.DB,
-            tournamentId,
-            user.id
-          );
-        
-        if (!tournament) {
-          return Response.json({
-            success: false,
-            message: "Tournament not found."
-          }, {
-            status: 404
-          });
-        }
-        
         if (
-          tournament.admin_uid !==
-          user.id
+          groupingMode === "auto"
         ) {
-          return Response.json({
-            success: false,
-            message: "Only the tournament admin can generate the tournament."
-          }, {
-            status: 403
-          });
-        }
-        
-        const body =
-          await request.json();
-        
-        const settings =
-          body.settings &&
-          typeof body.settings === "object" ?
-          body.settings :
-          body;
-        
-        const enableGroups =
-          settings.enableGroups === true;
-        
-        const groupingMode =
-          settings.groupingMode === "manual" ?
-          "manual" :
-          "auto";
-        
-        const groupRoundMode =
-          settings.groupRoundMode === "double" ?
-          "double" :
-          "single";
-        
-        const knockoutPairingMode =
-          settings.knockoutPairingMode === "manual" ?
-          "manual" :
-          "auto";
-        
-        const knockoutRoundMode =
-          settings.knockoutRoundMode === "double" ?
-          "double" :
-          "single";
-        
-        const thirdPlaceMatch =
-          settings.thirdPlaceMatch === true;
-        
-        const teamsPerGroup =
-          Number(settings.teamsPerGroup);
-        
-        const teamsQualify =
-          Number(settings.teamsQualify);
-        
-        const teams =
-          await getTeamsByTournament(
-            env.DB,
-            tournamentId
-          );
-        
-        if (
-          !teams ||
-          teams.length < 2
-        ) {
-          return Response.json({
-            success: false,
-            message: "At least 2 teams are required."
-          }, {
-            status: 400
-          });
-        }
-        
-        let knockoutSize =
-          Number(settings.knockoutSize);
-        
-        if (
-          enableGroups &&
-          settings.startFrom === "group"
-        ) {
-          const groupCount =
-            groupingMode === "manual" &&
-            Array.isArray(body.groups) &&
-            body.groups.length ?
-            body.groups.length :
-            Math.ceil(
-              teams.length /
-              teamsPerGroup
-            );
-          
-          knockoutSize =
-            groupCount *
-            teamsQualify;
-        }
-        
-        if (
-          enableGroups &&
-          !Number.isInteger(knockoutSize)
-        ) {
-          if (
-            Number.isInteger(
-              teamsPerGroup
-            ) &&
-            Number.isInteger(
+          groups =
+            generateAutoGroups(
+              teams,
+              teamsPerGroup,
               teamsQualify
-            )
-          ) {
-            const groupCount =
-              Math.ceil(
-                teams.length /
-                teamsPerGroup
-              );
-            
-            knockoutSize =
-              groupCount *
-              teamsQualify;
-          }
-        }
-        
-        if (
-          !Number.isInteger(knockoutSize) ||
-          ![2, 4, 8, 16, 32].includes(
-            knockoutSize
-          )
-        ) {
-          return Response.json({
-            success: false,
-            message: "Invalid knockout bracket size."
-          }, {
-            status: 400
-          });
-        }
-        
-        if (
-          !["single", "double"].includes(
-            knockoutRoundMode
-          )
-        ) {
-          return Response.json({
-            success: false,
-            message: "Invalid knockout round mode."
-          }, {
-            status: 400
-          });
-        }
-        
-        if (
-          thirdPlaceMatch &&
-          knockoutSize < 4
-        ) {
-          return Response.json({
-            success: false,
-            message: "A third-place match requires at least 4 teams."
-          }, {
-            status: 400
-          });
-        }
-        
-        let groups = [];
-        let groupMatches = [];
-        let knockoutMatches = [];
-        
-        if (enableGroups) {
-          if (
-            !Number.isInteger(
-              teamsPerGroup
-            ) ||
-            teamsPerGroup < 2
-          ) {
-            return Response.json({
-              success: false,
-              message: "Invalid teams per group."
-            }, {
-              status: 400
-            });
-          }
-          
-          if (
-            !Number.isInteger(
-              teamsQualify
-            ) ||
-            teamsQualify < 1 ||
-            teamsQualify >
-            teamsPerGroup
-          ) {
-            return Response.json({
-              success: false,
-              message: "Invalid number of qualifying teams."
-            }, {
-              status: 400
-            });
-          }
-          
-          try {
-            if (
-              groupingMode === "auto"
-            ) {
-              groups =
-                generateAutoGroups(
-                  teams,
-                  teamsPerGroup,
-                  teamsQualify
-                );
-            } else {
-              groups =
-                validateManualGroups(
-                  teams,
-                  body.groups,
-                  teamsPerGroup,
-                  teamsQualify
-                );
-            }
-          } catch (error) {
-            return Response.json({
-              success: false,
-              message: error.message
-            }, {
-              status: 400
-            });
-          }
-          
-          const totalQualifiers =
-            groups.length *
-            teamsQualify;
-          
-          if (
-            totalQualifiers !==
-            knockoutSize
-          ) {
-            return Response.json({
-              success: false,
-              message: `The groups produce ${totalQualifiers} qualifying teams, ` +
-                `but the knockout bracket requires ${knockoutSize}.`
-            }, {
-              status: 400
-            });
-          }
-          
-          groupMatches =
-            generateCupGroupMatches(
-              groups,
-              groupRoundMode
             );
-          
-          const now =
-            Date.now();
-          
-          for (
-            const group of groups
-          ) {
-            group.tournament_id =
-              tournamentId;
-            
-            group.created_at =
-              now;
-          }
-          
-          for (
-            const match of groupMatches
-          ) {
-            match.tournament_id =
-              tournamentId;
-            
-            match.created_at =
-              now;
-          }
         } else {
-          if (
-            teams.length !==
-            knockoutSize
-          ) {
-            return Response.json({
-              success: false,
-              message: `This direct knockout requires exactly ${knockoutSize} teams, ` +
-                `but ${teams.length} teams are registered.`
-            }, {
-              status: 400
-            });
-          }
-          
-          try {
-            knockoutMatches =
-              generateDirectKnockoutMatches(
-                teams,
-                knockoutSize,
-                knockoutPairingMode,
-                knockoutRoundMode,
-                thirdPlaceMatch,
-                body.manualKnockoutPairs
-              );
-          } catch (error) {
-            return Response.json({
-              success: false,
-              message: error.message
-            }, {
-              status: 400
-            });
-          }
-          
-          const now =
-            Date.now();
-          
-          for (
-            const match of knockoutMatches
-          ) {
-            match.tournament_id =
-              tournamentId;
-            
-            match.created_at =
-              now;
-          }
+          groups =
+            validateManualGroups(
+              teams,
+              body.groups,
+              teamsPerGroup,
+              teamsQualify
+            );
         }
+      } catch (error) {
+        return Response.json({
+          success: false,
+          message: error.message
+        }, {
+          status: 400
+        });
+      }
+      
+      const totalQualifiers =
+        groups.length *
+        teamsQualify;
+      
+      if (
+        totalQualifiers !==
+        knockoutSize
+      ) {
+        return Response.json({
+          success: false,
+          message: `The groups produce ${totalQualifiers} qualifying teams, ` +
+            `but the knockout bracket requires ${knockoutSize}.`
+        }, {
+          status: 400
+        });
+      }
+      
+      groupMatches =
+        generateCupGroupMatches(
+          groups,
+          groupRoundMode
+        );
+      
+      const now =
+        Date.now();
+      
+      for (
+        const group of groups
+      ) {
+        group.tournament_id =
+          tournamentId;
         
-        const existingSettings =
-          (() => {
-            try {
-              if (
-                typeof tournament.settings ===
-                "string"
-              ) {
-                return JSON.parse(
-                  tournament.settings
-                ) || {};
-              }
-              
-              if (
-                tournament.settings &&
-                typeof tournament.settings ===
-                "object"
-              ) {
-                return {
-                  ...tournament.settings
-                };
-              }
-              
-              return {};
-            } catch {
-              return {};
-            }
-          })();
+        group.created_at =
+          now;
+      }
+      
+      for (
+        const match of groupMatches
+      ) {
+        match.tournament_id =
+          tournamentId;
         
-        const updatedSettings = {
-          ...existingSettings,
-          enableGroups,
-          groupingMode,
-          groupRoundMode,
-          knockoutPairingMode,
-          knockoutRoundMode,
-          thirdPlaceMatch,
-          teamsPerGroup,
-          teamsQualify,
-          knockoutSize,
-          groupStageComplete: false,
-          knockoutGenerated:
-            !enableGroups
-        };
+        match.created_at =
+          now;
+      }
+    } else {
+      if (
+        teams.length !==
+        knockoutSize
+      ) {
+        return Response.json({
+          success: false,
+          message: `This direct knockout requires exactly ${knockoutSize} teams, ` +
+            `but ${teams.length} teams are registered.`
+        }, {
+          status: 400
+        });
+      }
+      
+      try {
+        knockoutMatches =
+          generateDirectKnockoutMatches(
+            teams,
+            knockoutSize,
+            knockoutPairingMode,
+            knockoutRoundMode,
+            thirdPlaceMatch,
+            body.manualKnockoutPairs
+          );
+      } catch (error) {
+        return Response.json({
+          success: false,
+          message: error.message
+        }, {
+          status: 400
+        });
+      }
+      
+      const now =
+        Date.now();
+      
+      for (
+        const match of knockoutMatches
+      ) {
+        match.tournament_id =
+          tournamentId;
         
-        await env.DB.prepare(`
+        match.created_at =
+          now;
+      }
+    }
+    
+    const existingSettings =
+      (() => {
+        try {
+          if (
+            typeof tournament.settings ===
+            "string"
+          ) {
+            return JSON.parse(
+              tournament.settings
+            ) || {};
+          }
+          
+          if (
+            tournament.settings &&
+            typeof tournament.settings ===
+            "object"
+          ) {
+            return {
+              ...tournament.settings
+            };
+          }
+          
+          return {};
+        } catch {
+          return {};
+        }
+      })();
+    
+    const updatedSettings = {
+      ...existingSettings,
+      enableGroups,
+      groupingMode,
+      groupRoundMode,
+      knockoutPairingMode,
+      knockoutRoundMode,
+      thirdPlaceMatch,
+      teamsPerGroup,
+      teamsQualify,
+      knockoutSize,
+      groupStageComplete: false,
+      knockoutGenerated:
+        !enableGroups
+    };
+    
+    await env.DB.prepare(`
       UPDATE tournament_players
       SET
         played = 0,
@@ -3816,32 +3718,32 @@ async function reviewMatchSubmissionRoute(
         points = 0
       WHERE tournament_id = ?
     `).bind(
-          tournamentId
-        ).run();
-        
-        await deleteTournamentCupData(
-          env.DB,
-          tournamentId
-        );
-        
-        if (enableGroups) {
-          await createGroupsBatch(
-            env.DB,
-            groups
-          );
-          
-          await createMatchesBatch(
-            env.DB,
-            groupMatches
-          );
-        } else {
-          await createMatchesBatch(
-            env.DB,
-            knockoutMatches
-          );
-        }
-        
-        await env.DB.prepare(`
+      tournamentId
+    ).run();
+    
+    await deleteTournamentCupData(
+      env.DB,
+      tournamentId
+    );
+    
+    if (enableGroups) {
+      await createGroupsBatch(
+        env.DB,
+        groups
+      );
+      
+      await createMatchesBatch(
+        env.DB,
+        groupMatches
+      );
+    } else {
+      await createMatchesBatch(
+        env.DB,
+        knockoutMatches
+      );
+    }
+    
+    await env.DB.prepare(`
       UPDATE tournaments
       SET
         settings = ?,
@@ -3850,804 +3752,804 @@ async function reviewMatchSubmissionRoute(
         updated_at = ?
       WHERE id = ?
     `).bind(
-          JSON.stringify(
-            updatedSettings
-          ),
-          Date.now(),
-          tournamentId
-        ).run();
-        
-        return Response.json({
-          success: true,
-          message: enableGroups ?
-            "Cup group stage generated successfully." : "Direct knockout tournament generated successfully.",
-          tournamentId,
-          settings: updatedSettings,
-          groups,
-          groupMatches,
-          knockoutMatches
-        });
-        
-      } catch (error) {
-        console.error(
-          "generateCupRoute error:",
-          error
-        );
-        
-        return Response.json({
-          success: false,
-          message: error.message ||
-            "Failed to generate cup tournament."
-        }, {
-          status: 500
-        });
-      }
-    }
+      JSON.stringify(
+        updatedSettings
+      ),
+      Date.now(),
+      tournamentId
+    ).run();
     
-    
-    function createGroupName(index) {
-      return `Group ${String.fromCharCode(65 + index)}`;
-    }
-    
-    function generateAutoGroups(
-      teams,
-      teamsPerGroup,
-      teamsQualify
-    ) {
-      const totalGroups =
-        Math.ceil(teams.length / teamsPerGroup);
-      
-      const groups = [];
-      
-      for (let i = 0; i < totalGroups; i++) {
-        const start =
-          i * teamsPerGroup;
-        
-        const groupTeams =
-          teams.slice(
-            start,
-            start + teamsPerGroup
-          );
-        
-        if (groupTeams.length < teamsQualify) {
-          throw new Error(
-            `${createGroupName(i)} does not have enough teams for ${teamsQualify} qualifiers.`
-          );
-        }
-        
-        groups.push({
-          id: crypto.randomUUID(),
-          name: createGroupName(i),
-          teamIds: groupTeams.map(
-            team => team.id
-          )
-        });
-      }
-      
-      return groups;
-    }
-    
-    function validateManualGroups(
-      teams,
+    return Response.json({
+      success: true,
+      message: enableGroups ?
+        "Cup group stage generated successfully." : "Direct knockout tournament generated successfully.",
+      tournamentId,
+      settings: updatedSettings,
       groups,
-      teamsPerGroup,
-      teamsQualify
-    ) {
-      if (!Array.isArray(groups) || !groups.length) {
-        throw new Error(
-          "Manual groups are required."
-        );
-      }
-      
-      const registeredTeamIds =
-        new Set(
-          teams.map(team => team.id)
-        );
-      
-      const assignedTeamIds =
-        new Set();
-      
-      for (const group of groups) {
-        if (
-          !group ||
-          !Array.isArray(group.teamIds)
-        ) {
-          throw new Error(
-            "Invalid manual group data."
-          );
-        }
-        
-        if (
-          group.teamIds.length > teamsPerGroup
-        ) {
-          throw new Error(
-            `${group.name || "A group"} has more than ${teamsPerGroup} teams.`
-          );
-        }
-        
-        if (
-          group.teamIds.length < teamsQualify
-        ) {
-          throw new Error(
-            `${group.name || "A group"} does not have enough teams for ${teamsQualify} qualifiers.`
-          );
-        }
-        
-        for (const teamId of group.teamIds) {
-          if (!registeredTeamIds.has(teamId)) {
-            throw new Error(
-              "A manual group contains a team that is not registered in this tournament."
-            );
-          }
-          
-          if (assignedTeamIds.has(teamId)) {
-            throw new Error(
-              "A team cannot belong to more than one group."
-            );
-          }
-          
-          assignedTeamIds.add(teamId);
-        }
-      }
-      
-      if (
-        assignedTeamIds.size !==
-        registeredTeamIds.size
-      ) {
-        throw new Error(
-          "Every registered team must be assigned to exactly one group."
-        );
-      }
-      
-      return groups.map(
-        (group, index) => ({
-          id: group.id ||
-            crypto.randomUUID(),
-          
-          name: group.name ||
-            createGroupName(index),
-          
-          teamIds: [...group.teamIds]
-        })
+      groupMatches,
+      knockoutMatches
+    });
+    
+  } catch (error) {
+    console.error(
+      "generateCupRoute error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to generate cup tournament."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+function createGroupName(index) {
+  return `Group ${String.fromCharCode(65 + index)}`;
+}
+
+function generateAutoGroups(
+  teams,
+  teamsPerGroup,
+  teamsQualify
+) {
+  const totalGroups =
+    Math.ceil(teams.length / teamsPerGroup);
+  
+  const groups = [];
+  
+  for (let i = 0; i < totalGroups; i++) {
+    const start =
+      i * teamsPerGroup;
+    
+    const groupTeams =
+      teams.slice(
+        start,
+        start + teamsPerGroup
+      );
+    
+    if (groupTeams.length < teamsQualify) {
+      throw new Error(
+        `${createGroupName(i)} does not have enough teams for ${teamsQualify} qualifiers.`
       );
     }
     
-    function generateCupGroupMatches(
-      groups,
-      groupRoundMode
+    groups.push({
+      id: crypto.randomUUID(),
+      name: createGroupName(i),
+      teamIds: groupTeams.map(
+        team => team.id
+      )
+    });
+  }
+  
+  return groups;
+}
+
+function validateManualGroups(
+  teams,
+  groups,
+  teamsPerGroup,
+  teamsQualify
+) {
+  if (!Array.isArray(groups) || !groups.length) {
+    throw new Error(
+      "Manual groups are required."
+    );
+  }
+  
+  const registeredTeamIds =
+    new Set(
+      teams.map(team => team.id)
+    );
+  
+  const assignedTeamIds =
+    new Set();
+  
+  for (const group of groups) {
+    if (
+      !group ||
+      !Array.isArray(group.teamIds)
     ) {
-      const matches = [];
+      throw new Error(
+        "Invalid manual group data."
+      );
+    }
+    
+    if (
+      group.teamIds.length > teamsPerGroup
+    ) {
+      throw new Error(
+        `${group.name || "A group"} has more than ${teamsPerGroup} teams.`
+      );
+    }
+    
+    if (
+      group.teamIds.length < teamsQualify
+    ) {
+      throw new Error(
+        `${group.name || "A group"} does not have enough teams for ${teamsQualify} qualifiers.`
+      );
+    }
+    
+    for (const teamId of group.teamIds) {
+      if (!registeredTeamIds.has(teamId)) {
+        throw new Error(
+          "A manual group contains a team that is not registered in this tournament."
+        );
+      }
       
-      for (const group of groups) {
-        let teams = [...group.teamIds];
+      if (assignedTeamIds.has(teamId)) {
+        throw new Error(
+          "A team cannot belong to more than one group."
+        );
+      }
+      
+      assignedTeamIds.add(teamId);
+    }
+  }
+  
+  if (
+    assignedTeamIds.size !==
+    registeredTeamIds.size
+  ) {
+    throw new Error(
+      "Every registered team must be assigned to exactly one group."
+    );
+  }
+  
+  return groups.map(
+    (group, index) => ({
+      id: group.id ||
+        crypto.randomUUID(),
+      
+      name: group.name ||
+        createGroupName(index),
+      
+      teamIds: [...group.teamIds]
+    })
+  );
+}
+
+function generateCupGroupMatches(
+  groups,
+  groupRoundMode
+) {
+  const matches = [];
+  
+  for (const group of groups) {
+    let teams = [...group.teamIds];
+    
+    if (teams.length < 2) {
+      continue;
+    }
+    
+    if (teams.length % 2 !== 0) {
+      teams.push(null);
+    }
+    
+    const totalTeams = teams.length;
+    const roundsPerLeg = totalTeams - 1;
+    const matchesPerRound = totalTeams / 2;
+    
+    const firstLegFixtures = [];
+    
+    for (
+      let roundIndex = 0; roundIndex < roundsPerLeg; roundIndex++
+    ) {
+      const roundFixtures = [];
+      
+      for (
+        let slot = 0; slot < matchesPerRound; slot++
+      ) {
+        const home =
+          teams[slot];
         
-        if (teams.length < 2) {
-          continue;
-        }
-        
-        if (teams.length % 2 !== 0) {
-          teams.push(null);
-        }
-        
-        const totalTeams = teams.length;
-        const roundsPerLeg = totalTeams - 1;
-        const matchesPerRound = totalTeams / 2;
-        
-        const firstLegFixtures = [];
-        
-        for (
-          let roundIndex = 0; roundIndex < roundsPerLeg; roundIndex++
-        ) {
-          const roundFixtures = [];
-          
-          for (
-            let slot = 0; slot < matchesPerRound; slot++
-          ) {
-            const home =
-              teams[slot];
-            
-            const away =
-              teams[
-                totalTeams - 1 - slot
-              ];
-            
-            if (home && away) {
-              roundFixtures.push({
-                home_team_id: home,
-                away_team_id: away,
-                slot
-              });
-            }
-          }
-          
-          firstLegFixtures.push(
-            roundFixtures
-          );
-          
-          const fixedTeam =
-            teams[0];
-          
-          const rotatingTeams =
-            teams.slice(1);
-          
-          rotatingTeams.unshift(
-            rotatingTeams.pop()
-          );
-          
-          teams = [
-            fixedTeam,
-            ...rotatingTeams
+        const away =
+          teams[
+            totalTeams - 1 - slot
           ];
+        
+        if (home && away) {
+          roundFixtures.push({
+            home_team_id: home,
+            away_team_id: away,
+            slot
+          });
         }
+      }
+      
+      firstLegFixtures.push(
+        roundFixtures
+      );
+      
+      const fixedTeam =
+        teams[0];
+      
+      const rotatingTeams =
+        teams.slice(1);
+      
+      rotatingTeams.unshift(
+        rotatingTeams.pop()
+      );
+      
+      teams = [
+        fixedTeam,
+        ...rotatingTeams
+      ];
+    }
+    
+    for (
+      let roundIndex = 0; roundIndex < firstLegFixtures.length; roundIndex++
+    ) {
+      const fixtures =
+        firstLegFixtures[roundIndex];
+      
+      for (
+        let slot = 0; slot < fixtures.length; slot++
+      ) {
+        const fixture =
+          fixtures[slot];
+        
+        matches.push({
+          id: crypto.randomUUID(),
+          tournament_id: null,
+          home_team_id: fixture.home_team_id,
+          away_team_id: fixture.away_team_id,
+          home_score: null,
+          away_score: null,
+          played: 0,
+          played_at: null,
+          match_type: "group",
+          group_id: group.id,
+          round: `Group ${group.name} - Round ${roundIndex + 1}`,
+          round_index: roundIndex + 1,
+          slot,
+          leg: 1,
+          winner_team_id: null,
+          scheduled_at: null,
+          created_at: Date.now(),
+          updated_at: null,
+          submission_status: null
+        });
+      }
+    }
+    
+    if (groupRoundMode === "double") {
+      for (
+        let roundIndex = 0; roundIndex < firstLegFixtures.length; roundIndex++
+      ) {
+        const fixtures =
+          firstLegFixtures[roundIndex];
         
         for (
-          let roundIndex = 0; roundIndex < firstLegFixtures.length; roundIndex++
+          let slot = 0; slot < fixtures.length; slot++
         ) {
-          const fixtures =
-            firstLegFixtures[roundIndex];
+          const fixture =
+            fixtures[slot];
           
-          for (
-            let slot = 0; slot < fixtures.length; slot++
-          ) {
-            const fixture =
-              fixtures[slot];
-            
-            matches.push({
-              id: crypto.randomUUID(),
-              tournament_id: null,
-              home_team_id: fixture.home_team_id,
-              away_team_id: fixture.away_team_id,
-              home_score: null,
-              away_score: null,
-              played: 0,
-              played_at: null,
-              match_type: "group",
-              group_id: group.id,
-              round: `Group ${group.name} - Round ${roundIndex + 1}`,
-              round_index: roundIndex + 1,
-              slot,
-              leg: 1,
-              winner_team_id: null,
-              scheduled_at: null,
-              created_at: Date.now(),
-              updated_at: null,
-              submission_status: null
-            });
-          }
-        }
-        
-        if (groupRoundMode === "double") {
-          for (
-            let roundIndex = 0; roundIndex < firstLegFixtures.length; roundIndex++
-          ) {
-            const fixtures =
-              firstLegFixtures[roundIndex];
-            
-            for (
-              let slot = 0; slot < fixtures.length; slot++
-            ) {
-              const fixture =
-                fixtures[slot];
-              
-              matches.push({
-                id: crypto.randomUUID(),
-                tournament_id: null,
-                home_team_id: fixture.away_team_id,
-                away_team_id: fixture.home_team_id,
-                home_score: null,
-                away_score: null,
-                played: 0,
-                played_at: null,
-                match_type: "group",
-                group_id: group.id,
-                round: `Group ${group.name} - Round ${
+          matches.push({
+            id: crypto.randomUUID(),
+            tournament_id: null,
+            home_team_id: fixture.away_team_id,
+            away_team_id: fixture.home_team_id,
+            home_score: null,
+            away_score: null,
+            played: 0,
+            played_at: null,
+            match_type: "group",
+            group_id: group.id,
+            round: `Group ${group.name} - Round ${
                 roundsPerLeg +
                 roundIndex +
                 1
               }`,
-                round_index: roundsPerLeg +
-                  roundIndex +
-                  1,
-                slot,
-                leg: 2,
-                winner_team_id: null,
-                scheduled_at: null,
-                created_at: Date.now(),
-                updated_at: null,
-                submission_status: null
-              });
-            }
-          }
+            round_index: roundsPerLeg +
+              roundIndex +
+              1,
+            slot,
+            leg: 2,
+            winner_team_id: null,
+            scheduled_at: null,
+            created_at: Date.now(),
+            updated_at: null,
+            submission_status: null
+          });
         }
       }
-      
-      return matches;
+    }
+  }
+  
+  return matches;
+}
+
+
+function getKnockoutRoundName(size) {
+  if (size === 32) return "Round of 32";
+  if (size === 16) return "Round of 16";
+  if (size === 8) return "Quarter Final";
+  if (size === 4) return "Semi Final";
+  if (size === 2) return "Final";
+  
+  return "Knockout";
+}
+
+function createKnockoutMatch(
+  homeTeamId,
+  awayTeamId,
+  round,
+  roundIndex,
+  slot,
+  leg,
+  matchType = "knockout"
+) {
+  return {
+    id: crypto.randomUUID(),
+    tournament_id: null,
+    home_team_id: homeTeamId,
+    away_team_id: awayTeamId,
+    home_score: null,
+    away_score: null,
+    played: 0,
+    played_at: null,
+    match_type: matchType,
+    group_id: null,
+    round,
+    round_index: roundIndex,
+    slot,
+    leg,
+    winner_team_id: null,
+    scheduled_at: null,
+    created_at: Date.now(),
+    updated_at: null,
+    submission_status: null
+  };
+}
+
+function generateDirectKnockoutMatches(
+  teams,
+  knockoutSize,
+  knockoutPairingMode,
+  knockoutRoundMode,
+  thirdPlaceMatch,
+  knockoutPairs = null
+) {
+  if (!Array.isArray(teams)) {
+    throw new Error(
+      "Invalid team data."
+    );
+  }
+  
+  if (
+    ![2, 4, 8, 16, 32].includes(
+      knockoutSize
+    )
+  ) {
+    throw new Error(
+      "Invalid knockout bracket size."
+    );
+  }
+  
+  if (teams.length !== knockoutSize) {
+    throw new Error(
+      `This knockout requires exactly ${knockoutSize} teams, but ${teams.length} teams are registered.`
+    );
+  }
+  
+  if (
+    !["auto", "manual"].includes(
+      knockoutPairingMode
+    )
+  ) {
+    throw new Error(
+      "Invalid knockout pairing mode."
+    );
+  }
+  
+  if (
+    !["single", "double"].includes(
+      knockoutRoundMode
+    )
+  ) {
+    throw new Error(
+      "Invalid knockout round mode."
+    );
+  }
+  
+  if (
+    thirdPlaceMatch &&
+    knockoutSize < 4
+  ) {
+    throw new Error(
+      "A third-place match requires at least 4 teams."
+    );
+  }
+  
+  const registeredTeamIds =
+    new Set(
+      teams.map(team => team.id)
+    );
+  
+  let pairs = [];
+  
+  if (
+    knockoutPairingMode === "manual"
+  ) {
+    if (!Array.isArray(knockoutPairs)) {
+      throw new Error(
+        "Manual knockout pairings are required."
+      );
     }
     
+    const expectedPairs =
+      knockoutSize / 2;
     
-    function getKnockoutRoundName(size) {
-      if (size === 32) return "Round of 32";
-      if (size === 16) return "Round of 16";
-      if (size === 8) return "Quarter Final";
-      if (size === 4) return "Semi Final";
-      if (size === 2) return "Final";
-      
-      return "Knockout";
-    }
-    
-    function createKnockoutMatch(
-      homeTeamId,
-      awayTeamId,
-      round,
-      roundIndex,
-      slot,
-      leg,
-      matchType = "knockout"
+    if (
+      knockoutPairs.length !==
+      expectedPairs
     ) {
-      return {
-        id: crypto.randomUUID(),
-        tournament_id: null,
-        home_team_id: homeTeamId,
-        away_team_id: awayTeamId,
-        home_score: null,
-        away_score: null,
-        played: 0,
-        played_at: null,
-        match_type: matchType,
-        group_id: null,
-        round,
-        round_index: roundIndex,
-        slot,
-        leg,
-        winner_team_id: null,
-        scheduled_at: null,
-        created_at: Date.now(),
-        updated_at: null,
-        submission_status: null
-      };
+      throw new Error(
+        `Exactly ${expectedPairs} knockout pairings are required.`
+      );
     }
     
-    function generateDirectKnockoutMatches(
-      teams,
-      knockoutSize,
-      knockoutPairingMode,
-      knockoutRoundMode,
-      thirdPlaceMatch,
-      knockoutPairs = null
+    const pairedTeams =
+      new Set();
+    
+    for (
+      const pair of knockoutPairs
     ) {
-      if (!Array.isArray(teams)) {
+      if (
+        !Array.isArray(pair) ||
+        pair.length !== 2
+      ) {
         throw new Error(
-          "Invalid team data."
+          "Each knockout pairing must contain exactly two teams."
         );
       }
       
+      const homeTeamId =
+        pair[0];
+      
+      const awayTeamId =
+        pair[1];
+      
       if (
-        ![2, 4, 8, 16, 32].includes(
-          knockoutSize
+        !registeredTeamIds.has(
+          homeTeamId
+        ) ||
+        !registeredTeamIds.has(
+          awayTeamId
         )
       ) {
         throw new Error(
-          "Invalid knockout bracket size."
-        );
-      }
-      
-      if (teams.length !== knockoutSize) {
-        throw new Error(
-          `This knockout requires exactly ${knockoutSize} teams, but ${teams.length} teams are registered.`
+          "A knockout pairing contains a team that is not registered in this tournament."
         );
       }
       
       if (
-        !["auto", "manual"].includes(
-          knockoutPairingMode
+        homeTeamId ===
+        awayTeamId
+      ) {
+        throw new Error(
+          "A team cannot play against itself."
+        );
+      }
+      
+      if (
+        pairedTeams.has(
+          homeTeamId
+        ) ||
+        pairedTeams.has(
+          awayTeamId
         )
       ) {
         throw new Error(
-          "Invalid knockout pairing mode."
+          "A team cannot appear in more than one knockout pairing."
         );
       }
       
+      pairedTeams.add(
+        homeTeamId
+      );
+      
+      pairedTeams.add(
+        awayTeamId
+      );
+      
+      pairs.push([
+        homeTeamId,
+        awayTeamId
+      ]);
+    }
+    
+    if (
+      pairedTeams.size !==
+      registeredTeamIds.size
+    ) {
+      throw new Error(
+        "Every registered team must be included in exactly one knockout pairing."
+      );
+    }
+  } else {
+    const shuffledTeams = [...teams];
+    
+    for (
+      let i =
+        shuffledTeams.length - 1; i > 0; i--
+    ) {
+      const j =
+        Math.floor(
+          Math.random() *
+          (i + 1)
+        );
+      
+      [
+        shuffledTeams[i],
+        shuffledTeams[j]
+      ] = [
+        shuffledTeams[j],
+        shuffledTeams[i]
+      ];
+    }
+    
+    for (
+      let i = 0; i < shuffledTeams.length; i += 2
+    ) {
+      pairs.push([
+        shuffledTeams[i].id,
+        shuffledTeams[i + 1].id
+      ]);
+    }
+  }
+  
+  const matches = [];
+  
+  let currentSize =
+    knockoutSize;
+  
+  let roundIndex = 1;
+  
+  const finalRoundIndex =
+    Math.log2(knockoutSize);
+  
+  while (
+    currentSize >= 2
+  ) {
+    const round =
+      getKnockoutRoundName(
+        currentSize
+      );
+    
+    const matchCount =
+      currentSize / 2;
+    
+    const isFinal =
+      roundIndex ===
+      finalRoundIndex;
+    
+    for (
+      let slot = 0; slot < matchCount; slot++
+    ) {
+      let homeTeamId = null;
+      let awayTeamId = null;
+      
       if (
-        !["single", "double"].includes(
-          knockoutRoundMode
+        roundIndex === 1
+      ) {
+        homeTeamId =
+          pairs[slot][0];
+        
+        awayTeamId =
+          pairs[slot][1];
+      }
+      
+      matches.push(
+        createKnockoutMatch(
+          homeTeamId,
+          awayTeamId,
+          round,
+          roundIndex,
+          slot,
+          1
         )
-      ) {
-        throw new Error(
-          "Invalid knockout round mode."
-        );
-      }
+      );
       
       if (
-        thirdPlaceMatch &&
-        knockoutSize < 4
+        knockoutRoundMode ===
+        "double" &&
+        !isFinal
       ) {
-        throw new Error(
-          "A third-place match requires at least 4 teams."
-        );
-      }
-      
-      const registeredTeamIds =
-        new Set(
-          teams.map(team => team.id)
-        );
-      
-      let pairs = [];
-      
-      if (
-        knockoutPairingMode === "manual"
-      ) {
-        if (!Array.isArray(knockoutPairs)) {
-          throw new Error(
-            "Manual knockout pairings are required."
-          );
-        }
-        
-        const expectedPairs =
-          knockoutSize / 2;
-        
-        if (
-          knockoutPairs.length !==
-          expectedPairs
-        ) {
-          throw new Error(
-            `Exactly ${expectedPairs} knockout pairings are required.`
-          );
-        }
-        
-        const pairedTeams =
-          new Set();
-        
-        for (
-          const pair of knockoutPairs
-        ) {
-          if (
-            !Array.isArray(pair) ||
-            pair.length !== 2
-          ) {
-            throw new Error(
-              "Each knockout pairing must contain exactly two teams."
-            );
-          }
-          
-          const homeTeamId =
-            pair[0];
-          
-          const awayTeamId =
-            pair[1];
-          
-          if (
-            !registeredTeamIds.has(
-              homeTeamId
-            ) ||
-            !registeredTeamIds.has(
-              awayTeamId
-            )
-          ) {
-            throw new Error(
-              "A knockout pairing contains a team that is not registered in this tournament."
-            );
-          }
-          
-          if (
-            homeTeamId ===
-            awayTeamId
-          ) {
-            throw new Error(
-              "A team cannot play against itself."
-            );
-          }
-          
-          if (
-            pairedTeams.has(
-              homeTeamId
-            ) ||
-            pairedTeams.has(
-              awayTeamId
-            )
-          ) {
-            throw new Error(
-              "A team cannot appear in more than one knockout pairing."
-            );
-          }
-          
-          pairedTeams.add(
-            homeTeamId
-          );
-          
-          pairedTeams.add(
-            awayTeamId
-          );
-          
-          pairs.push([
-            homeTeamId,
-            awayTeamId
-          ]);
-        }
-        
-        if (
-          pairedTeams.size !==
-          registeredTeamIds.size
-        ) {
-          throw new Error(
-            "Every registered team must be included in exactly one knockout pairing."
-          );
-        }
-      } else {
-        const shuffledTeams = [...teams];
-        
-        for (
-          let i =
-            shuffledTeams.length - 1; i > 0; i--
-        ) {
-          const j =
-            Math.floor(
-              Math.random() *
-              (i + 1)
-            );
-          
-          [
-            shuffledTeams[i],
-            shuffledTeams[j]
-          ] = [
-            shuffledTeams[j],
-            shuffledTeams[i]
-          ];
-        }
-        
-        for (
-          let i = 0; i < shuffledTeams.length; i += 2
-        ) {
-          pairs.push([
-            shuffledTeams[i].id,
-            shuffledTeams[i + 1].id
-          ]);
-        }
-      }
-      
-      const matches = [];
-      
-      let currentSize =
-        knockoutSize;
-      
-      let roundIndex = 1;
-      
-      const finalRoundIndex =
-        Math.log2(knockoutSize);
-      
-      while (
-        currentSize >= 2
-      ) {
-        const round =
-          getKnockoutRoundName(
-            currentSize
-          );
-        
-        const matchCount =
-          currentSize / 2;
-        
-        const isFinal =
-          roundIndex ===
-          finalRoundIndex;
-        
-        for (
-          let slot = 0; slot < matchCount; slot++
-        ) {
-          let homeTeamId = null;
-          let awayTeamId = null;
-          
-          if (
-            roundIndex === 1
-          ) {
-            homeTeamId =
-              pairs[slot][0];
-            
-            awayTeamId =
-              pairs[slot][1];
-          }
-          
-          matches.push(
-            createKnockoutMatch(
-              homeTeamId,
-              awayTeamId,
-              round,
-              roundIndex,
-              slot,
-              1
-            )
-          );
-          
-          if (
-            knockoutRoundMode ===
-            "double" &&
-            !isFinal
-          ) {
-            matches.push(
-              createKnockoutMatch(
-                roundIndex === 1 ?
-                awayTeamId :
-                null,
-                roundIndex === 1 ?
-                homeTeamId :
-                null,
-                round,
-                roundIndex,
-                slot,
-                2
-              )
-            );
-          }
-        }
-        
-        currentSize =
-          currentSize / 2;
-        
-        roundIndex++;
-      }
-      
-      if (thirdPlaceMatch) {
         matches.push(
           createKnockoutMatch(
+            roundIndex === 1 ?
+            awayTeamId :
             null,
+            roundIndex === 1 ?
+            homeTeamId :
             null,
-            "Third Place",
-            finalRoundIndex,
-            0,
-            1,
-            "third_place"
+            round,
+            roundIndex,
+            slot,
+            2
           )
         );
       }
-      
-      return matches;
     }
     
-    function pairByGroupRules(
-      teams,
-      knockoutSize
-    ) {
-      if (
-        !Array.isArray(teams) ||
-        teams.length !== knockoutSize
-      ) {
-        throw new Error(
-          `Invalid number of qualified teams. Expected ${knockoutSize}.`
-        );
-      }
-      const groupedTeams =
-        new Map();
-      for (const team of teams) {
-        if (!team.groupId) {
-          throw new Error(
-            "Qualified team is missing group information."
-          );
-        }
-        if (
-          !groupedTeams.has(
-            team.groupId
-          )
-        ) {
-          groupedTeams.set(
-            team.groupId,
-            {
-              id: team.groupId,
-              name: team.group,
-              teams: []
-            }
-          );
-        }
-        groupedTeams
-          .get(team.groupId)
-          .teams.push(team);
-      }
-      const groupList = [...groupedTeams.values()]
-        .sort((a, b) =>
-          String(a.name)
-          .localeCompare(
-            String(b.name)
-          )
-        );
-      const groupCount =
-        groupList.length;
-      if (
-        groupCount < 2 ||
-        groupCount % 2 !== 0
-      ) {
-        throw new Error(
-          "An even number of groups is required for automatic group-based knockout pairing."
-        );
-      }
-      for (const group of groupList) {
-        group.teams.sort(
-          (a, b) =>
-          Number(a.pos) -
-          Number(b.pos)
-        );
-      }
-      const qualifiersPerGroup =
-        groupList[0].teams.length;
-      if (
-        qualifiersPerGroup < 1
-      ) {
-        throw new Error(
-          "No qualified teams were found in the groups."
-        );
-      }
-      for (const group of groupList) {
-        if (
-          group.teams.length !==
-          qualifiersPerGroup
-        ) {
-          throw new Error(
-            "All groups must contain the same number of qualified teams."
-          );
-        }
-      }
-      const result = [];
-      for (
-        let i = 0; i < groupCount; i += 2
-      ) {
-        const firstGroup =
-          groupList[i];
-        const secondGroup =
-          groupList[i + 1];
-        for (
-          let position = 0; position < qualifiersPerGroup; position++
-        ) {
-          const first =
-            firstGroup.teams[
-              position
-            ];
-          const oppositePosition =
-            qualifiersPerGroup -
-            1 -
-            position;
-          const second =
-            secondGroup.teams[
-              oppositePosition
-            ];
-          if (
-            !first ||
-            !second ||
-            first.groupId ===
-            second.groupId
-          ) {
-            throw new Error(
-              "Unable to create valid knockout pairings using the group pairing rules."
-            );
-          }
-          result.push(first);
-          result.push(second);
-        }
-      }
-      if (
-        result.length !==
-        knockoutSize
-      ) {
-        throw new Error(
-          `Invalid knockout pairing count. Expected ${knockoutSize}, got ${result.length}.`
-        );
-      }
-      return result;
+    currentSize =
+      currentSize / 2;
+    
+    roundIndex++;
+  }
+  
+  if (thirdPlaceMatch) {
+    matches.push(
+      createKnockoutMatch(
+        null,
+        null,
+        "Third Place",
+        finalRoundIndex,
+        0,
+        1,
+        "third_place"
+      )
+    );
+  }
+  
+  return matches;
+}
+
+function pairByGroupRules(
+  teams,
+  knockoutSize
+) {
+  if (
+    !Array.isArray(teams) ||
+    teams.length !== knockoutSize
+  ) {
+    throw new Error(
+      `Invalid number of qualified teams. Expected ${knockoutSize}.`
+    );
+  }
+  const groupedTeams =
+    new Map();
+  for (const team of teams) {
+    if (!team.groupId) {
+      throw new Error(
+        "Qualified team is missing group information."
+      );
     }
-    
-    
-    
-    async function getCupQualifiedTeams(
-      db,
-      tournamentId,
-      teamsQualify
+    if (
+      !groupedTeams.has(
+        team.groupId
+      )
     ) {
+      groupedTeams.set(
+        team.groupId,
+        {
+          id: team.groupId,
+          name: team.group,
+          teams: []
+        }
+      );
+    }
+    groupedTeams
+      .get(team.groupId)
+      .teams.push(team);
+  }
+  const groupList = [...groupedTeams.values()]
+    .sort((a, b) =>
+      String(a.name)
+      .localeCompare(
+        String(b.name)
+      )
+    );
+  const groupCount =
+    groupList.length;
+  if (
+    groupCount < 2 ||
+    groupCount % 2 !== 0
+  ) {
+    throw new Error(
+      "An even number of groups is required for automatic group-based knockout pairing."
+    );
+  }
+  for (const group of groupList) {
+    group.teams.sort(
+      (a, b) =>
+      Number(a.pos) -
+      Number(b.pos)
+    );
+  }
+  const qualifiersPerGroup =
+    groupList[0].teams.length;
+  if (
+    qualifiersPerGroup < 1
+  ) {
+    throw new Error(
+      "No qualified teams were found in the groups."
+    );
+  }
+  for (const group of groupList) {
+    if (
+      group.teams.length !==
+      qualifiersPerGroup
+    ) {
+      throw new Error(
+        "All groups must contain the same number of qualified teams."
+      );
+    }
+  }
+  const result = [];
+  for (
+    let i = 0; i < groupCount; i += 2
+  ) {
+    const firstGroup =
+      groupList[i];
+    const secondGroup =
+      groupList[i + 1];
+    for (
+      let position = 0; position < qualifiersPerGroup; position++
+    ) {
+      const first =
+        firstGroup.teams[
+          position
+        ];
+      const oppositePosition =
+        qualifiersPerGroup -
+        1 -
+        position;
+      const second =
+        secondGroup.teams[
+          oppositePosition
+        ];
       if (
-        !Number.isInteger(teamsQualify) ||
-        teamsQualify < 1
+        !first ||
+        !second ||
+        first.groupId ===
+        second.groupId
       ) {
         throw new Error(
-          "Invalid number of qualifying teams."
+          "Unable to create valid knockout pairings using the group pairing rules."
         );
       }
-      
-      const result =
-        await db.prepare(`
+      result.push(first);
+      result.push(second);
+    }
+  }
+  if (
+    result.length !==
+    knockoutSize
+  ) {
+    throw new Error(
+      `Invalid knockout pairing count. Expected ${knockoutSize}, got ${result.length}.`
+    );
+  }
+  return result;
+}
+
+
+
+async function getCupQualifiedTeams(
+  db,
+  tournamentId,
+  teamsQualify
+) {
+  if (
+    !Number.isInteger(teamsQualify) ||
+    teamsQualify < 1
+  ) {
+    throw new Error(
+      "Invalid number of qualifying teams."
+    );
+  }
+  
+  const result =
+    await db.prepare(`
       WITH group_members AS (
         SELECT
           group_id,
@@ -4698,675 +4600,675 @@ async function reviewMatchSubmissionRoute(
         tp.gf DESC,
         t.name ASC
     `)
-        .bind(
-          tournamentId,
-          tournamentId,
-          tournamentId,
-          tournamentId
-        )
-        .all();
-      
-      const rows =
-        result.results || [];
-      
-      const groups =
-        new Map();
-      
-      for (const row of rows) {
-        if (!groups.has(row.group_id)) {
-          groups.set(
-            row.group_id,
-            {
-              id: row.group_id,
-              name: row.group_name,
-              teams: []
-            }
-          );
+    .bind(
+      tournamentId,
+      tournamentId,
+      tournamentId,
+      tournamentId
+    )
+    .all();
+  
+  const rows =
+    result.results || [];
+  
+  const groups =
+    new Map();
+  
+  for (const row of rows) {
+    if (!groups.has(row.group_id)) {
+      groups.set(
+        row.group_id,
+        {
+          id: row.group_id,
+          name: row.group_name,
+          teams: []
         }
-        
-        groups
-          .get(row.group_id)
-          .teams.push({
-            id: row.team_id,
-            name: row.team_name,
-            played: Number(row.played) || 0,
-            wins: Number(row.wins) || 0,
-            draws: Number(row.draws) || 0,
-            losses: Number(row.losses) || 0,
-            gf: Number(row.gf) || 0,
-            ga: Number(row.ga) || 0,
-            gd: (Number(row.gf) || 0) -
-              (Number(row.ga) || 0),
-            points: Number(row.points) || 0
-          });
-      }
-      
-      const qualifiedTeams = [];
-      
-      for (const group of groups.values()) {
-        if (
-          group.teams.length <
-          teamsQualify
-        ) {
-          throw new Error(
-            `${group.name} does not have enough teams for ${teamsQualify} qualifiers.`
-          );
-        }
-        
-        group.teams.sort(
-          (a, b) => {
-            if (b.points !== a.points) {
-              return b.points - a.points;
-            }
-            
-            if (b.gd !== a.gd) {
-              return b.gd - a.gd;
-            }
-            
-            if (b.gf !== a.gf) {
-              return b.gf - a.gf;
-            }
-            
-            return a.name.localeCompare(
-              b.name
-            );
-          }
-        );
-        
-        group.teams.forEach(
-          (team, index) => {
-            team.pos = index + 1;
-          }
-        );
-        
-        const qualifiers =
-          group.teams.slice(
-            0,
-            teamsQualify
-          );
-        
-        for (const team of qualifiers) {
-          qualifiedTeams.push({
-            id: team.id,
-            name: team.name,
-            group: group.name,
-            groupId: group.id,
-            pos: team.pos
-          });
-        }
-      }
-      
-      return {
-        groups: [...groups.values()],
-        qualifiedTeams
-      };
+      );
     }
     
-    
-    async function checkGroupStageCompletion(
-      db,
-      tournamentId,
-      tournament
+    groups
+      .get(row.group_id)
+      .teams.push({
+        id: row.team_id,
+        name: row.team_name,
+        played: Number(row.played) || 0,
+        wins: Number(row.wins) || 0,
+        draws: Number(row.draws) || 0,
+        losses: Number(row.losses) || 0,
+        gf: Number(row.gf) || 0,
+        ga: Number(row.ga) || 0,
+        gd: (Number(row.gf) || 0) -
+          (Number(row.ga) || 0),
+        points: Number(row.points) || 0
+      });
+  }
+  
+  const qualifiedTeams = [];
+  
+  for (const group of groups.values()) {
+    if (
+      group.teams.length <
+      teamsQualify
     ) {
-      try {
-        if (!tournament) {
-          return {
-            complete: false
-          };
+      throw new Error(
+        `${group.name} does not have enough teams for ${teamsQualify} qualifiers.`
+      );
+    }
+    
+    group.teams.sort(
+      (a, b) => {
+        if (b.points !== a.points) {
+          return b.points - a.points;
         }
-        let settings = {};
-        try {
-          if (
-            typeof tournament.settings === "string"
-          ) {
-            settings =
-              JSON.parse(tournament.settings) || {};
-          } else if (
-            tournament.settings &&
-            typeof tournament.settings === "object"
-          ) {
-            settings = {
-              ...tournament.settings
-            };
-          }
-        } catch {
-          settings = {};
+        
+        if (b.gd !== a.gd) {
+          return b.gd - a.gd;
         }
-        if (settings.enableGroups !== true) {
-          return {
-            complete: false
-          };
+        
+        if (b.gf !== a.gf) {
+          return b.gf - a.gf;
         }
-        if (settings.groupStageComplete === true) {
-          return {
-            complete: true,
-            alreadyComplete: true
-          };
-        }
-        const remainingResult =
-          await db.prepare(`
+        
+        return a.name.localeCompare(
+          b.name
+        );
+      }
+    );
+    
+    group.teams.forEach(
+      (team, index) => {
+        team.pos = index + 1;
+      }
+    );
+    
+    const qualifiers =
+      group.teams.slice(
+        0,
+        teamsQualify
+      );
+    
+    for (const team of qualifiers) {
+      qualifiedTeams.push({
+        id: team.id,
+        name: team.name,
+        group: group.name,
+        groupId: group.id,
+        pos: team.pos
+      });
+    }
+  }
+  
+  return {
+    groups: [...groups.values()],
+    qualifiedTeams
+  };
+}
+
+
+async function checkGroupStageCompletion(
+  db,
+  tournamentId,
+  tournament
+) {
+  try {
+    if (!tournament) {
+      return {
+        complete: false
+      };
+    }
+    let settings = {};
+    try {
+      if (
+        typeof tournament.settings === "string"
+      ) {
+        settings =
+          JSON.parse(tournament.settings) || {};
+      } else if (
+        tournament.settings &&
+        typeof tournament.settings === "object"
+      ) {
+        settings = {
+          ...tournament.settings
+        };
+      }
+    } catch {
+      settings = {};
+    }
+    if (settings.enableGroups !== true) {
+      return {
+        complete: false
+      };
+    }
+    if (settings.groupStageComplete === true) {
+      return {
+        complete: true,
+        alreadyComplete: true
+      };
+    }
+    const remainingResult =
+      await db.prepare(`
         SELECT COUNT(*) AS remaining
         FROM matches
         WHERE tournament_id = ?
         AND match_type = 'group'
         AND played = 0
       `).bind(
-            tournamentId
-          ).first();
-        const remaining =
-          Number(remainingResult?.remaining) || 0;
-        if (remaining > 0) {
-          return {
-            complete: false,
-            remaining
-          };
-        }
-        if (
-          settings.tournamentMode ===
-          "champions_league"
-        ) {
-          const directQualifiers =
-            Number(settings.directQualifiers);
-          const playoffStartPosition =
-            Number(settings.playoffStartPosition);
-          const playoffEndPosition =
-            Number(settings.playoffEndPosition);
-          const knockoutSize =
-            Number(settings.knockoutSize);
-          const playoffTeamCount =
-            playoffEndPosition -
-            playoffStartPosition +
-            1;
-          if (
-            !Number.isInteger(directQualifiers) ||
-            directQualifiers < 0
-          ) {
-            throw new Error(
-              "Invalid number of direct qualifiers."
-            );
-          }
-          if (
-            !Number.isInteger(playoffStartPosition) ||
-            !Number.isInteger(playoffEndPosition) ||
-            playoffStartPosition !== directQualifiers + 1 ||
-            playoffEndPosition < playoffStartPosition
-          ) {
-            throw new Error(
-              "Invalid Champions League playoff positions."
-            );
-          }
-          if (
-            playoffTeamCount < 2 ||
-            playoffTeamCount % 2 !== 0
-          ) {
-            throw new Error(
-              "The number of playoff teams must be even and at least two."
-            );
-          }
-          if (
-            !Number.isInteger(knockoutSize) ||
-            ![2, 4, 8, 16, 32].includes(knockoutSize)
-          ) {
-            throw new Error(
-              "Invalid knockout bracket size."
-            );
-          }
-          const expectedKnockoutSize =
-            directQualifiers +
-            playoffTeamCount / 2;
-          if (
-            expectedKnockoutSize !== knockoutSize
-          ) {
-            throw new Error(
-              "The direct qualifiers and playoff winners do not match the configured knockout bracket size."
-            );
-          }
-          const table =
-            await rebuildTable(
-              db,
-              tournamentId
-            );
-          if (
-            table.length < playoffEndPosition
-          ) {
-            throw new Error(
-              `Expected at least ${playoffEndPosition} ranked teams, but found ${table.length}.`
-            );
-          }
-          const rankedTeams =
-            table.filter(
-              team =>
-              team.pos >= playoffStartPosition &&
-              team.pos <= playoffEndPosition
-            );
-          if (
-            rankedTeams.length !== playoffTeamCount
-          ) {
-            throw new Error(
-              "The League Stage standings do not contain all required playoff positions."
-            );
-          }
-          const existingPlayoffs =
-            await db.prepare(`
+        tournamentId
+      ).first();
+    const remaining =
+      Number(remainingResult?.remaining) || 0;
+    if (remaining > 0) {
+      return {
+        complete: false,
+        remaining
+      };
+    }
+    if (
+      settings.tournamentMode ===
+      "champions_league"
+    ) {
+      const directQualifiers =
+        Number(settings.directQualifiers);
+      const playoffStartPosition =
+        Number(settings.playoffStartPosition);
+      const playoffEndPosition =
+        Number(settings.playoffEndPosition);
+      const knockoutSize =
+        Number(settings.knockoutSize);
+      const playoffTeamCount =
+        playoffEndPosition -
+        playoffStartPosition +
+        1;
+      if (
+        !Number.isInteger(directQualifiers) ||
+        directQualifiers < 0
+      ) {
+        throw new Error(
+          "Invalid number of direct qualifiers."
+        );
+      }
+      if (
+        !Number.isInteger(playoffStartPosition) ||
+        !Number.isInteger(playoffEndPosition) ||
+        playoffStartPosition !== directQualifiers + 1 ||
+        playoffEndPosition < playoffStartPosition
+      ) {
+        throw new Error(
+          "Invalid Champions League playoff positions."
+        );
+      }
+      if (
+        playoffTeamCount < 2 ||
+        playoffTeamCount % 2 !== 0
+      ) {
+        throw new Error(
+          "The number of playoff teams must be even and at least two."
+        );
+      }
+      if (
+        !Number.isInteger(knockoutSize) ||
+        ![2, 4, 8, 16, 32].includes(knockoutSize)
+      ) {
+        throw new Error(
+          "Invalid knockout bracket size."
+        );
+      }
+      const expectedKnockoutSize =
+        directQualifiers +
+        playoffTeamCount / 2;
+      if (
+        expectedKnockoutSize !== knockoutSize
+      ) {
+        throw new Error(
+          "The direct qualifiers and playoff winners do not match the configured knockout bracket size."
+        );
+      }
+      const table =
+        await rebuildTable(
+          db,
+          tournamentId
+        );
+      if (
+        table.length < playoffEndPosition
+      ) {
+        throw new Error(
+          `Expected at least ${playoffEndPosition} ranked teams, but found ${table.length}.`
+        );
+      }
+      const rankedTeams =
+        table.filter(
+          team =>
+          team.pos >= playoffStartPosition &&
+          team.pos <= playoffEndPosition
+        );
+      if (
+        rankedTeams.length !== playoffTeamCount
+      ) {
+        throw new Error(
+          "The League Stage standings do not contain all required playoff positions."
+        );
+      }
+      const existingPlayoffs =
+        await db.prepare(`
           SELECT COUNT(*) AS total
           FROM matches
           WHERE tournament_id = ?
           AND match_type = 'knockout'
           AND round = 'Playoff'
         `).bind(
-              tournamentId
-            ).first();
-          if (
-            Number(existingPlayoffs?.total) > 0
-          ) {
-            throw new Error(
-              "Champions League playoff matches already exist."
-            );
-          }
-          const playoffRoundMode =
-            settings.playoffRoundMode === "double" ?
-            "double" :
-            "single";
-          const now = Date.now();
-          const playoffMatches = [];
-          for (
-            let i = 0; i < playoffTeamCount / 2; i++
-          ) {
-            const higherRankedTeam =
-              table.find(
-                team =>
-                team.pos === playoffStartPosition + i
-              );
-            const lowerRankedTeam =
-              table.find(
-                team =>
-                team.pos === playoffEndPosition - i
-              );
-            if (
-              !higherRankedTeam ||
-              !lowerRankedTeam
-            ) {
-              throw new Error(
-                `Unable to pair playoff tie ${i + 1}.`
-              );
-            }
-            const firstLeg = {
-              id: crypto.randomUUID(),
-              tournament_id: tournamentId,
-              home_team_id: higherRankedTeam.id,
-              away_team_id: lowerRankedTeam.id,
-              home_score: null,
-              away_score: null,
-              played: 0,
-              played_at: null,
-              match_type: "knockout",
-              group_id: null,
-              round: "Playoff",
-              round_index: 0,
-              slot: i,
-              leg: 1,
-              winner_team_id: null,
-              scheduled_at: null,
-              created_at: now,
-              updated_at: null,
-              submission_status: null
-            };
-            playoffMatches.push(firstLeg);
-            if (
-              playoffRoundMode === "double"
-            ) {
-              playoffMatches.push({
-                ...firstLeg,
-                id: crypto.randomUUID(),
-                home_team_id: lowerRankedTeam.id,
-                away_team_id: higherRankedTeam.id,
-                leg: 2
-              });
-            }
-          }
-          await createMatchesBatch(
-            db,
-            playoffMatches
-          );
-          await db.prepare(`
-        UPDATE tournaments
-        SET
-          settings = ?,
-          updated_at = ?
-        WHERE id = ?
-      `).bind(
-            JSON.stringify({
-              ...settings,
-              groupStageComplete: true,
-              playoffsGenerated: true,
-              playoffsComplete: false,
-              knockoutGenerated: false
-            }),
-            now,
-            tournamentId
-          ).run();
-          return {
-            complete: true,
-            playoffsGenerated: true,
-            knockoutGenerated: false,
-            playoffMatches
-          };
-        }
-        const teamsQualify =
-          Number(settings.teamsQualify);
-        const knockoutSize =
-          Number(settings.knockoutSize);
-        if (
-          !Number.isInteger(teamsQualify) ||
-          teamsQualify < 1
-        ) {
-          throw new Error(
-            "Invalid number of qualifying teams."
-          );
-        }
-        if (
-          !Number.isInteger(knockoutSize) ||
-          ![2, 4, 8, 16, 32].includes(knockoutSize)
-        ) {
-          throw new Error(
-            "Invalid knockout bracket size."
-          );
-        }
-        const qualification =
-          await getCupQualifiedTeams(
-            db,
-            tournamentId,
-            teamsQualify
-          );
-        const qualifiedTeams =
-          qualification.qualifiedTeams;
-        if (
-          qualifiedTeams.length !== knockoutSize
-        ) {
-          throw new Error(
-            `The group stage produced ${qualifiedTeams.length} qualified teams, but the knockout requires ${knockoutSize}.`
-          );
-        }
-        if (
-          settings.knockoutPairingMode === "manual"
-        ) {
-          await db.prepare(`
-        UPDATE tournaments
-        SET
-          settings = ?,
-          updated_at = ?
-        WHERE id = ?
-      `).bind(
-            JSON.stringify({
-              ...settings,
-              groupStageComplete: true
-            }),
-            Date.now(),
-            tournamentId
-          ).run();
-          return {
-            complete: true,
-            knockoutGenerated: false,
-            manualPairingRequired: true
-          };
-        }
-        const pairedTeams =
-          pairByGroupRules(
-            qualifiedTeams,
-            knockoutSize
-          );
-        const knockoutPairs = [];
-        for (
-          let i = 0; i < pairedTeams.length; i += 2
-        ) {
-          knockoutPairs.push([
-            pairedTeams[i].id,
-            pairedTeams[i + 1].id
-          ]);
-        }
-        const knockoutRoundMode =
-          settings.knockoutRoundMode === "double" ?
-          "double" :
-          "single";
-        const thirdPlaceMatch =
-          settings.thirdPlaceMatch === true;
-        const knockoutMatches =
-          generateDirectKnockoutMatches(
-            pairedTeams.map(
-              team => ({
-                id: team.id,
-                name: team.name
-              })
-            ),
-            knockoutSize,
-            "manual",
-            knockoutRoundMode,
-            thirdPlaceMatch,
-            knockoutPairs
-          );
-        const now = Date.now();
-        for (const match of knockoutMatches) {
-          match.tournament_id = tournamentId;
-          match.created_at = now;
-        }
-        await createMatchesBatch(
-          db,
-          knockoutMatches
+          tournamentId
+        ).first();
+      if (
+        Number(existingPlayoffs?.total) > 0
+      ) {
+        throw new Error(
+          "Champions League playoff matches already exist."
         );
-        await db.prepare(`
+      }
+      const playoffRoundMode =
+        settings.playoffRoundMode === "double" ?
+        "double" :
+        "single";
+      const now = Date.now();
+      const playoffMatches = [];
+      for (
+        let i = 0; i < playoffTeamCount / 2; i++
+      ) {
+        const higherRankedTeam =
+          table.find(
+            team =>
+            team.pos === playoffStartPosition + i
+          );
+        const lowerRankedTeam =
+          table.find(
+            team =>
+            team.pos === playoffEndPosition - i
+          );
+        if (
+          !higherRankedTeam ||
+          !lowerRankedTeam
+        ) {
+          throw new Error(
+            `Unable to pair playoff tie ${i + 1}.`
+          );
+        }
+        const firstLeg = {
+          id: crypto.randomUUID(),
+          tournament_id: tournamentId,
+          home_team_id: higherRankedTeam.id,
+          away_team_id: lowerRankedTeam.id,
+          home_score: null,
+          away_score: null,
+          played: 0,
+          played_at: null,
+          match_type: "knockout",
+          group_id: null,
+          round: "Playoff",
+          round_index: 0,
+          slot: i,
+          leg: 1,
+          winner_team_id: null,
+          scheduled_at: null,
+          created_at: now,
+          updated_at: null,
+          submission_status: null
+        };
+        playoffMatches.push(firstLeg);
+        if (
+          playoffRoundMode === "double"
+        ) {
+          playoffMatches.push({
+            ...firstLeg,
+            id: crypto.randomUUID(),
+            home_team_id: lowerRankedTeam.id,
+            away_team_id: higherRankedTeam.id,
+            leg: 2
+          });
+        }
+      }
+      await createMatchesBatch(
+        db,
+        playoffMatches
+      );
+      await db.prepare(`
+        UPDATE tournaments
+        SET
+          settings = ?,
+          updated_at = ?
+        WHERE id = ?
+      `).bind(
+        JSON.stringify({
+          ...settings,
+          groupStageComplete: true,
+          playoffsGenerated: true,
+          playoffsComplete: false,
+          knockoutGenerated: false
+        }),
+        now,
+        tournamentId
+      ).run();
+      return {
+        complete: true,
+        playoffsGenerated: true,
+        knockoutGenerated: false,
+        playoffMatches
+      };
+    }
+    const teamsQualify =
+      Number(settings.teamsQualify);
+    const knockoutSize =
+      Number(settings.knockoutSize);
+    if (
+      !Number.isInteger(teamsQualify) ||
+      teamsQualify < 1
+    ) {
+      throw new Error(
+        "Invalid number of qualifying teams."
+      );
+    }
+    if (
+      !Number.isInteger(knockoutSize) ||
+      ![2, 4, 8, 16, 32].includes(knockoutSize)
+    ) {
+      throw new Error(
+        "Invalid knockout bracket size."
+      );
+    }
+    const qualification =
+      await getCupQualifiedTeams(
+        db,
+        tournamentId,
+        teamsQualify
+      );
+    const qualifiedTeams =
+      qualification.qualifiedTeams;
+    if (
+      qualifiedTeams.length !== knockoutSize
+    ) {
+      throw new Error(
+        `The group stage produced ${qualifiedTeams.length} qualified teams, but the knockout requires ${knockoutSize}.`
+      );
+    }
+    if (
+      settings.knockoutPairingMode === "manual"
+    ) {
+      await db.prepare(`
+        UPDATE tournaments
+        SET
+          settings = ?,
+          updated_at = ?
+        WHERE id = ?
+      `).bind(
+        JSON.stringify({
+          ...settings,
+          groupStageComplete: true
+        }),
+        Date.now(),
+        tournamentId
+      ).run();
+      return {
+        complete: true,
+        knockoutGenerated: false,
+        manualPairingRequired: true
+      };
+    }
+    const pairedTeams =
+      pairByGroupRules(
+        qualifiedTeams,
+        knockoutSize
+      );
+    const knockoutPairs = [];
+    for (
+      let i = 0; i < pairedTeams.length; i += 2
+    ) {
+      knockoutPairs.push([
+        pairedTeams[i].id,
+        pairedTeams[i + 1].id
+      ]);
+    }
+    const knockoutRoundMode =
+      settings.knockoutRoundMode === "double" ?
+      "double" :
+      "single";
+    const thirdPlaceMatch =
+      settings.thirdPlaceMatch === true;
+    const knockoutMatches =
+      generateDirectKnockoutMatches(
+        pairedTeams.map(
+          team => ({
+            id: team.id,
+            name: team.name
+          })
+        ),
+        knockoutSize,
+        "manual",
+        knockoutRoundMode,
+        thirdPlaceMatch,
+        knockoutPairs
+      );
+    const now = Date.now();
+    for (const match of knockoutMatches) {
+      match.tournament_id = tournamentId;
+      match.created_at = now;
+    }
+    await createMatchesBatch(
+      db,
+      knockoutMatches
+    );
+    await db.prepare(`
       UPDATE tournaments
       SET
         settings = ?,
         updated_at = ?
       WHERE id = ?
     `).bind(
-          JSON.stringify({
-            ...settings,
-            groupStageComplete: true,
-            knockoutGenerated: true
-          }),
-          now,
-          tournamentId
-        ).run();
-        return {
-          complete: true,
-          knockoutGenerated: true,
-          knockoutMatches
-        };
-      } catch (error) {
-        console.error(
-          "checkGroupStageCompletion error:",
-          error
-        );
-        throw error;
-      }
+      JSON.stringify({
+        ...settings,
+        groupStageComplete: true,
+        knockoutGenerated: true
+      }),
+      now,
+      tournamentId
+    ).run();
+    return {
+      complete: true,
+      knockoutGenerated: true,
+      knockoutMatches
+    };
+  } catch (error) {
+    console.error(
+      "checkGroupStageCompletion error:",
+      error
+    );
+    throw error;
+  }
+}
+
+async function processKnockoutResult(
+  db,
+  tournamentId,
+  matchId
+) {
+  const match =
+    await getMatch(
+      db,
+      matchId
+    );
+  
+  if (!match) {
+    throw new Error(
+      "Match not found."
+    );
+  }
+  
+  if (
+    String(match.tournament_id) !==
+    String(tournamentId)
+  ) {
+    throw new Error(
+      "Match does not belong to this tournament."
+    );
+  }
+  
+  if (
+    match.match_type !== "knockout" &&
+    match.match_type !== "third_place"
+  ) {
+    return {
+      processed: false,
+      reason: "Not a knockout match."
+    };
+  }
+  
+  if (
+    Number(match.played) !== 1
+  ) {
+    return {
+      processed: false,
+      reason: "Match has not been played."
+    };
+  }
+  
+  if (
+    match.match_type ===
+    "third_place"
+  ) {
+    const homeScore =
+      Number(match.home_score);
+    
+    const awayScore =
+      Number(match.away_score);
+    
+    if (
+      !Number.isInteger(homeScore) ||
+      !Number.isInteger(awayScore)
+    ) {
+      return {
+        processed: false,
+        reason: "Invalid third-place score."
+      };
     }
     
-    async function processKnockoutResult(
-      db,
-      tournamentId,
-      matchId
+    if (
+      homeScore === awayScore
     ) {
-      const match =
-        await getMatch(
-          db,
-          matchId
-        );
-      
-      if (!match) {
-        throw new Error(
-          "Match not found."
-        );
-      }
-      
-      if (
-        String(match.tournament_id) !==
-        String(tournamentId)
-      ) {
-        throw new Error(
-          "Match does not belong to this tournament."
-        );
-      }
-      
-      if (
-        match.match_type !== "knockout" &&
-        match.match_type !== "third_place"
-      ) {
-        return {
-          processed: false,
-          reason: "Not a knockout match."
-        };
-      }
-      
-      if (
-        Number(match.played) !== 1
-      ) {
-        return {
-          processed: false,
-          reason: "Match has not been played."
-        };
-      }
-      
-      if (
-        match.match_type ===
-        "third_place"
-      ) {
-        const homeScore =
-          Number(match.home_score);
-        
-        const awayScore =
-          Number(match.away_score);
-        
-        if (
-          !Number.isInteger(homeScore) ||
-          !Number.isInteger(awayScore)
-        ) {
-          return {
-            processed: false,
-            reason: "Invalid third-place score."
-          };
-        }
-        
-        if (
-          homeScore === awayScore
-        ) {
-          return {
-            processed: false,
-            reason: "Third-place match is tied."
-          };
-        }
-        
-        const winnerTeamId =
-          homeScore > awayScore ?
-          match.home_team_id :
-          match.away_team_id;
-        
-        await db.prepare(`
+      return {
+        processed: false,
+        reason: "Third-place match is tied."
+      };
+    }
+    
+    const winnerTeamId =
+      homeScore > awayScore ?
+      match.home_team_id :
+      match.away_team_id;
+    
+    await db.prepare(`
       UPDATE matches
       SET
         winner_team_id = ?,
         updated_at = ?
       WHERE id = ?
     `).bind(
-          winnerTeamId,
-          Date.now(),
-          matchId
-        ).run();
-        
-        return {
-          processed: true,
-          winnerTeamId,
-          thirdPlace: true
-        };
-      }
-      
-      const tournament =
-        await db.prepare(`
+      winnerTeamId,
+      Date.now(),
+      matchId
+    ).run();
+    
+    return {
+      processed: true,
+      winnerTeamId,
+      thirdPlace: true
+    };
+  }
+  
+  const tournament =
+    await db.prepare(`
       SELECT settings
       FROM tournaments
       WHERE id = ?
     `).bind(
-          tournamentId
-        ).first();
-      
-      let settings = {};
-      
-      try {
-        if (
-          typeof tournament?.settings ===
-          "string"
-        ) {
-          settings =
-            JSON.parse(
-              tournament.settings
-            ) || {};
-        } else if (
-          tournament?.settings &&
-          typeof tournament.settings ===
-          "object"
-        ) {
-          settings =
-            tournament.settings;
-        }
-      } catch {
-        settings = {};
-      }
-      
-      if (
-        settings.tournamentMode ===
-        "champions_league" &&
-        match.round === "Playoff"
-      ) {
-        return await processChampionsLeaguePlayoffResult(
-          db,
-          tournamentId,
-          match,
-          settings
-        );
-      }
-      
-      const isDoubleLeg =
-        settings.knockoutRoundMode ===
-        "double";
-      
-      const knockoutSize =
-        Number(
-          settings.knockoutSize
-        );
-      
-      if (
-        !Number.isInteger(knockoutSize) ||
-        ![2, 4, 8, 16, 32].includes(
-          knockoutSize
-        )
-      ) {
-        throw new Error(
-          "Invalid knockout bracket size."
-        );
-      }
-      
-      const roundIndex =
-        Number(match.round_index);
-      
-      const slot =
-        Number(match.slot);
-      
-      const finalRoundIndex =
-        Math.log2(knockoutSize);
-      
-      const isFinal =
-        roundIndex === finalRoundIndex;
-      
-      const isDoubleLegRound =
-        isDoubleLeg &&
-        !isFinal;
-      
-      let winnerTeamId =
-        null;
-      
-      if (isDoubleLegRound) {
-        const legsResult =
-          await db.prepare(`
+      tournamentId
+    ).first();
+  
+  let settings = {};
+  
+  try {
+    if (
+      typeof tournament?.settings ===
+      "string"
+    ) {
+      settings =
+        JSON.parse(
+          tournament.settings
+        ) || {};
+    } else if (
+      tournament?.settings &&
+      typeof tournament.settings ===
+      "object"
+    ) {
+      settings =
+        tournament.settings;
+    }
+  } catch {
+    settings = {};
+  }
+  
+  if (
+    settings.tournamentMode ===
+    "champions_league" &&
+    match.round === "Playoff"
+  ) {
+    return await processChampionsLeaguePlayoffResult(
+      db,
+      tournamentId,
+      match,
+      settings
+    );
+  }
+  
+  const isDoubleLeg =
+    settings.knockoutRoundMode ===
+    "double";
+  
+  const knockoutSize =
+    Number(
+      settings.knockoutSize
+    );
+  
+  if (
+    !Number.isInteger(knockoutSize) ||
+    ![2, 4, 8, 16, 32].includes(
+      knockoutSize
+    )
+  ) {
+    throw new Error(
+      "Invalid knockout bracket size."
+    );
+  }
+  
+  const roundIndex =
+    Number(match.round_index);
+  
+  const slot =
+    Number(match.slot);
+  
+  const finalRoundIndex =
+    Math.log2(knockoutSize);
+  
+  const isFinal =
+    roundIndex === finalRoundIndex;
+  
+  const isDoubleLegRound =
+    isDoubleLeg &&
+    !isFinal;
+  
+  let winnerTeamId =
+    null;
+  
+  if (isDoubleLegRound) {
+    const legsResult =
+      await db.prepare(`
         SELECT
           id,
           home_team_id,
@@ -5383,194 +5285,194 @@ async function reviewMatchSubmissionRoute(
         AND slot = ?
         ORDER BY leg ASC
       `).bind(
-            tournamentId,
-            roundIndex,
-            slot
-          ).all();
-        
-        const legs =
-          legsResult.results || [];
-        
-        const firstLeg =
-          legs.find(
-            item =>
-            Number(item.leg) === 1
-          );
-        
-        const secondLeg =
-          legs.find(
-            item =>
-            Number(item.leg) === 2
-          );
-        
-        if (
-          !firstLeg ||
-          !secondLeg
-        ) {
-          return {
-            processed: false,
-            reason: "Both knockout legs have not been generated."
-          };
-        }
-        
-        if (
-          Number(firstLeg.played) !== 1 ||
-          Number(secondLeg.played) !== 1
-        ) {
-          return {
-            processed: false,
-            reason: "Waiting for both knockout legs."
-          };
-        }
-        
-        if (
-          !firstLeg.home_team_id ||
-          !firstLeg.away_team_id ||
-          !secondLeg.home_team_id ||
-          !secondLeg.away_team_id
-        ) {
-          return {
-            processed: false,
-            reason: "Knockout teams are not fully assigned."
-          };
-        }
-        
-        const teamA =
-          firstLeg.home_team_id;
-        
-        const teamB =
-          firstLeg.away_team_id;
-        
-        if (
-          ![
-            firstLeg.home_team_id,
-            firstLeg.away_team_id
-          ].includes(teamA) ||
-          ![
-            secondLeg.home_team_id,
-            secondLeg.away_team_id
-          ].includes(teamA) ||
-          ![
-            secondLeg.home_team_id,
-            secondLeg.away_team_id
-          ].includes(teamB)
-        ) {
-          return {
-            processed: false,
-            reason: "The two knockout legs do not contain the same teams."
-          };
-        }
-        
-        let teamAScore = 0;
-        let teamBScore = 0;
-        
-        if (
-          firstLeg.home_team_id ===
-          teamA
-        ) {
-          teamAScore +=
-            Number(firstLeg.home_score) || 0;
-          
-          teamBScore +=
-            Number(firstLeg.away_score) || 0;
-        } else {
-          teamAScore +=
-            Number(firstLeg.away_score) || 0;
-          
-          teamBScore +=
-            Number(firstLeg.home_score) || 0;
-        }
-        
-        if (
-          secondLeg.home_team_id ===
-          teamA
-        ) {
-          teamAScore +=
-            Number(secondLeg.home_score) || 0;
-          
-          teamBScore +=
-            Number(secondLeg.away_score) || 0;
-        } else {
-          teamAScore +=
-            Number(secondLeg.away_score) || 0;
-          
-          teamBScore +=
-            Number(secondLeg.home_score) || 0;
-        }
-        
-        if (
-          teamAScore ===
-          teamBScore
-        ) {
-          return {
-            processed: false,
-            reason: "Aggregate score is tied."
-          };
-        }
-        
-        winnerTeamId =
-          teamAScore >
-          teamBScore ?
-          teamA :
-          teamB;
-      } else {
-        const homeScore =
-          Number(match.home_score);
-        
-        const awayScore =
-          Number(match.away_score);
-        
-        if (
-          !Number.isInteger(homeScore) ||
-          !Number.isInteger(awayScore)
-        ) {
-          return {
-            processed: false,
-            reason: "Invalid knockout score."
-          };
-        }
-        
-        if (
-          homeScore === awayScore
-        ) {
-          return {
-            processed: false,
-            reason: "Knockout match is tied."
-          };
-        }
-        
-        winnerTeamId =
-          homeScore > awayScore ?
-          match.home_team_id :
-          match.away_team_id;
-      }
+        tournamentId,
+        roundIndex,
+        slot
+      ).all();
+    
+    const legs =
+      legsResult.results || [];
+    
+    const firstLeg =
+      legs.find(
+        item =>
+        Number(item.leg) === 1
+      );
+    
+    const secondLeg =
+      legs.find(
+        item =>
+        Number(item.leg) === 2
+      );
+    
+    if (
+      !firstLeg ||
+      !secondLeg
+    ) {
+      return {
+        processed: false,
+        reason: "Both knockout legs have not been generated."
+      };
+    }
+    
+    if (
+      Number(firstLeg.played) !== 1 ||
+      Number(secondLeg.played) !== 1
+    ) {
+      return {
+        processed: false,
+        reason: "Waiting for both knockout legs."
+      };
+    }
+    
+    if (
+      !firstLeg.home_team_id ||
+      !firstLeg.away_team_id ||
+      !secondLeg.home_team_id ||
+      !secondLeg.away_team_id
+    ) {
+      return {
+        processed: false,
+        reason: "Knockout teams are not fully assigned."
+      };
+    }
+    
+    const teamA =
+      firstLeg.home_team_id;
+    
+    const teamB =
+      firstLeg.away_team_id;
+    
+    if (
+      ![
+        firstLeg.home_team_id,
+        firstLeg.away_team_id
+      ].includes(teamA) ||
+      ![
+        secondLeg.home_team_id,
+        secondLeg.away_team_id
+      ].includes(teamA) ||
+      ![
+        secondLeg.home_team_id,
+        secondLeg.away_team_id
+      ].includes(teamB)
+    ) {
+      return {
+        processed: false,
+        reason: "The two knockout legs do not contain the same teams."
+      };
+    }
+    
+    let teamAScore = 0;
+    let teamBScore = 0;
+    
+    if (
+      firstLeg.home_team_id ===
+      teamA
+    ) {
+      teamAScore +=
+        Number(firstLeg.home_score) || 0;
       
-      await db.prepare(`
+      teamBScore +=
+        Number(firstLeg.away_score) || 0;
+    } else {
+      teamAScore +=
+        Number(firstLeg.away_score) || 0;
+      
+      teamBScore +=
+        Number(firstLeg.home_score) || 0;
+    }
+    
+    if (
+      secondLeg.home_team_id ===
+      teamA
+    ) {
+      teamAScore +=
+        Number(secondLeg.home_score) || 0;
+      
+      teamBScore +=
+        Number(secondLeg.away_score) || 0;
+    } else {
+      teamAScore +=
+        Number(secondLeg.away_score) || 0;
+      
+      teamBScore +=
+        Number(secondLeg.home_score) || 0;
+    }
+    
+    if (
+      teamAScore ===
+      teamBScore
+    ) {
+      return {
+        processed: false,
+        reason: "Aggregate score is tied."
+      };
+    }
+    
+    winnerTeamId =
+      teamAScore >
+      teamBScore ?
+      teamA :
+      teamB;
+  } else {
+    const homeScore =
+      Number(match.home_score);
+    
+    const awayScore =
+      Number(match.away_score);
+    
+    if (
+      !Number.isInteger(homeScore) ||
+      !Number.isInteger(awayScore)
+    ) {
+      return {
+        processed: false,
+        reason: "Invalid knockout score."
+      };
+    }
+    
+    if (
+      homeScore === awayScore
+    ) {
+      return {
+        processed: false,
+        reason: "Knockout match is tied."
+      };
+    }
+    
+    winnerTeamId =
+      homeScore > awayScore ?
+      match.home_team_id :
+      match.away_team_id;
+  }
+  
+  await db.prepare(`
     UPDATE matches
     SET
       winner_team_id = ?,
       updated_at = ?
     WHERE id = ?
   `).bind(
-        winnerTeamId,
-        Date.now(),
-        matchId
-      ).run();
-      
-      if (
-        roundIndex ===
-        finalRoundIndex
-      ) {
-        const team =
-          await db.prepare(`
+    winnerTeamId,
+    Date.now(),
+    matchId
+  ).run();
+  
+  if (
+    roundIndex ===
+    finalRoundIndex
+  ) {
+    const team =
+      await db.prepare(`
         SELECT name
         FROM teams
         WHERE id = ?
       `).bind(
-            winnerTeamId
-          ).first();
-        
-        await db.prepare(`
+        winnerTeamId
+      ).first();
+    
+    await db.prepare(`
       UPDATE tournaments
       SET
         champion = ?,
@@ -5578,52 +5480,52 @@ async function reviewMatchSubmissionRoute(
         updated_at = ?
       WHERE id = ?
     `).bind(
-          winnerTeamId,
-          team?.name || null,
-          Date.now(),
-          tournamentId
-        ).run();
-        
-        return {
-          processed: true,
-          winnerTeamId,
-          champion: true
-        };
-      }
-      
-      const semifinalRoundIndex =
-        finalRoundIndex - 1;
-      
-      if (
-        roundIndex ===
-        semifinalRoundIndex
-      ) {
-        await prepareThirdPlaceMatch(
-          db,
-          tournamentId,
-          roundIndex
-        );
-      }
-      
-      const nextRoundIndex =
-        roundIndex + 1;
-      
-      const nextSlot =
-        Math.floor(
-          slot / 2
-        );
-      
-      const nextRound =
-        getKnockoutRoundName(
-          knockoutSize /
-          Math.pow(
-            2,
-            nextRoundIndex
-          )
-        );
-      
-      const nextMatchesResult =
-        await db.prepare(`
+      winnerTeamId,
+      team?.name || null,
+      Date.now(),
+      tournamentId
+    ).run();
+    
+    return {
+      processed: true,
+      winnerTeamId,
+      champion: true
+    };
+  }
+  
+  const semifinalRoundIndex =
+    finalRoundIndex - 1;
+  
+  if (
+    roundIndex ===
+    semifinalRoundIndex
+  ) {
+    await prepareThirdPlaceMatch(
+      db,
+      tournamentId,
+      roundIndex
+    );
+  }
+  
+  const nextRoundIndex =
+    roundIndex + 1;
+  
+  const nextSlot =
+    Math.floor(
+      slot / 2
+    );
+  
+  const nextRound =
+    getKnockoutRoundName(
+      knockoutSize /
+      Math.pow(
+        2,
+        nextRoundIndex
+      )
+    );
+  
+  const nextMatchesResult =
+    await db.prepare(`
       SELECT *
       FROM matches
       WHERE tournament_id = ?
@@ -5632,33 +5534,33 @@ async function reviewMatchSubmissionRoute(
       AND slot = ?
       ORDER BY leg ASC
     `).bind(
-          tournamentId,
-          nextRoundIndex,
-          nextSlot
-        ).all();
-      
-      const nextMatches =
-        nextMatchesResult.results || [];
-      
-      if (
-        !nextMatches.length
-      ) {
-        return {
-          processed: true,
-          winnerTeamId,
-          advanced: false,
-          reason: "Winner determined, but next-round match does not exist yet."
-        };
-      }
-      
-      const now =
-        Date.now();
-      
-      const isFirstSlot =
-        slot % 2 === 0;
-      
-      if (isFirstSlot) {
-        await db.prepare(`
+      tournamentId,
+      nextRoundIndex,
+      nextSlot
+    ).all();
+  
+  const nextMatches =
+    nextMatchesResult.results || [];
+  
+  if (
+    !nextMatches.length
+  ) {
+    return {
+      processed: true,
+      winnerTeamId,
+      advanced: false,
+      reason: "Winner determined, but next-round match does not exist yet."
+    };
+  }
+  
+  const now =
+    Date.now();
+  
+  const isFirstSlot =
+    slot % 2 === 0;
+  
+  if (isFirstSlot) {
+    await db.prepare(`
       UPDATE matches
       SET
         home_team_id = ?,
@@ -5669,17 +5571,17 @@ async function reviewMatchSubmissionRoute(
       AND slot = ?
       AND leg = 1
     `).bind(
-          winnerTeamId,
-          now,
-          tournamentId,
-          nextRoundIndex,
-          nextSlot
-        ).run();
-        
-        if (
-          isDoubleLeg
-        ) {
-          await db.prepare(`
+      winnerTeamId,
+      now,
+      tournamentId,
+      nextRoundIndex,
+      nextSlot
+    ).run();
+    
+    if (
+      isDoubleLeg
+    ) {
+      await db.prepare(`
         UPDATE matches
         SET
           away_team_id = ?,
@@ -5690,15 +5592,15 @@ async function reviewMatchSubmissionRoute(
         AND slot = ?
         AND leg = 2
       `).bind(
-            winnerTeamId,
-            now,
-            tournamentId,
-            nextRoundIndex,
-            nextSlot
-          ).run();
-        }
-      } else {
-        await db.prepare(`
+        winnerTeamId,
+        now,
+        tournamentId,
+        nextRoundIndex,
+        nextSlot
+      ).run();
+    }
+  } else {
+    await db.prepare(`
       UPDATE matches
       SET
         away_team_id = ?,
@@ -5709,17 +5611,17 @@ async function reviewMatchSubmissionRoute(
       AND slot = ?
       AND leg = 1
     `).bind(
-          winnerTeamId,
-          now,
-          tournamentId,
-          nextRoundIndex,
-          nextSlot
-        ).run();
-        
-        if (
-          isDoubleLeg
-        ) {
-          await db.prepare(`
+      winnerTeamId,
+      now,
+      tournamentId,
+      nextRoundIndex,
+      nextSlot
+    ).run();
+    
+    if (
+      isDoubleLeg
+    ) {
+      await db.prepare(`
         UPDATE matches
         SET
           home_team_id = ?,
@@ -5730,32 +5632,32 @@ async function reviewMatchSubmissionRoute(
         AND slot = ?
         AND leg = 2
       `).bind(
-            winnerTeamId,
-            now,
-            tournamentId,
-            nextRoundIndex,
-            nextSlot
-          ).run();
-        }
-      }
-      
-      return {
-        processed: true,
         winnerTeamId,
-        advanced: true,
-        nextRound,
+        now,
+        tournamentId,
         nextRoundIndex,
         nextSlot
-      };
+      ).run();
     }
-    
-    async function prepareThirdPlaceMatch(
-      db,
-      tournamentId,
-      completedRound
-    ) {
-      const semifinalResult =
-        await db.prepare(`
+  }
+  
+  return {
+    processed: true,
+    winnerTeamId,
+    advanced: true,
+    nextRound,
+    nextRoundIndex,
+    nextSlot
+  };
+}
+
+async function prepareThirdPlaceMatch(
+  db,
+  tournamentId,
+  completedRound
+) {
+  const semifinalResult =
+    await db.prepare(`
       SELECT
         id,
         home_team_id,
@@ -5773,250 +5675,250 @@ async function reviewMatchSubmissionRoute(
       AND round_index = ?
       ORDER BY slot ASC, leg ASC
     `).bind(
-          tournamentId,
-          completedRound
-        ).all();
-      
-      const semifinalMatches =
-        semifinalResult.results || [];
-      
-      if (
-        semifinalMatches.length !== 2 &&
-        semifinalMatches.length !== 4
-      ) {
-        return {
-          prepared: false,
-          reason: "Invalid semifinal match count."
-        };
-      }
-      
-      const slots = [
-        ...new Set(
-          semifinalMatches.map(
-            item =>
-            Number(item.slot)
-          )
-        )
-      ];
-      
-      if (
-        slots.length !== 2
-      ) {
-        return {
-          prepared: false,
-          reason: "Both semifinal ties are not available."
-        };
-      }
-      
-      const losers = [];
-      
-      for (
-        const slot of slots
-      ) {
-        const tie =
-          semifinalMatches.filter(
-            item =>
-            Number(item.slot) ===
-            slot
-          );
-        
-        if (
-          tie.length !== 1 &&
-          tie.length !== 2
-        ) {
-          return {
-            prepared: false,
-            reason: "Invalid semifinal tie."
-          };
-        }
-        
-        if (
-          tie.some(
-            item =>
-            Number(item.played) !== 1
-          )
-        ) {
-          return {
-            prepared: false,
-            reason: "Both semifinal ties are not completed."
-          };
-        }
-        
-        let winnerTeamId =
-          null;
-        
-        if (tie.length === 2) {
-          const leg1 =
-            tie.find(
-              item =>
-              Number(item.leg) === 1
-            );
-          
-          const leg2 =
-            tie.find(
-              item =>
-              Number(item.leg) === 2
-            );
-          
-          if (
-            !leg1 ||
-            !leg2
-          ) {
-            return {
-              prepared: false,
-              reason: "Invalid semifinal legs."
-            };
-          }
-          
-          const teamA =
-            leg1.home_team_id;
-          
-          const teamB =
-            leg1.away_team_id;
-          
-          let teamAScore = 0;
-          let teamBScore = 0;
-          
-          if (
-            leg1.home_team_id === teamA
-          ) {
-            teamAScore +=
-              Number(leg1.home_score) || 0;
-            
-            teamBScore +=
-              Number(leg1.away_score) || 0;
-          }
-          
-          if (
-            leg2.home_team_id === teamA
-          ) {
-            teamAScore +=
-              Number(leg2.home_score) || 0;
-            
-            teamBScore +=
-              Number(leg2.away_score) || 0;
-          } else if (
-            leg2.away_team_id === teamA
-          ) {
-            teamAScore +=
-              Number(leg2.away_score) || 0;
-            
-            teamBScore +=
-              Number(leg2.home_score) || 0;
-          } else {
-            return {
-              prepared: false,
-              reason: "Semifinal second leg has incorrect teams."
-            };
-          }
-          
-          if (
-            teamAScore === teamBScore
-          ) {
-            return {
-              prepared: false,
-              reason: "A semifinal aggregate score is tied."
-            };
-          }
-          
-          winnerTeamId =
-            teamAScore > teamBScore ?
-            teamA :
-            teamB;
-          
-        } else {
-          const semifinal =
-            tie[0];
-          
-          if (
-            Number(semifinal.home_score) ===
-            Number(semifinal.away_score)
-          ) {
-            return {
-              prepared: false,
-              reason: "A semifinal is tied."
-            };
-          }
-          
-          winnerTeamId =
-            Number(semifinal.home_score) >
-            Number(semifinal.away_score) ?
-            semifinal.home_team_id :
-            semifinal.away_team_id;
-        }
-        
-        const teams =
-          new Set();
-        
-        for (const item of tie) {
-          if (item.home_team_id) {
-            teams.add(
-              item.home_team_id
-            );
-          }
-          
-          if (item.away_team_id) {
-            teams.add(
-              item.away_team_id
-            );
-          }
-        }
-        
-        const loserTeamId = [...teams].find(
-          teamId =>
-          teamId !== winnerTeamId
+      tournamentId,
+      completedRound
+    ).all();
+  
+  const semifinalMatches =
+    semifinalResult.results || [];
+  
+  if (
+    semifinalMatches.length !== 2 &&
+    semifinalMatches.length !== 4
+  ) {
+    return {
+      prepared: false,
+      reason: "Invalid semifinal match count."
+    };
+  }
+  
+  const slots = [
+    ...new Set(
+      semifinalMatches.map(
+        item =>
+        Number(item.slot)
+      )
+    )
+  ];
+  
+  if (
+    slots.length !== 2
+  ) {
+    return {
+      prepared: false,
+      reason: "Both semifinal ties are not available."
+    };
+  }
+  
+  const losers = [];
+  
+  for (
+    const slot of slots
+  ) {
+    const tie =
+      semifinalMatches.filter(
+        item =>
+        Number(item.slot) ===
+        slot
+      );
+    
+    if (
+      tie.length !== 1 &&
+      tie.length !== 2
+    ) {
+      return {
+        prepared: false,
+        reason: "Invalid semifinal tie."
+      };
+    }
+    
+    if (
+      tie.some(
+        item =>
+        Number(item.played) !== 1
+      )
+    ) {
+      return {
+        prepared: false,
+        reason: "Both semifinal ties are not completed."
+      };
+    }
+    
+    let winnerTeamId =
+      null;
+    
+    if (tie.length === 2) {
+      const leg1 =
+        tie.find(
+          item =>
+          Number(item.leg) === 1
         );
+      
+      const leg2 =
+        tie.find(
+          item =>
+          Number(item.leg) === 2
+        );
+      
+      if (
+        !leg1 ||
+        !leg2
+      ) {
+        return {
+          prepared: false,
+          reason: "Invalid semifinal legs."
+        };
+      }
+      
+      const teamA =
+        leg1.home_team_id;
+      
+      const teamB =
+        leg1.away_team_id;
+      
+      let teamAScore = 0;
+      let teamBScore = 0;
+      
+      if (
+        leg1.home_team_id === teamA
+      ) {
+        teamAScore +=
+          Number(leg1.home_score) || 0;
         
-        if (!loserTeamId) {
-          return {
-            prepared: false,
-            reason: "Unable to determine semifinal loser."
-          };
-        }
+        teamBScore +=
+          Number(leg1.away_score) || 0;
+      }
+      
+      if (
+        leg2.home_team_id === teamA
+      ) {
+        teamAScore +=
+          Number(leg2.home_score) || 0;
         
-        losers.push(
-          loserTeamId
+        teamBScore +=
+          Number(leg2.away_score) || 0;
+      } else if (
+        leg2.away_team_id === teamA
+      ) {
+        teamAScore +=
+          Number(leg2.away_score) || 0;
+        
+        teamBScore +=
+          Number(leg2.home_score) || 0;
+      } else {
+        return {
+          prepared: false,
+          reason: "Semifinal second leg has incorrect teams."
+        };
+      }
+      
+      if (
+        teamAScore === teamBScore
+      ) {
+        return {
+          prepared: false,
+          reason: "A semifinal aggregate score is tied."
+        };
+      }
+      
+      winnerTeamId =
+        teamAScore > teamBScore ?
+        teamA :
+        teamB;
+      
+    } else {
+      const semifinal =
+        tie[0];
+      
+      if (
+        Number(semifinal.home_score) ===
+        Number(semifinal.away_score)
+      ) {
+        return {
+          prepared: false,
+          reason: "A semifinal is tied."
+        };
+      }
+      
+      winnerTeamId =
+        Number(semifinal.home_score) >
+        Number(semifinal.away_score) ?
+        semifinal.home_team_id :
+        semifinal.away_team_id;
+    }
+    
+    const teams =
+      new Set();
+    
+    for (const item of tie) {
+      if (item.home_team_id) {
+        teams.add(
+          item.home_team_id
         );
       }
       
-      if (
-        losers.length !== 2
-      ) {
-        return {
-          prepared: false,
-          reason: "Both semifinal losers are required."
-        };
+      if (item.away_team_id) {
+        teams.add(
+          item.away_team_id
+        );
       }
-      
-      const thirdPlace =
-        await db.prepare(`
+    }
+    
+    const loserTeamId = [...teams].find(
+      teamId =>
+      teamId !== winnerTeamId
+    );
+    
+    if (!loserTeamId) {
+      return {
+        prepared: false,
+        reason: "Unable to determine semifinal loser."
+      };
+    }
+    
+    losers.push(
+      loserTeamId
+    );
+  }
+  
+  if (
+    losers.length !== 2
+  ) {
+    return {
+      prepared: false,
+      reason: "Both semifinal losers are required."
+    };
+  }
+  
+  const thirdPlace =
+    await db.prepare(`
       SELECT *
       FROM matches
       WHERE tournament_id = ?
       AND match_type = 'third_place'
       LIMIT 1
     `).bind(
-          tournamentId
-        ).first();
-      
-      if (!thirdPlace) {
-        return {
-          prepared: false,
-          reason: "Third-place match was not generated."
-        };
-      }
-      
-      if (
-        thirdPlace.home_team_id &&
-        thirdPlace.away_team_id
-      ) {
-        return {
-          prepared: false,
-          alreadyPrepared: true
-        };
-      }
-      
-      await db.prepare(`
+      tournamentId
+    ).first();
+  
+  if (!thirdPlace) {
+    return {
+      prepared: false,
+      reason: "Third-place match was not generated."
+    };
+  }
+  
+  if (
+    thirdPlace.home_team_id &&
+    thirdPlace.away_team_id
+  ) {
+    return {
+      prepared: false,
+      alreadyPrepared: true
+    };
+  }
+  
+  await db.prepare(`
     UPDATE matches
     SET
       home_team_id = ?,
@@ -6024,449 +5926,449 @@ async function reviewMatchSubmissionRoute(
       updated_at = ?
     WHERE id = ?
   `).bind(
-        losers[0],
-        losers[1],
-        Date.now(),
-        thirdPlace.id
-      ).run();
-      
-      return {
-        prepared: true,
-        thirdPlaceMatchId: thirdPlace.id,
-        homeTeamId: losers[0],
-        awayTeamId: losers[1]
-      };
+    losers[0],
+    losers[1],
+    Date.now(),
+    thirdPlace.id
+  ).run();
+  
+  return {
+    prepared: true,
+    thirdPlaceMatchId: thirdPlace.id,
+    homeTeamId: losers[0],
+    awayTeamId: losers[1]
+  };
+}
+
+
+async function updateSubmissionDeadlineRoute(
+  request,
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournament(
+        env.DB,
+        tournamentId
+      );
+    
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
     }
     
-    
-    async function updateSubmissionDeadlineRoute(
-      request,
-      env,
-      tournamentId,
-      user
+    if (
+      user.role !== "admin" ||
+      String(tournament.admin_uid) !==
+      String(user.id)
     ) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    const body =
+      await request
+      .json()
+      .catch(() => ({}));
+    
+    const fromRound =
+      Number(body.fromRound);
+    
+    const toRound =
+      Number(body.toRound);
+    
+    const enabled =
+      body.enabled === true;
+    
+    const deadline =
+      body.deadline === null ||
+      body.deadline === undefined ||
+      body.deadline === "" ?
+      null :
+      Number(body.deadline);
+    
+    if (
+      !Number.isInteger(fromRound) ||
+      fromRound < 1
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid starting round."
+      }, {
+        status: 400
+      });
+    }
+    
+    if (
+      !Number.isInteger(toRound) ||
+      toRound < fromRound
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid ending round."
+      }, {
+        status: 400
+      });
+    }
+    
+    if (
+      deadline !== null &&
+      (
+        !Number.isFinite(deadline) ||
+        deadline <= 0
+      )
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid deadline."
+      }, {
+        status: 400
+      });
+    }
+    
+    let settings = {};
+    
+    if (tournament.settings) {
       try {
-        const tournament =
-          await getTournament(
-            env.DB,
-            tournamentId
-          );
-        
-        if (!tournament) {
-          return Response.json({
-            success: false,
-            message: "Tournament not found."
-          }, {
-            status: 404
-          });
-        }
-        
-        if (
-          user.role !== "admin" ||
-          String(tournament.admin_uid) !==
-          String(user.id)
-        ) {
-          return Response.json({
-            success: false,
-            message: "Tournament not found."
-          }, {
-            status: 404
-          });
-        }
-        
-        const body =
-          await request
-          .json()
-          .catch(() => ({}));
-        
-        const fromRound =
-          Number(body.fromRound);
-        
-        const toRound =
-          Number(body.toRound);
-        
-        const enabled =
-          body.enabled === true;
-        
-        const deadline =
-          body.deadline === null ||
-          body.deadline === undefined ||
-          body.deadline === "" ?
-          null :
-          Number(body.deadline);
-        
-        if (
-          !Number.isInteger(fromRound) ||
-          fromRound < 1
-        ) {
-          return Response.json({
-            success: false,
-            message: "Invalid starting round."
-          }, {
-            status: 400
-          });
-        }
-        
-        if (
-          !Number.isInteger(toRound) ||
-          toRound < fromRound
-        ) {
-          return Response.json({
-            success: false,
-            message: "Invalid ending round."
-          }, {
-            status: 400
-          });
-        }
-        
-        if (
-          deadline !== null &&
-          (
-            !Number.isFinite(deadline) ||
-            deadline <= 0
-          )
-        ) {
-          return Response.json({
-            success: false,
-            message: "Invalid deadline."
-          }, {
-            status: 400
-          });
-        }
-        
-        let settings = {};
-        
-        if (tournament.settings) {
-          try {
-            settings =
-              typeof tournament.settings === "string" ?
-              JSON.parse(tournament.settings) :
-              tournament.settings;
-          } catch {
-            settings = {};
-          }
-        }
-        
-        settings.submissionDeadline = {
-          fromRound,
-          toRound,
-          deadline,
-          enabled
-        };
-        
-        const now =
-          Date.now();
-        
-        await env.DB
-          .prepare(`
+        settings =
+          typeof tournament.settings === "string" ?
+          JSON.parse(tournament.settings) :
+          tournament.settings;
+      } catch {
+        settings = {};
+      }
+    }
+    
+    settings.submissionDeadline = {
+      fromRound,
+      toRound,
+      deadline,
+      enabled
+    };
+    
+    const now =
+      Date.now();
+    
+    await env.DB
+      .prepare(`
         UPDATE tournaments
         SET
           settings = ?,
           updated_at = ?
         WHERE id = ?
       `)
-          .bind(
-            JSON.stringify(settings),
-            now,
-            tournamentId
-          )
-          .run();
-        
-        const players = await env.DB
-          .prepare(`
+      .bind(
+        JSON.stringify(settings),
+        now,
+        tournamentId
+      )
+      .run();
+    
+    const players = await env.DB
+      .prepare(`
     SELECT user_id
     FROM tournament_players
     WHERE tournament_id = ?
   `)
-          .bind(tournamentId)
-          .all();
-        
-        const pushTitle = "New Submission Deadline Set";
-        
-        let pushBody;
-        
-        if (enabled && deadline !== null) {
-          const deadlineDate = new Date(deadline);
-          
-          pushBody =
-            `${tournament.name}: Match submissions for rounds ${fromRound}-${toRound} are due by ${deadlineDate.toLocaleString()}.`;
-        } else if (!enabled) {
-          pushBody =
-            `${tournament.name}: The submission deadline for rounds ${fromRound}-${toRound} has been disabled.`;
-        } else {
-          pushBody =
-            `${tournament.name}: The submission deadline for rounds ${fromRound}-${toRound} has been updated.`;
-        }
-        
-        await Promise.all(
-          (players.results || [])
-          .filter(
-            player =>
-            player.user_id &&
-            String(player.user_id) !== String(user.id)
-          )
-          .map(player =>
-            sendPushToUser(
-              env,
-              player.user_id,
-              pushTitle,
-              pushBody,
-              `/tournament/${tournamentId}`
-            )
-          )
-        );
-        return Response.json({
-          success: true,
-          submissionDeadline: settings.submissionDeadline
-        });
-        
-      } catch (error) {
-        console.error(
-          "Update submission deadline error:",
-          error
-        );
-        
-        return Response.json({
-          success: false,
-          message: error.message ||
-            "Failed to update submission deadline."
-        }, {
-          status: 500
-        });
-      }
+      .bind(tournamentId)
+      .all();
+    
+    const pushTitle = "New Submission Deadline Set";
+    
+    let pushBody;
+    
+    if (enabled && deadline !== null) {
+      const deadlineDate = new Date(deadline);
+      
+      pushBody =
+        `${tournament.name}: Match submissions for rounds ${fromRound}-${toRound} are due by ${deadlineDate.toLocaleString()}.`;
+    } else if (!enabled) {
+      pushBody =
+        `${tournament.name}: The submission deadline for rounds ${fromRound}-${toRound} has been disabled.`;
+    } else {
+      pushBody =
+        `${tournament.name}: The submission deadline for rounds ${fromRound}-${toRound} has been updated.`;
     }
     
-    async function importTournamentPlayersRoute(
-      request,
-      env,
-      tournamentId,
-      user
-    ) {
-      try {
-        const targetTournament =
-          await getTournamentForUser(
-            env.DB,
-            tournamentId,
-            user.id
-          );
-        
-        if (!targetTournament) {
-          return Response.json({
-            success: false,
-            message: "Tournament not found or access denied."
-          }, {
-            status: 404
-          });
-        }
-        
-        if (targetTournament.admin_uid !== user.id) {
-          return Response.json({
-            success: false,
-            message: "Access denied."
-          }, {
-            status: 403
-          });
-        }
-        
-        const body =
-          await request
-          .json()
-          .catch(() => ({}));
-        
-        const sourceTournamentId =
-          String(
-            body.source_tournament_id || ""
-          ).trim();
-        
-        if (!sourceTournamentId) {
-          return Response.json({
-            success: false,
-            message: "Source tournament ID is required."
-          }, {
-            status: 400
-          });
-        }
-        
-        if (
-          sourceTournamentId ===
-          tournamentId
-        ) {
-          return Response.json({
-            success: false,
-            message: "Source and target tournaments cannot be the same."
-          }, {
-            status: 400
-          });
-        }
-        
-        const sourceTournament =
-          await getTournamentForUser(
-            env.DB,
-            sourceTournamentId,
-            user.id
-          );
-        
-        if (!sourceTournament) {
-          return Response.json({
-            success: false,
-            message: "Source tournament not found or access denied."
-          }, {
-            status: 404
-          });
-        }
-        
-        if (sourceTournament.admin_uid !== user.id) {
-          return Response.json({
-            success: false,
-            message: "You can only import teams from a tournament you own."
-          }, {
-            status: 403
-          });
-        }
-        
-        const players =
-          await importTournamentPlayers(
-            env.DB,
-            sourceTournamentId,
-            tournamentId
-          );
-        
-        return Response.json({
-          success: true,
-          message: players.length ?
-            `${players.length} team${players.length === 1 ? "" : "s"} imported successfully.` : "No new teams to import.",
-          players
-        });
-        
-      } catch (error) {
-        console.error(
-          "Import tournament players error:",
-          error
-        );
-        
-        return Response.json({
-          success: false,
-          message: error.message ||
-            "Failed to import teams."
-        }, {
-          status: 500
-        });
-      }
+    await Promise.all(
+      (players.results || [])
+      .filter(
+        player =>
+        player.user_id &&
+        String(player.user_id) !== String(user.id)
+      )
+      .map(player =>
+        sendPushToUser(
+          env,
+          player.user_id,
+          pushTitle,
+          pushBody,
+          `/tournament/${tournamentId}`
+        )
+      )
+    );
+    return Response.json({
+      success: true,
+      submissionDeadline: settings.submissionDeadline
+    });
+    
+  } catch (error) {
+    console.error(
+      "Update submission deadline error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to update submission deadline."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function importTournamentPlayersRoute(
+  request,
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const targetTournament =
+      await getTournamentForUser(
+        env.DB,
+        tournamentId,
+        user.id
+      );
+    
+    if (!targetTournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found or access denied."
+      }, {
+        status: 404
+      });
     }
     
-    async function getImportableTournamentsRoute(
-      env,
-      user
-    ) {
-      try {
-        let tournaments = [];
-        
-        if (user.role === "admin") {
-          tournaments =
-            await getTournamentsByOwner(
-              env.DB,
-              user.id
-            );
-        } else {
-          tournaments =
-            await getTournamentsByPlayer(
-              env.DB,
-              user.id
-            );
-        }
-        
-        tournaments =
-          (tournaments || [])
-          .map(parseTournament);
-        
-        return Response.json({
-          success: true,
-          tournaments
-        });
-        
-      } catch (error) {
-        console.error(
-          "Get importable tournaments error:",
-          error
-        );
-        
-        return Response.json({
-          success: false,
-          message: error.message ||
-            "Failed to load tournaments."
-        }, {
-          status: 500
-        });
-      }
+    if (targetTournament.admin_uid !== user.id) {
+      return Response.json({
+        success: false,
+        message: "Access denied."
+      }, {
+        status: 403
+      });
     }
     
-    async function removeTournamentPlayerRoute(
-      env,
-      tournamentId,
-      playerId,
-      user
+    const body =
+      await request
+      .json()
+      .catch(() => ({}));
+    
+    const sourceTournamentId =
+      String(
+        body.source_tournament_id || ""
+      ).trim();
+    
+    if (!sourceTournamentId) {
+      return Response.json({
+        success: false,
+        message: "Source tournament ID is required."
+      }, {
+        status: 400
+      });
+    }
+    
+    if (
+      sourceTournamentId ===
+      tournamentId
     ) {
-      try {
-        if (user.role !== "admin") {
-          return Response.json({
-            success: false,
-            message: "Only admins can remove players."
-          }, {
-            status: 403
-          });
-        }
-        
-        const tournament =
-          await getTournament(
-            env.DB,
-            tournamentId
-          );
-        
-        if (!tournament) {
-          return Response.json({
-            success: false,
-            message: "Tournament not found."
-          }, {
-            status: 404
-          });
-        }
-        
-        if (
-          tournament.admin_uid !== user.id
-        ) {
-          return Response.json({
-            success: false,
-            message: "Access denied."
-          }, {
-            status: 403
-          });
-        }
-        
-        const match =
-          await env.DB
-          .prepare(`
+      return Response.json({
+        success: false,
+        message: "Source and target tournaments cannot be the same."
+      }, {
+        status: 400
+      });
+    }
+    
+    const sourceTournament =
+      await getTournamentForUser(
+        env.DB,
+        sourceTournamentId,
+        user.id
+      );
+    
+    if (!sourceTournament) {
+      return Response.json({
+        success: false,
+        message: "Source tournament not found or access denied."
+      }, {
+        status: 404
+      });
+    }
+    
+    if (sourceTournament.admin_uid !== user.id) {
+      return Response.json({
+        success: false,
+        message: "You can only import teams from a tournament you own."
+      }, {
+        status: 403
+      });
+    }
+    
+    const players =
+      await importTournamentPlayers(
+        env.DB,
+        sourceTournamentId,
+        tournamentId
+      );
+    
+    return Response.json({
+      success: true,
+      message: players.length ?
+        `${players.length} team${players.length === 1 ? "" : "s"} imported successfully.` : "No new teams to import.",
+      players
+    });
+    
+  } catch (error) {
+    console.error(
+      "Import tournament players error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to import teams."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function getImportableTournamentsRoute(
+  env,
+  user
+) {
+  try {
+    let tournaments = [];
+    
+    if (user.role === "admin") {
+      tournaments =
+        await getTournamentsByOwner(
+          env.DB,
+          user.id
+        );
+    } else {
+      tournaments =
+        await getTournamentsByPlayer(
+          env.DB,
+          user.id
+        );
+    }
+    
+    tournaments =
+      (tournaments || [])
+      .map(parseTournament);
+    
+    return Response.json({
+      success: true,
+      tournaments
+    });
+    
+  } catch (error) {
+    console.error(
+      "Get importable tournaments error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to load tournaments."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function removeTournamentPlayerRoute(
+  env,
+  tournamentId,
+  playerId,
+  user
+) {
+  try {
+    if (user.role !== "admin") {
+      return Response.json({
+        success: false,
+        message: "Only admins can remove players."
+      }, {
+        status: 403
+      });
+    }
+    
+    const tournament =
+      await getTournament(
+        env.DB,
+        tournamentId
+      );
+    
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    if (
+      tournament.admin_uid !== user.id
+    ) {
+      return Response.json({
+        success: false,
+        message: "Access denied."
+      }, {
+        status: 403
+      });
+    }
+    
+    const match =
+      await env.DB
+      .prepare(`
           SELECT id
           FROM matches
           WHERE tournament_id = ?
           LIMIT 1
         `)
-          .bind(
-            tournamentId
-          )
-          .first();
-        
-        if (match) {
-          return Response.json({
-            success: false,
-            message: "Players cannot be removed after fixtures have been generated."
-          }, {
-            status: 400
-          });
-        }
-        
-        const player =
-          await env.DB
-          .prepare(`
+      .bind(
+        tournamentId
+      )
+      .first();
+    
+    if (match) {
+      return Response.json({
+        success: false,
+        message: "Players cannot be removed after fixtures have been generated."
+      }, {
+        status: 400
+      });
+    }
+    
+    const player =
+      await env.DB
+      .prepare(`
           SELECT
             tp.id,
             tp.tournament_id,
@@ -6479,340 +6381,340 @@ async function reviewMatchSubmissionRoute(
           WHERE tp.id = ?
           AND tp.tournament_id = ?
         `)
-          .bind(
-            playerId,
-            tournamentId
-          )
-          .first();
-        
-        if (!player) {
-          return Response.json({
-            success: false,
-            message: "Tournament player not found."
-          }, {
-            status: 404
-          });
-        }
-        
-        await env.DB
-          .prepare(`
+      .bind(
+        playerId,
+        tournamentId
+      )
+      .first();
+    
+    if (!player) {
+      return Response.json({
+        success: false,
+        message: "Tournament player not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    await env.DB
+      .prepare(`
         DELETE FROM tournament_players
         WHERE id = ?
         AND tournament_id = ?
       `)
-          .bind(
-            playerId,
-            tournamentId
-          )
-          .run();
-        
-        return Response.json({
-          success: true,
-          message: `${player.team_name || "Player"} removed from tournament.`,
-          player
-        });
-        
-      } catch (error) {
-        console.error(
-          "Remove tournament player error:",
-          error
-        );
-        
+      .bind(
+        playerId,
+        tournamentId
+      )
+      .run();
+    
+    return Response.json({
+      success: true,
+      message: `${player.team_name || "Player"} removed from tournament.`,
+      player
+    });
+    
+  } catch (error) {
+    console.error(
+      "Remove tournament player error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to remove player from tournament."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function updateTournamentRoute(
+  request,
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const body = await request.json();
+    const existing =
+      await getTournamentForUser(
+        env.DB,
+        tournamentId,
+        user.id
+      );
+    if (!existing) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    const updates = {};
+    let completingTournament = false;
+    if (body.name !== undefined) {
+      const name =
+        String(body.name || "").trim();
+      if (!name) {
         return Response.json({
           success: false,
-          message: error.message ||
-            "Failed to remove player from tournament."
+          message: "Tournament name is required."
         }, {
-          status: 500
+          status: 400
         });
       }
+      updates.name = name;
     }
-    
-    async function updateTournamentRoute(
-      request,
-      env,
-      tournamentId,
-      user
+    if (
+      body.competition_id !== undefined ||
+      body.competitionId !== undefined
     ) {
-      try {
-        const body = await request.json();
-        const existing =
-          await getTournamentForUser(
-            env.DB,
-            tournamentId,
-            user.id
-          );
-        if (!existing) {
-          return Response.json({
-            success: false,
-            message: "Tournament not found."
-          }, {
-            status: 404
-          });
-        }
-        const updates = {};
-        let completingTournament = false;
-        if (body.name !== undefined) {
-          const name =
-            String(body.name || "").trim();
-          if (!name) {
-            return Response.json({
-              success: false,
-              message: "Tournament name is required."
-            }, {
-              status: 400
-            });
-          }
-          updates.name = name;
-        }
-        if (
-          body.competition_id !== undefined ||
-          body.competitionId !== undefined
-        ) {
-          const competition_id =
-            String(
-              body.competition_id ??
-              body.competitionId ??
-              ""
-            ).trim();
-          if (!competition_id) {
-            return Response.json({
-              success: false,
-              message: "Competition ID is required."
-            }, {
-              status: 400
-            });
-          }
-          const competition =
-            await env.DB.prepare(`
+      const competition_id =
+        String(
+          body.competition_id ??
+          body.competitionId ??
+          ""
+        ).trim();
+      if (!competition_id) {
+        return Response.json({
+          success: false,
+          message: "Competition ID is required."
+        }, {
+          status: 400
+        });
+      }
+      const competition =
+        await env.DB.prepare(`
           SELECT id, owner_id
           FROM competitions
           WHERE id = ?
         `).bind(competition_id).first();
-          if (!competition) {
-            return Response.json({
-              success: false,
-              message: "Competition not found."
-            }, {
-              status: 404
-            });
-          }
-          if (competition.owner_id !== user.id) {
-            return Response.json({
-              success: false,
-              message: "Access denied."
-            }, {
-              status: 403
-            });
-          }
-          updates.competition_id = competition_id;
-        }
-        if (body.season !== undefined) {
-          const season =
-            String(body.season || "").trim();
-          if (!season) {
-            return Response.json({
-              success: false,
-              message: "Season is required."
-            }, {
-              status: 400
-            });
-          }
-          updates.season = season;
-        }
-        if (body.format !== undefined) {
-          const format =
-            String(body.format || "").trim();
-          if (!format) {
-            return Response.json({
-              success: false,
-              message: "Tournament format is required."
-            }, {
-              status: 400
-            });
-          }
-          updates.format = format;
-        }
+      if (!competition) {
+        return Response.json({
+          success: false,
+          message: "Competition not found."
+        }, {
+          status: 404
+        });
+      }
+      if (competition.owner_id !== user.id) {
+        return Response.json({
+          success: false,
+          message: "Access denied."
+        }, {
+          status: 403
+        });
+      }
+      updates.competition_id = competition_id;
+    }
+    if (body.season !== undefined) {
+      const season =
+        String(body.season || "").trim();
+      if (!season) {
+        return Response.json({
+          success: false,
+          message: "Season is required."
+        }, {
+          status: 400
+        });
+      }
+      updates.season = season;
+    }
+    if (body.format !== undefined) {
+      const format =
+        String(body.format || "").trim();
+      if (!format) {
+        return Response.json({
+          success: false,
+          message: "Tournament format is required."
+        }, {
+          status: 400
+        });
+      }
+      updates.format = format;
+    }
+    if (
+      body.season_status !== undefined ||
+      body.seasonStatus !== undefined ||
+      body.status !== undefined
+    ) {
+      const seasonStatus =
+        String(
+          body.season_status ??
+          body.seasonStatus ??
+          body.status ??
+          ""
+        ).trim();
+      const existingStatus =
+        existing.season_status ??
+        existing.seasonStatus ??
+        "";
+      if (
+        seasonStatus === "completed" &&
+        existingStatus !== "completed"
+      ) {
+        completingTournament = true;
+      }
+      updates.season_status = seasonStatus;
+      if (
+        seasonStatus === "completed" &&
+        existingStatus !== "completed"
+      ) {
+        updates.completed_at = Date.now();
+      }
+    }
+    if (
+      body.start_date !== undefined ||
+      body.startDate !== undefined
+    ) {
+      updates.start_date =
+        body.start_date ??
+        body.startDate;
+    }
+    if (
+      body.end_date !== undefined ||
+      body.endDate !== undefined
+    ) {
+      updates.end_date =
+        body.end_date ??
+        body.endDate;
+    }
+    if (
+      body.match_days !== undefined ||
+      body.matchDays !== undefined
+    ) {
+      const match_days =
+        body.match_days ??
+        body.matchDays;
+      updates.match_days =
+        typeof match_days === "string" ?
+        match_days :
+        JSON.stringify(match_days);
+    }
+    if (body.settings !== undefined) {
+      updates.settings =
+        typeof body.settings === "string" ?
+        body.settings :
+        JSON.stringify(body.settings);
+    }
+    if (
+      body.access_type !== undefined ||
+      body.accessType !== undefined
+    ) {
+      updates.access_type =
+        body.access_type ??
+        body.accessType;
+    }
+    if (
+      body.is_public !== undefined ||
+      body.isPublic !== undefined
+    ) {
+      const is_public =
+        body.is_public ??
+        body.isPublic;
+      updates.is_public = is_public ? 1 : 0;
+    }
+    const tournamentImage =
+      body.tournament_image !== undefined ?
+      body.tournament_image :
+      body.tournamentImage !== undefined ?
+      body.tournamentImage :
+      body.image !== undefined ?
+      body.image :
+      undefined;
+    if (tournamentImage !== undefined) {
+      if (
+        tournamentImage === null ||
+        tournamentImage === ""
+      ) {
+        updates.tournament_image = null;
+        updates.tournament_image_public_id = null;
+      } else {
         if (
-          body.season_status !== undefined ||
-          body.seasonStatus !== undefined ||
-          body.status !== undefined
+          typeof tournamentImage !== "string" ||
+          !tournamentImage.startsWith("data:image/")
         ) {
-          const seasonStatus =
-            String(
-              body.season_status ??
-              body.seasonStatus ??
-              body.status ??
-              ""
-            ).trim();
-          const existingStatus =
-            existing.season_status ??
-            existing.seasonStatus ??
-            "";
-          if (
-            seasonStatus === "completed" &&
-            existingStatus !== "completed"
-          ) {
-            completingTournament = true;
-          }
-          updates.season_status = seasonStatus;
-          if (
-            seasonStatus === "completed" &&
-            existingStatus !== "completed"
-          ) {
-            updates.completed_at = Date.now();
-          }
+          return Response.json({
+            success: false,
+            message: "Invalid tournament image."
+          }, {
+            status: 400
+          });
         }
-        if (
-          body.start_date !== undefined ||
-          body.startDate !== undefined
-        ) {
-          updates.start_date =
-            body.start_date ??
-            body.startDate;
+        const tournamentImageData =
+          await uploadBase64Image(
+            tournamentImage,
+            "tournaments",
+            tournamentId,
+            env
+          );
+        updates.tournament_image =
+          tournamentImageData.url;
+        updates.tournament_image_public_id =
+          tournamentImageData.publicId;
+      }
+    }
+    const format =
+      String(
+        updates.format ??
+        existing.format ??
+        ""
+      ).toLowerCase();
+    const competitionId =
+      updates.competition_id ??
+      existing.competition_id;
+    if (completingTournament) {
+      if (format === "league") {
+        const table =
+          await rebuildTable(
+            env.DB,
+            tournamentId
+          );
+        if (!table.length) {
+          return Response.json({
+            success: false,
+            message: "Cannot complete tournament without teams."
+          }, {
+            status: 400
+          });
         }
-        if (
-          body.end_date !== undefined ||
-          body.endDate !== undefined
-        ) {
-          updates.end_date =
-            body.end_date ??
-            body.endDate;
-        }
-        if (
-          body.match_days !== undefined ||
-          body.matchDays !== undefined
-        ) {
-          const match_days =
-            body.match_days ??
-            body.matchDays;
-          updates.match_days =
-            typeof match_days === "string" ?
-            match_days :
-            JSON.stringify(match_days);
-        }
-        if (body.settings !== undefined) {
-          updates.settings =
-            typeof body.settings === "string" ?
-            body.settings :
-            JSON.stringify(body.settings);
-        }
-        if (
-          body.access_type !== undefined ||
-          body.accessType !== undefined
-        ) {
-          updates.access_type =
-            body.access_type ??
-            body.accessType;
-        }
-        if (
-          body.is_public !== undefined ||
-          body.isPublic !== undefined
-        ) {
-          const is_public =
-            body.is_public ??
-            body.isPublic;
-          updates.is_public = is_public ? 1 : 0;
-        }
-        const tournamentImage =
-          body.tournament_image !== undefined ?
-          body.tournament_image :
-          body.tournamentImage !== undefined ?
-          body.tournamentImage :
-          body.image !== undefined ?
-          body.image :
-          undefined;
-        if (tournamentImage !== undefined) {
-          if (
-            tournamentImage === null ||
-            tournamentImage === ""
-          ) {
-            updates.tournament_image = null;
-            updates.tournament_image_public_id = null;
-          } else {
-            if (
-              typeof tournamentImage !== "string" ||
-              !tournamentImage.startsWith("data:image/")
-            ) {
-              return Response.json({
-                success: false,
-                message: "Invalid tournament image."
-              }, {
-                status: 400
-              });
-            }
-            const tournamentImageData =
-              await uploadBase64Image(
-                tournamentImage,
-                "tournaments",
-                tournamentId,
-                env
-              );
-            updates.tournament_image =
-              tournamentImageData.url;
-            updates.tournament_image_public_id =
-              tournamentImageData.publicId;
-          }
-        }
-        const format =
-          String(
-            updates.format ??
-            existing.format ??
-            ""
-          ).toLowerCase();
-        const competitionId =
-          updates.competition_id ??
-          existing.competition_id;
-        if (completingTournament) {
-          if (format === "league") {
-            const table =
-              await rebuildTable(
-                env.DB,
-                tournamentId
-              );
-            if (!table.length) {
-              return Response.json({
-                success: false,
-                message: "Cannot complete tournament without teams."
-              }, {
-                status: 400
-              });
-            }
-            updates.champion = table[0].id;
-            updates.champion_name = table[0].name;
-          } else if (format === "cup") {
-            const tournamentData =
-              await env.DB.prepare(`
+        updates.champion = table[0].id;
+        updates.champion_name = table[0].name;
+      } else if (format === "cup") {
+        const tournamentData =
+          await env.DB.prepare(`
             SELECT settings
             FROM tournaments
             WHERE id = ?
           `).bind(tournamentId).first();
-            let settings = {};
-            try {
-              settings =
-                typeof tournamentData?.settings === "string" ?
-                JSON.parse(tournamentData.settings || "{}") :
-                tournamentData?.settings || {};
-            } catch {
-              settings = {};
-            }
-            const knockoutSize =
-              Number(settings.knockoutSize);
-            if (
-              !Number.isInteger(knockoutSize) ||
-              ![2, 4, 8, 16, 32].includes(knockoutSize)
-            ) {
-              return Response.json({
-                success: false,
-                message: "Invalid knockout bracket size."
-              }, {
-                status: 400
-              });
-            }
-            const finalRoundIndex =
-              Math.log2(knockoutSize);
-            const finalResult =
-              await env.DB.prepare(`
+        let settings = {};
+        try {
+          settings =
+            typeof tournamentData?.settings === "string" ?
+            JSON.parse(tournamentData.settings || "{}") :
+            tournamentData?.settings || {};
+        } catch {
+          settings = {};
+        }
+        const knockoutSize =
+          Number(settings.knockoutSize);
+        if (
+          !Number.isInteger(knockoutSize) ||
+          ![2, 4, 8, 16, 32].includes(knockoutSize)
+        ) {
+          return Response.json({
+            success: false,
+            message: "Invalid knockout bracket size."
+          }, {
+            status: 400
+          });
+        }
+        const finalRoundIndex =
+          Math.log2(knockoutSize);
+        const finalResult =
+          await env.DB.prepare(`
             SELECT
               winner_team_id
             FROM matches
@@ -6825,19 +6727,19 @@ async function reviewMatchSubmissionRoute(
               AND winner_team_id IS NOT NULL
             LIMIT 1
           `).bind(
-                tournamentId,
-                finalRoundIndex
-              ).first();
-            if (!finalResult) {
-              return Response.json({
-                success: false,
-                message: "Cannot complete cup without a resolved final."
-              }, {
-                status: 400
-              });
-            }
-            const knockoutResult =
-              await env.DB.prepare(`
+            tournamentId,
+            finalRoundIndex
+          ).first();
+        if (!finalResult) {
+          return Response.json({
+            success: false,
+            message: "Cannot complete cup without a resolved final."
+          }, {
+            status: 400
+          });
+        }
+        const knockoutResult =
+          await env.DB.prepare(`
             SELECT
               round_index,
               slot,
@@ -6852,221 +6754,221 @@ async function reviewMatchSubmissionRoute(
               AND match_type = 'knockout'
             ORDER BY round_index, slot, leg
           `).bind(tournamentId).all();
-            const matches =
-              knockoutResult.results || [];
-            const isDoubleLeg =
-              settings.knockoutRoundMode === "double";
-            const ties = new Map();
-            for (const match of matches) {
-              const key =
-                `${match.round_index}:${match.slot}`;
-              if (!ties.has(key)) {
-                ties.set(key, []);
-              }
-              ties.get(key).push(match);
-            }
-            for (
-              let roundIndex = 1; roundIndex <= finalRoundIndex; roundIndex++
-            ) {
-              const expectedSlots =
-                knockoutSize /
-                Math.pow(2, roundIndex);
-              const expectedLegs =
-                isDoubleLeg &&
-                roundIndex < finalRoundIndex ?
-                2 :
-                1;
-              for (
-                let slot = 0; slot < expectedSlots; slot++
-              ) {
-                const tieMatches =
-                  ties.get(`${roundIndex}:${slot}`) || [];
-                if (!tieMatches.length) {
-                  return Response.json({
-                    success: false,
-                    message: "Cannot complete cup while knockout matches are missing."
-                  }, {
-                    status: 400
-                  });
-                }
-                for (
-                  let leg = 1; leg <= expectedLegs; leg++
-                ) {
-                  const match =
-                    tieMatches.find(
-                      item => Number(item.leg || 1) === leg
-                    );
-                  if (
-                    !match ||
-                    Number(match.played) !== 1 ||
-                    !match.home_team_id ||
-                    !match.away_team_id
-                  ) {
-                    return Response.json({
-                      success: false,
-                      message: "Cannot complete cup while knockout matches remain unfinished."
-                    }, {
-                      status: 400
-                    });
-                  }
-                  const homeScore =
-                    Number(match.home_score);
-                  const awayScore =
-                    Number(match.away_score);
-                  if (
-                    !Number.isInteger(homeScore) ||
-                    !Number.isInteger(awayScore) ||
-                    homeScore < 0 ||
-                    awayScore < 0
-                  ) {
-                    return Response.json({
-                      success: false,
-                      message: "A knockout match has an invalid score."
-                    }, {
-                      status: 400
-                    });
-                  }
-                }
-              }
-            }
-            const champion =
-              await env.DB.prepare(`
-            SELECT id, name
-            FROM teams
-            WHERE id = ?
-          `).bind(
-                finalResult.winner_team_id
-              ).first();
-            if (!champion) {
+        const matches =
+          knockoutResult.results || [];
+        const isDoubleLeg =
+          settings.knockoutRoundMode === "double";
+        const ties = new Map();
+        for (const match of matches) {
+          const key =
+            `${match.round_index}:${match.slot}`;
+          if (!ties.has(key)) {
+            ties.set(key, []);
+          }
+          ties.get(key).push(match);
+        }
+        for (
+          let roundIndex = 1; roundIndex <= finalRoundIndex; roundIndex++
+        ) {
+          const expectedSlots =
+            knockoutSize /
+            Math.pow(2, roundIndex);
+          const expectedLegs =
+            isDoubleLeg &&
+            roundIndex < finalRoundIndex ?
+            2 :
+            1;
+          for (
+            let slot = 0; slot < expectedSlots; slot++
+          ) {
+            const tieMatches =
+              ties.get(`${roundIndex}:${slot}`) || [];
+            if (!tieMatches.length) {
               return Response.json({
                 success: false,
-                message: "Cup champion team was not found."
+                message: "Cannot complete cup while knockout matches are missing."
               }, {
                 status: 400
               });
             }
-            updates.champion = champion.id;
-            updates.champion_name = champion.name;
-          } else {
-            return Response.json({
-              success: false,
-              message: "Unsupported tournament format."
-            }, {
-              status: 400
-            });
+            for (
+              let leg = 1; leg <= expectedLegs; leg++
+            ) {
+              const match =
+                tieMatches.find(
+                  item => Number(item.leg || 1) === leg
+                );
+              if (
+                !match ||
+                Number(match.played) !== 1 ||
+                !match.home_team_id ||
+                !match.away_team_id
+              ) {
+                return Response.json({
+                  success: false,
+                  message: "Cannot complete cup while knockout matches remain unfinished."
+                }, {
+                  status: 400
+                });
+              }
+              const homeScore =
+                Number(match.home_score);
+              const awayScore =
+                Number(match.away_score);
+              if (
+                !Number.isInteger(homeScore) ||
+                !Number.isInteger(awayScore) ||
+                homeScore < 0 ||
+                awayScore < 0
+              ) {
+                return Response.json({
+                  success: false,
+                  message: "A knockout match has an invalid score."
+                }, {
+                  status: 400
+                });
+              }
+            }
           }
-          updates.completed_at = Date.now();
         }
-        if (!Object.keys(updates).length) {
-          let trophyAwards = null;
-          if (
-            (existing.season_status ??
-              existing.seasonStatus) === "completed"
-          ) {
-            trophyAwards =
-              await awardTournamentTrophyBonuses(
-                env.DB,
-                tournamentId
-              );
-          }
-          return Response.json({
-            success: true,
-            tournament: parseTournament(existing),
-            trophyAwards
-          });
-        }
-        const tournament =
-          await updateTournament(
-            env.DB,
-            tournamentId,
-            updates,
-            user.id
-          );
-        if (!tournament) {
+        const champion =
+          await env.DB.prepare(`
+            SELECT id, name
+            FROM teams
+            WHERE id = ?
+          `).bind(
+            finalResult.winner_team_id
+          ).first();
+        if (!champion) {
           return Response.json({
             success: false,
-            message: "Failed to update tournament."
+            message: "Cup champion team was not found."
           }, {
-            status: 500
+            status: 400
           });
         }
-        let trophyAwards = null;
-        const completedStatus =
-          updates.season_status ??
-          existing.season_status ??
-          existing.seasonStatus;
-        if (completedStatus === "completed") {
-          if (
-            competitionId ===
-            "724ec974-f388-47f3-b288-7cdd6bdbd715" &&
-            format !== "league"
-          ) {
-            return Response.json({
-              success: false,
-              message: "The GeSL league competition requires league format."
-            }, {
-              status: 400
-            });
-          }
-          trophyAwards =
-            await awardTournamentTrophyBonuses(
-              env.DB,
-              tournamentId
-            );
-        }
-        return Response.json({
-          success: true,
-          tournament: parseTournament(tournament),
-          trophyAwards
-        });
-      } catch (error) {
-        console.error(
-          "Update tournament error:",
-          error
-        );
+        updates.champion = champion.id;
+        updates.champion_name = champion.name;
+      } else {
         return Response.json({
           success: false,
-          message: error.message ||
-            "Failed to update tournament."
+          message: "Unsupported tournament format."
         }, {
-          status: 500
+          status: 400
         });
       }
+      updates.completed_at = Date.now();
     }
-    
-    async function getTournamentRulesRoute(
-      env,
-      tournamentId,
-      user
-    ) {
-      try {
-        const tournament =
-          await getTournament(
+    if (!Object.keys(updates).length) {
+      let trophyAwards = null;
+      if (
+        (existing.season_status ??
+          existing.seasonStatus) === "completed"
+      ) {
+        trophyAwards =
+          await awardTournamentTrophyBonuses(
             env.DB,
             tournamentId
           );
-        
-        if (!tournament) {
-          return Response.json({
-            success: false,
-            message: "Tournament not found."
-          }, {
-            status: 404
-          });
-        }
-        
-        if (!tournament.competition_id) {
-          return Response.json({
-            success: true,
-            rules: null,
-            rules_version: null,
-            accepted: true
-          });
-        }
-        
-        const competition =
-          await env.DB
-          .prepare(`
+      }
+      return Response.json({
+        success: true,
+        tournament: parseTournament(existing),
+        trophyAwards
+      });
+    }
+    const tournament =
+      await updateTournament(
+        env.DB,
+        tournamentId,
+        updates,
+        user.id
+      );
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Failed to update tournament."
+      }, {
+        status: 500
+      });
+    }
+    let trophyAwards = null;
+    const completedStatus =
+      updates.season_status ??
+      existing.season_status ??
+      existing.seasonStatus;
+    if (completedStatus === "completed") {
+      if (
+        competitionId ===
+        "724ec974-f388-47f3-b288-7cdd6bdbd715" &&
+        format !== "league"
+      ) {
+        return Response.json({
+          success: false,
+          message: "The GeSL league competition requires league format."
+        }, {
+          status: 400
+        });
+      }
+      trophyAwards =
+        await awardTournamentTrophyBonuses(
+          env.DB,
+          tournamentId
+        );
+    }
+    return Response.json({
+      success: true,
+      tournament: parseTournament(tournament),
+      trophyAwards
+    });
+  } catch (error) {
+    console.error(
+      "Update tournament error:",
+      error
+    );
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to update tournament."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function getTournamentRulesRoute(
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournament(
+        env.DB,
+        tournamentId
+      );
+    
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    if (!tournament.competition_id) {
+      return Response.json({
+        success: true,
+        rules: null,
+        rules_version: null,
+        accepted: true
+      });
+    }
+    
+    const competition =
+      await env.DB
+      .prepare(`
           SELECT
             id,
             rules,
@@ -7075,99 +6977,99 @@ async function reviewMatchSubmissionRoute(
           FROM competitions
           WHERE id = ?
         `)
-          .bind(
-            tournament.competition_id
-          )
-          .first();
-        
-        if (!competition) {
-          return Response.json({
-            success: true,
-            rules: null,
-            rules_version: null,
-            accepted: true
-          });
-        }
-        
-        if (!competition.rules) {
-          return Response.json({
-            success: true,
-            rules: null,
-            rules_version: competition.rules_version,
-            accepted: true
-          });
-        }
-        
-        const acceptance =
-          await getTournamentRuleAcceptance(
-            env.DB,
-            tournamentId,
-            user.id
-          );
-        
-        const accepted = !!acceptance &&
-          Number(
-            acceptance.rules_version
-          ) === Number(
-            competition.rules_version
-          );
-        
-        return Response.json({
-          success: true,
-          rules: competition.rules,
-          rules_version: competition.rules_version,
-          rules_updated_at: competition.rules_updated_at,
-          accepted
-        });
-        
-      } catch (error) {
-        console.error(
-          "Get tournament rules error:",
-          error
-        );
-        
-        return Response.json({
-          success: false,
-          message: error.message ||
-            "Failed to load tournament rules."
-        }, {
-          status: 500
-        });
-      }
+      .bind(
+        tournament.competition_id
+      )
+      .first();
+    
+    if (!competition) {
+      return Response.json({
+        success: true,
+        rules: null,
+        rules_version: null,
+        accepted: true
+      });
     }
     
-    async function acceptTournamentRulesRoute(
-      env,
-      tournamentId,
-      user
-    ) {
-      try {
-        const tournament =
-          await getTournament(
-            env.DB,
-            tournamentId
-          );
-        if (!tournament) {
-          return Response.json({
-            success: false,
-            message: "Tournament not found."
-          }, {
-            status: 404
-          });
-        }
-        
-        if (!tournament.competition_id) {
-          return Response.json({
-            success: false,
-            message: "This tournament has no competition."
-          }, {
-            status: 400
-          });
-        }
-        
-        const competition =
-          await env.DB
-          .prepare(`
+    if (!competition.rules) {
+      return Response.json({
+        success: true,
+        rules: null,
+        rules_version: competition.rules_version,
+        accepted: true
+      });
+    }
+    
+    const acceptance =
+      await getTournamentRuleAcceptance(
+        env.DB,
+        tournamentId,
+        user.id
+      );
+    
+    const accepted = !!acceptance &&
+      Number(
+        acceptance.rules_version
+      ) === Number(
+        competition.rules_version
+      );
+    
+    return Response.json({
+      success: true,
+      rules: competition.rules,
+      rules_version: competition.rules_version,
+      rules_updated_at: competition.rules_updated_at,
+      accepted
+    });
+    
+  } catch (error) {
+    console.error(
+      "Get tournament rules error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to load tournament rules."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function acceptTournamentRulesRoute(
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournament(
+        env.DB,
+        tournamentId
+      );
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    if (!tournament.competition_id) {
+      return Response.json({
+        success: false,
+        message: "This tournament has no competition."
+      }, {
+        status: 400
+      });
+    }
+    
+    const competition =
+      await env.DB
+      .prepare(`
           SELECT
             id,
             rules,
@@ -7175,358 +7077,358 @@ async function reviewMatchSubmissionRoute(
           FROM competitions
           WHERE id = ?
         `)
-          .bind(
-            tournament.competition_id
-          )
-          .first();
-        
-        if (!competition) {
-          return Response.json({
-            success: false,
-            message: "Competition not found."
-          }, {
-            status: 404
-          });
-        }
-        
-        if (!competition.rules) {
-          return Response.json({
-            success: true,
-            message: "No tournament rules to accept."
-          });
-        }
-        
-        const acceptance =
-          await saveTournamentRuleAcceptance(
-            env.DB,
-            tournamentId,
-            user.id,
-            competition.rules_version
-          );
-        
-        return Response.json({
-          success: true,
-          message: "Tournament rules accepted.",
-          acceptance
-        });
-        
-      } catch (error) {
-        console.error(
-          "Accept tournament rules error:",
-          error
-        );
-        
-        return Response.json({
-          success: false,
-          message: error.message ||
-            "Failed to accept tournament rules."
-        }, {
-          status: 500
-        });
-      }
+      .bind(
+        tournament.competition_id
+      )
+      .first();
+    
+    if (!competition) {
+      return Response.json({
+        success: false,
+        message: "Competition not found."
+      }, {
+        status: 404
+      });
     }
     
+    if (!competition.rules) {
+      return Response.json({
+        success: true,
+        message: "No tournament rules to accept."
+      });
+    }
     
-    async function getTournamentTeamSquadRoute(
-      env,
+    const acceptance =
+      await saveTournamentRuleAcceptance(
+        env.DB,
+        tournamentId,
+        user.id,
+        competition.rules_version
+      );
+    
+    return Response.json({
+      success: true,
+      message: "Tournament rules accepted.",
+      acceptance
+    });
+    
+  } catch (error) {
+    console.error(
+      "Accept tournament rules error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to accept tournament rules."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+async function getTournamentTeamSquadRoute(
+  env,
+  tournamentId,
+  teamId
+) {
+  try {
+    const player = await getTournamentPlayerByTeam(
+      env.DB,
       tournamentId,
       teamId
-    ) {
-      try {
-        const player = await getTournamentPlayerByTeam(
-          env.DB,
-          tournamentId,
-          teamId
-        );
-        
-        if (!player) {
-          return Response.json({
-            success: false,
-            message: "Player not found for this team."
-          }, {
-            status: 404
-          });
-        }
-        
-        const squad = await getUserRegisteredSquad(
-          env.DB,
-          player.user_id
-        );
-        
-        if (!squad) {
-          return Response.json({
-            success: false,
-            message: "This player has no registered squad."
-          }, {
-            status: 404
-          });
-        }
-        
-        return Response.json({
-          success: true,
-          squad
-        });
-      } catch (error) {
-        return Response.json({
-          success: false,
-          message: "Unable to retrieve this team's registered squad."
-        }, {
-          status: 500
-        });
-      }
+    );
+    
+    if (!player) {
+      return Response.json({
+        success: false,
+        message: "Player not found for this team."
+      }, {
+        status: 404
+      });
     }
     
+    const squad = await getUserRegisteredSquad(
+      env.DB,
+      player.user_id
+    );
     
-    
-    async function deductTournamentPlayerPointsRoute(
-      request,
-      env,
-      tournamentId,
-      user
-    ) {
-      try {
-        const tournament = await getTournament(
-          env.DB,
-          tournamentId,
-          user.id
-        );
-        
-        if (!tournament) {
-          return Response.json({
-            success: false,
-            message: "Tournament not found or access denied."
-          }, {
-            status: 404
-          });
-        }
-        
-        if (user.role !== "admin") {
-          return Response.json({
-            success: false,
-            message: "Access denied."
-          }, {
-            status: 403
-          });
-        }
-        
-        const body = await request.json().catch(() => ({}));
-        
-        const userId = body.user_id;
-        const teamId = body.team_id;
-        const points = Number(body.points);
-        const reason = body.reason;
-        
-        if (
-          !userId ||
-          !teamId ||
-          !Number.isSafeInteger(points) ||
-          points <= 0 ||
-          typeof reason !== "string" ||
-          !reason.trim()
-        ) {
-          return Response.json({
-            success: false,
-            message: "Provide a valid player, team, positive points deduction, and reason."
-          }, {
-            status: 400
-          });
-        }
-        
-        const result = await deductTournamentPlayerPoints(
-          env.DB,
-          {
-            tournamentId,
-            userId,
-            teamId,
-            points,
-            reason,
-            adminId: user.id
-          }
-        );
-        
-        return Response.json({
-          success: true,
-          message: `${points} point(s) deducted successfully.`,
-          action: result.action
-        });
-      } catch (error) {
-        console.error(
-          "Deduct tournament player points error:",
-          error
-        );
-        
-        return Response.json({
-          success: false,
-          message: error.message ||
-            "Failed to deduct tournament points."
-        }, {
-          status: 500
-        });
-      }
+    if (!squad) {
+      return Response.json({
+        success: false,
+        message: "This player has no registered squad."
+      }, {
+        status: 404
+      });
     }
     
-    async function reverseTournamentPlayerDeductionRoute(
-      request,
-      env,
+    return Response.json({
+      success: true,
+      squad
+    });
+  } catch (error) {
+    return Response.json({
+      success: false,
+      message: "Unable to retrieve this team's registered squad."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+
+async function deductTournamentPlayerPointsRoute(
+  request,
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament = await getTournament(
+      env.DB,
       tournamentId,
-      actionId,
-      user
+      user.id
+    );
+    
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found or access denied."
+      }, {
+        status: 404
+      });
+    }
+    
+    if (user.role !== "admin") {
+      return Response.json({
+        success: false,
+        message: "Access denied."
+      }, {
+        status: 403
+      });
+    }
+    
+    const body = await request.json().catch(() => ({}));
+    
+    const userId = body.user_id;
+    const teamId = body.team_id;
+    const points = Number(body.points);
+    const reason = body.reason;
+    
+    if (
+      !userId ||
+      !teamId ||
+      !Number.isSafeInteger(points) ||
+      points <= 0 ||
+      typeof reason !== "string" ||
+      !reason.trim()
     ) {
-      try {
-        const tournament = await getTournament(
-          env.DB,
-          tournamentId,
-          user.id
-        );
-        
-        if (!tournament) {
-          return Response.json({
-            success: false,
-            message: "Tournament not found or access denied."
-          }, {
-            status: 404
-          });
-        }
-        
-        if (user.role !== "admin") {
-          return Response.json({
-            success: false,
-            message: "Access denied."
-          }, {
-            status: 403
-          });
-        }
-        
-        const action = await env.DB.prepare(`
+      return Response.json({
+        success: false,
+        message: "Provide a valid player, team, positive points deduction, and reason."
+      }, {
+        status: 400
+      });
+    }
+    
+    const result = await deductTournamentPlayerPoints(
+      env.DB,
+      {
+        tournamentId,
+        userId,
+        teamId,
+        points,
+        reason,
+        adminId: user.id
+      }
+    );
+    
+    return Response.json({
+      success: true,
+      message: `${points} point(s) deducted successfully.`,
+      action: result.action
+    });
+  } catch (error) {
+    console.error(
+      "Deduct tournament player points error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to deduct tournament points."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function reverseTournamentPlayerDeductionRoute(
+  request,
+  env,
+  tournamentId,
+  actionId,
+  user
+) {
+  try {
+    const tournament = await getTournament(
+      env.DB,
+      tournamentId,
+      user.id
+    );
+    
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found or access denied."
+      }, {
+        status: 404
+      });
+    }
+    
+    if (user.role !== "admin") {
+      return Response.json({
+        success: false,
+        message: "Access denied."
+      }, {
+        status: 403
+      });
+    }
+    
+    const action = await env.DB.prepare(`
       SELECT *
       FROM disciplinary_actions
       WHERE id = ?
         AND tournament_id = ?
     `).bind(
-          actionId,
-          tournamentId
-        ).first();
-        
-        if (!action) {
-          return Response.json({
-            success: false,
-            message: "Disciplinary action not found."
-          }, {
-            status: 404
-          });
-        }
-        
-        if (action.status !== "active") {
-          return Response.json({
-            success: false,
-            message: "This disciplinary action has already been reversed."
-          }, {
-            status: 400
-          });
-        }
-        
-        const body = await request.json().catch(() => ({}));
-        
-        const reversalReason = body.reversal_reason;
-        
-        if (
-          typeof reversalReason !== "string" ||
-          !reversalReason.trim()
-        ) {
-          return Response.json({
-            success: false,
-            message: "A reason for reversing the deduction is required."
-          }, {
-            status: 400
-          });
-        }
-        
-        const result = await reverseTournamentPlayerDeduction(
-          env.DB,
-          {
-            actionId,
-            adminId: user.id,
-            reversalReason
-          }
-        );
-        
-        return Response.json({
-          success: true,
-          message: `${action.points_deducted} point(s) restored successfully.`,
-          action: result.action
-        });
-      } catch (error) {
-        console.error(
-          "Reverse tournament player deduction error:",
-          error
-        );
-        
-        return Response.json({
-          success: false,
-          message: error.message ||
-            "Failed to reverse disciplinary action."
-        }, {
-          status: 500
-        });
-      }
-    }
-    
-    
-    async function getTournamentDisciplinaryActionsRoute(
-      env,
-      tournamentId,
-      user
-    ) {
-      try {
-        if (!user?.id) {
-          return Response.json({
-            success: false,
-            message: "Authentication required."
-          }, {
-            status: 401
-          });
-        }
-        
-        const tournament = await getTournament(
-          env.DB,
-          tournamentId
-        );
-        
-        if (!tournament) {
-          return Response.json({
-            success: false,
-            message: "Tournament not found."
-          }, {
-            status: 404
-          });
-        }
-        
-        const actions =
-          await getTournamentDisciplinaryActions(
-            env.DB,
-            tournamentId
-          );
-        
-        return Response.json({
-          success: true,
-          actions
-        });
-      } catch (error) {
-        return Response.json({
-          success: false,
-          message: error.message ||
-            "Failed to load disciplinary history."
-        }, {
-          status: 500
-        });
-      }
-    }
-    
-    async function awardTournamentTrophyBonuses(
-      db,
+      actionId,
       tournamentId
+    ).first();
+    
+    if (!action) {
+      return Response.json({
+        success: false,
+        message: "Disciplinary action not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    if (action.status !== "active") {
+      return Response.json({
+        success: false,
+        message: "This disciplinary action has already been reversed."
+      }, {
+        status: 400
+      });
+    }
+    
+    const body = await request.json().catch(() => ({}));
+    
+    const reversalReason = body.reversal_reason;
+    
+    if (
+      typeof reversalReason !== "string" ||
+      !reversalReason.trim()
     ) {
-      const tournament = await db.prepare(`
+      return Response.json({
+        success: false,
+        message: "A reason for reversing the deduction is required."
+      }, {
+        status: 400
+      });
+    }
+    
+    const result = await reverseTournamentPlayerDeduction(
+      env.DB,
+      {
+        actionId,
+        adminId: user.id,
+        reversalReason
+      }
+    );
+    
+    return Response.json({
+      success: true,
+      message: `${action.points_deducted} point(s) restored successfully.`,
+      action: result.action
+    });
+  } catch (error) {
+    console.error(
+      "Reverse tournament player deduction error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to reverse disciplinary action."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+async function getTournamentDisciplinaryActionsRoute(
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    if (!user?.id) {
+      return Response.json({
+        success: false,
+        message: "Authentication required."
+      }, {
+        status: 401
+      });
+    }
+    
+    const tournament = await getTournament(
+      env.DB,
+      tournamentId
+    );
+    
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    const actions =
+      await getTournamentDisciplinaryActions(
+        env.DB,
+        tournamentId
+      );
+    
+    return Response.json({
+      success: true,
+      actions
+    });
+  } catch (error) {
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to load disciplinary history."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function awardTournamentTrophyBonuses(
+  db,
+  tournamentId
+) {
+  const tournament = await db.prepare(`
     SELECT
       id,
       competition_id,
@@ -7536,109 +7438,109 @@ async function reviewMatchSubmissionRoute(
     FROM tournaments
     WHERE id = ?
   `).bind(tournamentId).first();
-      
-      if (!tournament) {
-        throw new Error("Tournament not found.");
+  
+  if (!tournament) {
+    throw new Error("Tournament not found.");
+  }
+  
+  if (tournament.season_status !== "completed") {
+    return {
+      success: false,
+      message: "Tournament is not completed."
+    };
+  }
+  
+  const competitionRules = {
+    "724ec974-f388-47f3-b288-7cdd6bdbd715": {
+      format: "league",
+      bonuses: {
+        1: 60,
+        2: 35,
+        3: 25
       }
-      
-      if (tournament.season_status !== "completed") {
-        return {
-          success: false,
-          message: "Tournament is not completed."
-        };
+    },
+    "e79c881b-51bd-48ec-a747-8e4f72000853": {
+      format: "cup",
+      bonuses: {
+        1: 30,
+        2: 20,
+        3: 15,
+        4: 10
       }
-      
-      const competitionRules = {
-        "724ec974-f388-47f3-b288-7cdd6bdbd715": {
-          format: "league",
-          bonuses: {
-            1: 60,
-            2: 35,
-            3: 25
-          }
-        },
-        "e79c881b-51bd-48ec-a747-8e4f72000853": {
-          format: "cup",
-          bonuses: {
-            1: 30,
-            2: 20,
-            3: 15,
-            4: 10
-          }
-        },
-        "9e8e6c43-1b8b-48fb-863a-16cc880fbbf2": {
-          format: "cup",
-          bonuses: {
-            1: 40,
-            2: 30,
-            3: 20,
-            4: 10
-          }
-        }
-      };
-      
-      const rules = competitionRules[tournament.competition_id];
-      
-      if (!rules) {
-        return {
-          success: false,
-          message: "No trophy bonus rules configured for this competition."
-        };
+    },
+    "9e8e6c43-1b8b-48fb-863a-16cc880fbbf2": {
+      format: "cup",
+      bonuses: {
+        1: 40,
+        2: 30,
+        3: 20,
+        4: 10
       }
-      
-      const tournamentFormat = String(
-        tournament.format || ""
-      ).toLowerCase();
-      
-      if (tournamentFormat !== rules.format) {
-        return {
-          success: false,
-          message: "Tournament format does not match its competition rules."
-        };
-      }
-      
-      let settings = {};
-      
-      try {
-        settings =
-          typeof tournament.settings === "string" ?
-          JSON.parse(tournament.settings || "{}") :
-          tournament.settings || {};
-      } catch {
-        settings = {};
-      }
-      
-      let placements = [];
-      
-      if (tournamentFormat === "league") {
-        const table = await rebuildTable(db, tournamentId);
-        
-        if (!table.length) {
-          throw new Error("No league standings found.");
-        }
-        
-        placements = table
-          .slice(0, 3)
-          .map((team, index) => ({
-            team_id: team.id,
-            position: index + 1,
-            bonus: rules.bonuses[index + 1]
-          }));
-      } else {
-        const knockoutSize = Number(settings.knockoutSize);
-        
-        if (
-          !Number.isInteger(knockoutSize) ||
-          ![2, 4, 8, 16, 32].includes(knockoutSize)
-        ) {
-          throw new Error("Invalid knockout bracket size.");
-        }
-        
-        const finalRoundIndex = Math.log2(knockoutSize);
-        const isDoubleLeg =
-          settings.knockoutRoundMode === "double";
-        
-        const result = await db.prepare(`
+    }
+  };
+  
+  const rules = competitionRules[tournament.competition_id];
+  
+  if (!rules) {
+    return {
+      success: false,
+      message: "No trophy bonus rules configured for this competition."
+    };
+  }
+  
+  const tournamentFormat = String(
+    tournament.format || ""
+  ).toLowerCase();
+  
+  if (tournamentFormat !== rules.format) {
+    return {
+      success: false,
+      message: "Tournament format does not match its competition rules."
+    };
+  }
+  
+  let settings = {};
+  
+  try {
+    settings =
+      typeof tournament.settings === "string" ?
+      JSON.parse(tournament.settings || "{}") :
+      tournament.settings || {};
+  } catch {
+    settings = {};
+  }
+  
+  let placements = [];
+  
+  if (tournamentFormat === "league") {
+    const table = await rebuildTable(db, tournamentId);
+    
+    if (!table.length) {
+      throw new Error("No league standings found.");
+    }
+    
+    placements = table
+      .slice(0, 3)
+      .map((team, index) => ({
+        team_id: team.id,
+        position: index + 1,
+        bonus: rules.bonuses[index + 1]
+      }));
+  } else {
+    const knockoutSize = Number(settings.knockoutSize);
+    
+    if (
+      !Number.isInteger(knockoutSize) ||
+      ![2, 4, 8, 16, 32].includes(knockoutSize)
+    ) {
+      throw new Error("Invalid knockout bracket size.");
+    }
+    
+    const finalRoundIndex = Math.log2(knockoutSize);
+    const isDoubleLeg =
+      settings.knockoutRoundMode === "double";
+    
+    const result = await db.prepare(`
       SELECT
         id,
         round_index,
@@ -7654,255 +7556,255 @@ async function reviewMatchSubmissionRoute(
         AND match_type = 'knockout'
       ORDER BY round_index, slot, leg
     `).bind(tournamentId).all();
+    
+    const matches = result.results || [];
+    
+    if (!matches.length) {
+      throw new Error("No knockout matches found.");
+    }
+    
+    const ties = new Map();
+    
+    for (const match of matches) {
+      const roundIndex = Number(match.round_index);
+      const slot = Number(match.slot);
+      
+      if (
+        !Number.isInteger(roundIndex) ||
+        !Number.isInteger(slot) ||
+        roundIndex < 1 ||
+        roundIndex > finalRoundIndex
+      ) {
+        continue;
+      }
+      
+      const key = `${roundIndex}:${slot}`;
+      
+      if (!ties.has(key)) {
+        ties.set(key, []);
+      }
+      
+      ties.get(key).push(match);
+    }
+    
+    const completedTies = new Map();
+    
+    for (
+      let roundIndex = 1; roundIndex <= finalRoundIndex; roundIndex++
+    ) {
+      const expectedSlots =
+        knockoutSize / Math.pow(2, roundIndex);
+      
+      const expectedLegs =
+        isDoubleLeg && roundIndex < finalRoundIndex ?
+        2 :
+        1;
+      
+      for (
+        let slot = 0; slot < expectedSlots; slot++
+      ) {
+        const key = `${roundIndex}:${slot}`;
+        const tieMatches = ties.get(key) || [];
         
-        const matches = result.results || [];
-        
-        if (!matches.length) {
-          throw new Error("No knockout matches found.");
+        if (!tieMatches.length) {
+          throw new Error(
+            `Knockout match is missing for round ${roundIndex}, slot ${slot}.`
+          );
         }
         
-        const ties = new Map();
-        
-        for (const match of matches) {
-          const roundIndex = Number(match.round_index);
-          const slot = Number(match.slot);
-          
-          if (
-            !Number.isInteger(roundIndex) ||
-            !Number.isInteger(slot) ||
-            roundIndex < 1 ||
-            roundIndex > finalRoundIndex
-          ) {
-            continue;
-          }
-          
-          const key = `${roundIndex}:${slot}`;
-          
-          if (!ties.has(key)) {
-            ties.set(key, []);
-          }
-          
-          ties.get(key).push(match);
-        }
-        
-        const completedTies = new Map();
+        const legs = [];
         
         for (
-          let roundIndex = 1; roundIndex <= finalRoundIndex; roundIndex++
+          let legNumber = 1; legNumber <= expectedLegs; legNumber++
         ) {
-          const expectedSlots =
-            knockoutSize / Math.pow(2, roundIndex);
+          const legMatch = tieMatches.find(
+            item => Number(item.leg || 1) === legNumber
+          );
           
-          const expectedLegs =
-            isDoubleLeg && roundIndex < finalRoundIndex ?
-            2 :
-            1;
+          if (!legMatch) {
+            throw new Error(
+              `Knockout leg ${legNumber} is missing for round ${roundIndex}, slot ${slot}.`
+            );
+          }
           
-          for (
-            let slot = 0; slot < expectedSlots; slot++
+          if (Number(legMatch.played) !== 1) {
+            throw new Error(
+              "Cannot award trophy bonuses while knockout matches remain unfinished."
+            );
+          }
+          
+          const homeScore = Number(legMatch.home_score);
+          const awayScore = Number(legMatch.away_score);
+          
+          if (
+            !Number.isInteger(homeScore) ||
+            !Number.isInteger(awayScore) ||
+            homeScore < 0 ||
+            awayScore < 0
           ) {
-            const key = `${roundIndex}:${slot}`;
-            const tieMatches = ties.get(key) || [];
-            
-            if (!tieMatches.length) {
-              throw new Error(
-                `Knockout match is missing for round ${roundIndex}, slot ${slot}.`
-              );
-            }
-            
-            const legs = [];
-            
-            for (
-              let legNumber = 1; legNumber <= expectedLegs; legNumber++
-            ) {
-              const legMatch = tieMatches.find(
-                item => Number(item.leg || 1) === legNumber
-              );
-              
-              if (!legMatch) {
-                throw new Error(
-                  `Knockout leg ${legNumber} is missing for round ${roundIndex}, slot ${slot}.`
-                );
-              }
-              
-              if (Number(legMatch.played) !== 1) {
-                throw new Error(
-                  "Cannot award trophy bonuses while knockout matches remain unfinished."
-                );
-              }
-              
-              const homeScore = Number(legMatch.home_score);
-              const awayScore = Number(legMatch.away_score);
-              
-              if (
-                !Number.isInteger(homeScore) ||
-                !Number.isInteger(awayScore) ||
-                homeScore < 0 ||
-                awayScore < 0
-              ) {
-                throw new Error(
-                  "A knockout match has an invalid score."
-                );
-              }
-              
-              if (
-                !legMatch.home_team_id ||
-                !legMatch.away_team_id ||
-                legMatch.home_team_id === legMatch.away_team_id
-              ) {
-                throw new Error(
-                  "A knockout match does not have two valid teams."
-                );
-              }
-              
-              legs.push({
-                ...legMatch,
-                home_score: homeScore,
-                away_score: awayScore
-              });
-            }
-            
-            const teamA = legs[0].home_team_id;
-            const teamB = legs[0].away_team_id;
-            
-            let teamAScore = 0;
-            let teamBScore = 0;
-            
-            for (const legMatch of legs) {
-              const validTeams = [
-                legMatch.home_team_id,
-                legMatch.away_team_id
-              ];
-              
-              if (
-                !validTeams.includes(teamA) ||
-                !validTeams.includes(teamB) ||
-                new Set(validTeams).size !== 2
-              ) {
-                throw new Error(
-                  "The legs of a knockout tie do not contain the same teams."
-                );
-              }
-              
-              if (legMatch.home_team_id === teamA) {
-                teamAScore += legMatch.home_score;
-                teamBScore += legMatch.away_score;
-              } else {
-                teamAScore += legMatch.away_score;
-                teamBScore += legMatch.home_score;
-              }
-            }
-            
-            if (teamAScore === teamBScore) {
-              throw new Error(
-                `The aggregate score is tied in round ${roundIndex}, slot ${slot}. A winner must be resolved before awarding bonuses.`
-              );
-            }
-            
-            const winnerId =
-              teamAScore > teamBScore ? teamA : teamB;
-            
-            const loserId =
-              winnerId === teamA ? teamB : teamA;
-            
-            completedTies.set(key, {
-              roundIndex,
-              slot,
-              winnerId,
-              loserId
-            });
+            throw new Error(
+              "A knockout match has an invalid score."
+            );
+          }
+          
+          if (
+            !legMatch.home_team_id ||
+            !legMatch.away_team_id ||
+            legMatch.home_team_id === legMatch.away_team_id
+          ) {
+            throw new Error(
+              "A knockout match does not have two valid teams."
+            );
+          }
+          
+          legs.push({
+            ...legMatch,
+            home_score: homeScore,
+            away_score: awayScore
+          });
+        }
+        
+        const teamA = legs[0].home_team_id;
+        const teamB = legs[0].away_team_id;
+        
+        let teamAScore = 0;
+        let teamBScore = 0;
+        
+        for (const legMatch of legs) {
+          const validTeams = [
+            legMatch.home_team_id,
+            legMatch.away_team_id
+          ];
+          
+          if (
+            !validTeams.includes(teamA) ||
+            !validTeams.includes(teamB) ||
+            new Set(validTeams).size !== 2
+          ) {
+            throw new Error(
+              "The legs of a knockout tie do not contain the same teams."
+            );
+          }
+          
+          if (legMatch.home_team_id === teamA) {
+            teamAScore += legMatch.home_score;
+            teamBScore += legMatch.away_score;
+          } else {
+            teamAScore += legMatch.away_score;
+            teamBScore += legMatch.home_score;
           }
         }
         
-        const finalTie = completedTies.get(
-          `${finalRoundIndex}:0`
+        if (teamAScore === teamBScore) {
+          throw new Error(
+            `The aggregate score is tied in round ${roundIndex}, slot ${slot}. A winner must be resolved before awarding bonuses.`
+          );
+        }
+        
+        const winnerId =
+          teamAScore > teamBScore ? teamA : teamB;
+        
+        const loserId =
+          winnerId === teamA ? teamB : teamA;
+        
+        completedTies.set(key, {
+          roundIndex,
+          slot,
+          winnerId,
+          loserId
+        });
+      }
+    }
+    
+    const finalTie = completedTies.get(
+      `${finalRoundIndex}:0`
+    );
+    
+    if (!finalTie) {
+      throw new Error(
+        "Could not determine the tournament final."
+      );
+    }
+    
+    placements.push({
+      team_id: finalTie.winnerId,
+      position: 1,
+      bonus: rules.bonuses[1]
+    });
+    
+    placements.push({
+      team_id: finalTie.loserId,
+      position: 2,
+      bonus: rules.bonuses[2]
+    });
+    
+    const semifinalRoundIndex = finalRoundIndex - 1;
+    
+    if (semifinalRoundIndex >= 1) {
+      const semifinalSlots =
+        knockoutSize / Math.pow(2, semifinalRoundIndex);
+      
+      for (
+        let slot = 0; slot < semifinalSlots; slot++
+      ) {
+        const tie = completedTies.get(
+          `${semifinalRoundIndex}:${slot}`
         );
         
-        if (!finalTie) {
+        if (!tie) {
           throw new Error(
-            "Could not determine the tournament final."
+            "Could not determine all semi-finalists."
           );
         }
         
         placements.push({
-          team_id: finalTie.winnerId,
-          position: 1,
-          bonus: rules.bonuses[1]
+          team_id: tie.loserId,
+          position: 3,
+          bonus: rules.bonuses[3]
         });
+      }
+    }
+    
+    const quarterFinalRoundIndex = finalRoundIndex - 2;
+    
+    if (quarterFinalRoundIndex >= 1) {
+      const quarterFinalSlots =
+        knockoutSize / Math.pow(2, quarterFinalRoundIndex);
+      
+      for (
+        let slot = 0; slot < quarterFinalSlots; slot++
+      ) {
+        const tie = completedTies.get(
+          `${quarterFinalRoundIndex}:${slot}`
+        );
+        
+        if (!tie) {
+          throw new Error(
+            "Could not determine all quarter-finalists."
+          );
+        }
         
         placements.push({
-          team_id: finalTie.loserId,
-          position: 2,
-          bonus: rules.bonuses[2]
+          team_id: tie.loserId,
+          position: 4,
+          bonus: rules.bonuses[4]
         });
-        
-        const semifinalRoundIndex = finalRoundIndex - 1;
-        
-        if (semifinalRoundIndex >= 1) {
-          const semifinalSlots =
-            knockoutSize / Math.pow(2, semifinalRoundIndex);
-          
-          for (
-            let slot = 0; slot < semifinalSlots; slot++
-          ) {
-            const tie = completedTies.get(
-              `${semifinalRoundIndex}:${slot}`
-            );
-            
-            if (!tie) {
-              throw new Error(
-                "Could not determine all semi-finalists."
-              );
-            }
-            
-            placements.push({
-              team_id: tie.loserId,
-              position: 3,
-              bonus: rules.bonuses[3]
-            });
-          }
-        }
-        
-        const quarterFinalRoundIndex = finalRoundIndex - 2;
-        
-        if (quarterFinalRoundIndex >= 1) {
-          const quarterFinalSlots =
-            knockoutSize / Math.pow(2, quarterFinalRoundIndex);
-          
-          for (
-            let slot = 0; slot < quarterFinalSlots; slot++
-          ) {
-            const tie = completedTies.get(
-              `${quarterFinalRoundIndex}:${slot}`
-            );
-            
-            if (!tie) {
-              throw new Error(
-                "Could not determine all quarter-finalists."
-              );
-            }
-            
-            placements.push({
-              team_id: tie.loserId,
-              position: 4,
-              bonus: rules.bonuses[4]
-            });
-          }
-        }
-        
-        const champion = await db.prepare(`
+      }
+    }
+    
+    const champion = await db.prepare(`
       SELECT id, name
       FROM teams
       WHERE id = ?
     `).bind(finalTie.winnerId).first();
-        
-        if (!champion) {
-          throw new Error(
-            "Tournament champion team was not found."
-          );
-        }
-        
-        await db.prepare(`
+    
+    if (!champion) {
+      throw new Error(
+        "Tournament champion team was not found."
+      );
+    }
+    
+    await db.prepare(`
       UPDATE tournaments
       SET
         champion = ?,
@@ -7910,15 +7812,15 @@ async function reviewMatchSubmissionRoute(
         updated_at = ?
       WHERE id = ?
     `).bind(
-          champion.id,
-          champion.name,
-          Date.now(),
-          tournamentId
-        ).run();
-      }
-      
-      const statements = placements.map(placement =>
-        db.prepare(`
+      champion.id,
+      champion.name,
+      Date.now(),
+      tournamentId
+    ).run();
+  }
+  
+  const statements = placements.map(placement =>
+    db.prepare(`
       INSERT INTO tournament_trophy_awards (
         id,
         tournament_id,
@@ -7942,19 +7844,19 @@ async function reviewMatchSubmissionRoute(
         AND tp.status = 'accepted'
       ON CONFLICT (tournament_id, user_id) DO NOTHING
     `).bind(
-          placement.position,
-          placement.bonus,
-          Date.now(),
-          tournamentId,
-          placement.team_id
-        )
-      );
-      
-      if (statements.length) {
-        await db.batch(statements);
-      }
-      
-      const championshipResult = await db.prepare(`
+      placement.position,
+      placement.bonus,
+      Date.now(),
+      tournamentId,
+      placement.team_id
+    )
+  );
+  
+  if (statements.length) {
+    await db.batch(statements);
+  }
+  
+  const championshipResult = await db.prepare(`
     INSERT INTO tournament_championship_trophies (
       tournament_id,
       awarded_at
@@ -7968,13 +7870,13 @@ async function reviewMatchSubmissionRoute(
     )
     ON CONFLICT (tournament_id) DO NOTHING
   `).bind(
-        tournamentId,
-        Date.now(),
-        tournamentId
-      ).run();
-      
-      if (championshipResult.meta?.changes === 1) {
-        await db.prepare(`
+    tournamentId,
+    Date.now(),
+    tournamentId
+  ).run();
+  
+  if (championshipResult.meta?.changes === 1) {
+    await db.prepare(`
       UPDATE users
       SET trophies_won = COALESCE(trophies_won, 0) + 1
       WHERE id = (
@@ -7986,45 +7888,45 @@ async function reviewMatchSubmissionRoute(
         LIMIT 1
       )
     `).bind(tournamentId).run();
-      }
-      
-      return {
-        success: true,
-        message: "Tournament trophy bonuses processed.",
-        placements
-      };
+  }
+  
+  return {
+    success: true,
+    message: "Tournament trophy bonuses processed.",
+    placements
+  };
+}
+
+
+async function getHeadToHeadComparisonRoute(
+  env,
+  url
+) {
+  try {
+    const player1Id = String(
+      url.searchParams.get("player1_id") || ""
+    ).trim();
+    const player2Id = String(
+      url.searchParams.get("player2_id") || ""
+    ).trim();
+    if (!player1Id || !player2Id) {
+      return Response.json({
+        success: false,
+        message: "Both player IDs are required."
+      }, {
+        status: 400
+      });
     }
-    
-    
-    async function getHeadToHeadComparisonRoute(
-      env,
-      url
-    ) {
-      try {
-        const player1Id = String(
-          url.searchParams.get("player1_id") || ""
-        ).trim();
-        const player2Id = String(
-          url.searchParams.get("player2_id") || ""
-        ).trim();
-        if (!player1Id || !player2Id) {
-          return Response.json({
-            success: false,
-            message: "Both player IDs are required."
-          }, {
-            status: 400
-          });
-        }
-        if (player1Id === player2Id) {
-          return Response.json({
-            success: false,
-            message: "Select two different players."
-          }, {
-            status: 400
-          });
-        }
-        const playersResult = await env.DB
-          .prepare(`
+    if (player1Id === player2Id) {
+      return Response.json({
+        success: false,
+        message: "Select two different players."
+      }, {
+        status: 400
+      });
+    }
+    const playersResult = await env.DB
+      .prepare(`
         SELECT
           id,
           username,
@@ -8036,25 +7938,25 @@ async function reviewMatchSubmissionRoute(
         WHERE id IN (?, ?)
           AND is_test_account = 0
       `)
-          .bind(player1Id, player2Id)
-          .all();
-        const players = playersResult.results || [];
-        const player1 = players.find(
-          player => player.id === player1Id
-        );
-        const player2 = players.find(
-          player => player.id === player2Id
-        );
-        if (!player1 || !player2) {
-          return Response.json({
-            success: false,
-            message: "One or both players were not found."
-          }, {
-            status: 404
-          });
-        }
-        const careerResult = await env.DB
-          .prepare(`
+      .bind(player1Id, player2Id)
+      .all();
+    const players = playersResult.results || [];
+    const player1 = players.find(
+      player => player.id === player1Id
+    );
+    const player2 = players.find(
+      player => player.id === player2Id
+    );
+    if (!player1 || !player2) {
+      return Response.json({
+        success: false,
+        message: "One or both players were not found."
+      }, {
+        status: 404
+      });
+    }
+    const careerResult = await env.DB
+      .prepare(`
         WITH all_stats AS (
           SELECT
             user_id,
@@ -8109,44 +8011,44 @@ async function reviewMatchSubmissionRoute(
           ) AS win_percentage
         FROM career
       `)
-          .bind(
-            player1Id,
-            player2Id,
-            player1Id,
-            player2Id
-          )
-          .all();
-        const careerRows = careerResult.results || [];
-        const createStats = () => ({
-          played: 0,
-          wins: 0,
-          draws: 0,
-          losses: 0,
-          goals_scored: 0,
-          goals_conceded: 0,
-          goal_difference: 0,
-          win_percentage: 0
-        });
-        const getCareerStats = playerId => {
-          const row = careerRows.find(
-            item => item.user_id === playerId
-          );
-          if (!row) {
-            return createStats();
-          }
-          return {
-            played: Number(row.played) || 0,
-            wins: Number(row.wins) || 0,
-            draws: Number(row.draws) || 0,
-            losses: Number(row.losses) || 0,
-            goals_scored: Number(row.goals_scored) || 0,
-            goals_conceded: Number(row.goals_conceded) || 0,
-            goal_difference: Number(row.goal_difference) || 0,
-            win_percentage: Number(row.win_percentage) || 0
-          };
-        };
-        const matchesResult = await env.DB
-          .prepare(`
+      .bind(
+        player1Id,
+        player2Id,
+        player1Id,
+        player2Id
+      )
+      .all();
+    const careerRows = careerResult.results || [];
+    const createStats = () => ({
+      played: 0,
+      wins: 0,
+      draws: 0,
+      losses: 0,
+      goals_scored: 0,
+      goals_conceded: 0,
+      goal_difference: 0,
+      win_percentage: 0
+    });
+    const getCareerStats = playerId => {
+      const row = careerRows.find(
+        item => item.user_id === playerId
+      );
+      if (!row) {
+        return createStats();
+      }
+      return {
+        played: Number(row.played) || 0,
+        wins: Number(row.wins) || 0,
+        draws: Number(row.draws) || 0,
+        losses: Number(row.losses) || 0,
+        goals_scored: Number(row.goals_scored) || 0,
+        goals_conceded: Number(row.goals_conceded) || 0,
+        goal_difference: Number(row.goal_difference) || 0,
+        win_percentage: Number(row.win_percentage) || 0
+      };
+    };
+    const matchesResult = await env.DB
+      .prepare(`
         SELECT
           m.id AS match_id,
           m.tournament_id,
@@ -8191,142 +8093,142 @@ async function reviewMatchSubmissionRoute(
         ORDER BY
           COALESCE(m.played_at, m.created_at) DESC
       `)
-          .bind(
-            player1Id,
-            player2Id,
-            player2Id,
-            player1Id
-          )
-          .all();
-        const matches = matchesResult.results || [];
-        const player1Stats = createStats();
-        const player2Stats = createStats();
-        const recentMatches = matches.map(match => {
-          const homeScore = Number(match.home_score);
-          const awayScore = Number(match.away_score);
-          const player1IsHome =
-            match.home_player_id === player1Id;
-          const player1Goals = player1IsHome ?
-            homeScore :
-            awayScore;
-          const player2Goals = player1IsHome ?
-            awayScore :
-            homeScore;
-          player1Stats.played++;
-          player2Stats.played++;
-          player1Stats.goals_scored += player1Goals;
-          player1Stats.goals_conceded += player2Goals;
-          player2Stats.goals_scored += player2Goals;
-          player2Stats.goals_conceded += player1Goals;
-          let result;
-          if (player1Goals > player2Goals) {
-            player1Stats.wins++;
-            player2Stats.losses++;
-            result = "player1_win";
-          } else if (player1Goals < player2Goals) {
-            player2Stats.wins++;
-            player1Stats.losses++;
-            result = "player2_win";
-          } else {
-            player1Stats.draws++;
-            player2Stats.draws++;
-            result = "draw";
-          }
-          return {
-            match_id: match.match_id,
-            tournament_id: match.tournament_id,
-            tournament_name: match.tournament_name,
-            home_team_id: match.home_team_id,
-            away_team_id: match.away_team_id,
-            home_player_id: match.home_player_id,
-            away_player_id: match.away_player_id,
-            home_player_name: match.home_player_name,
-            away_player_name: match.away_player_name,
-            home_score: homeScore,
-            away_score: awayScore,
-            played_at: match.played_at,
-            result
-          };
-        });
-        for (const stats of [
-            player1Stats,
-            player2Stats
-          ]) {
-          stats.goal_difference =
-            stats.goals_scored -
-            stats.goals_conceded;
-          stats.win_percentage = stats.played ?
-            Number(
-              (
-                stats.wins /
-                stats.played *
-                100
-              ).toFixed(2)
-            ) :
-            0;
-        }
-        return Response.json({
-          success: true,
-          players: {
-            player1: {
-              id: player1.id,
-              username: player1.username,
-              rating: player1.rating,
-              highest_rating: player1.highest_rating,
-              highest_rank: player1.highest_rank,
-              trophies_won: player1.trophies_won,
-              career_stats: getCareerStats(player1Id),
-              stats: player1Stats
-            },
-            player2: {
-              id: player2.id,
-              username: player2.username,
-              rating: player2.rating,
-              highest_rating: player2.highest_rating,
-              highest_rank: player2.highest_rank,
-              trophies_won: player2.trophies_won,
-              career_stats: getCareerStats(player2Id),
-              stats: player2Stats
-            }
-          },
-          head_to_head: {
-            total_matches: matches.length,
-            player1_wins: player1Stats.wins,
-            player2_wins: player2Stats.wins,
-            draws: player1Stats.draws
-          },
-          recent_matches: recentMatches.slice(0, 10)
-        });
-      } catch (error) {
-        console.error(
-          "Head-to-head comparison error:",
-          error
-        );
-        return Response.json({
-          success: false,
-          message: "Failed to compare player statistics."
-        }, {
-          status: 500
-        });
+      .bind(
+        player1Id,
+        player2Id,
+        player2Id,
+        player1Id
+      )
+      .all();
+    const matches = matchesResult.results || [];
+    const player1Stats = createStats();
+    const player2Stats = createStats();
+    const recentMatches = matches.map(match => {
+      const homeScore = Number(match.home_score);
+      const awayScore = Number(match.away_score);
+      const player1IsHome =
+        match.home_player_id === player1Id;
+      const player1Goals = player1IsHome ?
+        homeScore :
+        awayScore;
+      const player2Goals = player1IsHome ?
+        awayScore :
+        homeScore;
+      player1Stats.played++;
+      player2Stats.played++;
+      player1Stats.goals_scored += player1Goals;
+      player1Stats.goals_conceded += player2Goals;
+      player2Stats.goals_scored += player2Goals;
+      player2Stats.goals_conceded += player1Goals;
+      let result;
+      if (player1Goals > player2Goals) {
+        player1Stats.wins++;
+        player2Stats.losses++;
+        result = "player1_win";
+      } else if (player1Goals < player2Goals) {
+        player2Stats.wins++;
+        player1Stats.losses++;
+        result = "player2_win";
+      } else {
+        player1Stats.draws++;
+        player2Stats.draws++;
+        result = "draw";
       }
+      return {
+        match_id: match.match_id,
+        tournament_id: match.tournament_id,
+        tournament_name: match.tournament_name,
+        home_team_id: match.home_team_id,
+        away_team_id: match.away_team_id,
+        home_player_id: match.home_player_id,
+        away_player_id: match.away_player_id,
+        home_player_name: match.home_player_name,
+        away_player_name: match.away_player_name,
+        home_score: homeScore,
+        away_score: awayScore,
+        played_at: match.played_at,
+        result
+      };
+    });
+    for (const stats of [
+        player1Stats,
+        player2Stats
+      ]) {
+      stats.goal_difference =
+        stats.goals_scored -
+        stats.goals_conceded;
+      stats.win_percentage = stats.played ?
+        Number(
+          (
+            stats.wins /
+            stats.played *
+            100
+          ).toFixed(2)
+        ) :
+        0;
     }
-    
-    async function searchPlayersRoute(
-      env,
-      url
-    ) {
-      try {
-        const query = String(
-          url.searchParams.get("q") || ""
-        ).trim();
-        if (query.length < 2) {
-          return Response.json({
-            success: true,
-            players: []
-          });
+    return Response.json({
+      success: true,
+      players: {
+        player1: {
+          id: player1.id,
+          username: player1.username,
+          rating: player1.rating,
+          highest_rating: player1.highest_rating,
+          highest_rank: player1.highest_rank,
+          trophies_won: player1.trophies_won,
+          career_stats: getCareerStats(player1Id),
+          stats: player1Stats
+        },
+        player2: {
+          id: player2.id,
+          username: player2.username,
+          rating: player2.rating,
+          highest_rating: player2.highest_rating,
+          highest_rank: player2.highest_rank,
+          trophies_won: player2.trophies_won,
+          career_stats: getCareerStats(player2Id),
+          stats: player2Stats
         }
-        const result = await env.DB
-          .prepare(`
+      },
+      head_to_head: {
+        total_matches: matches.length,
+        player1_wins: player1Stats.wins,
+        player2_wins: player2Stats.wins,
+        draws: player1Stats.draws
+      },
+      recent_matches: recentMatches.slice(0, 10)
+    });
+  } catch (error) {
+    console.error(
+      "Head-to-head comparison error:",
+      error
+    );
+    return Response.json({
+      success: false,
+      message: "Failed to compare player statistics."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function searchPlayersRoute(
+  env,
+  url
+) {
+  try {
+    const query = String(
+      url.searchParams.get("q") || ""
+    ).trim();
+    if (query.length < 2) {
+      return Response.json({
+        success: true,
+        players: []
+      });
+    }
+    const result = await env.DB
+      .prepare(`
         SELECT
           id,
           username,
@@ -8348,566 +8250,566 @@ async function reviewMatchSubmissionRoute(
           username COLLATE NOCASE ASC
         LIMIT 20
       `)
-          .bind(
-            `%${query}%`,
-            query,
-            `${query}%`
+      .bind(
+        `%${query}%`,
+        query,
+        `${query}%`
+      )
+      .all();
+    return Response.json({
+      success: true,
+      players: result.results || []
+    });
+  } catch (error) {
+    console.error(
+      "Player search error:",
+      error
+    );
+    return Response.json({
+      success: false,
+      message: "Failed to search players."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+
+
+
+
+function createChampionsLeagueGroupMatch(
+  groupId,
+  homeTeamId,
+  awayTeamId,
+  roundIndex,
+  slot,
+  leg
+) {
+  return {
+    id: crypto.randomUUID(),
+    tournament_id: null,
+    home_team_id: homeTeamId,
+    away_team_id: awayTeamId,
+    home_score: null,
+    away_score: null,
+    played: 0,
+    played_at: null,
+    match_type: "group",
+    group_id: groupId,
+    round: `League Stage - Round ${roundIndex}`,
+    round_index: roundIndex,
+    slot,
+    leg,
+    winner_team_id: null,
+    scheduled_at: null,
+    created_at: Date.now(),
+    updated_at: null,
+    submission_status: null
+  };
+}
+
+function generateChampionsLeagueGroupMatches(
+  group,
+  teamIds,
+  groupRoundMode = "single"
+) {
+  const matches = [];
+  const teams = [...teamIds];
+  if (teams.length < 2) {
+    return matches;
+  }
+  const doubleLeg = groupRoundMode === "double";
+  if (teams.length % 2 !== 0) {
+    teams.push(null);
+  }
+  const teamCount = teams.length;
+  const roundsPerLeg = teamCount - 1;
+  const matchesPerRound = teamCount / 2;
+  const firstLegFixtures = [];
+  let rotatingTeams = [...teams];
+  for (
+    let roundIndex = 1; roundIndex <= roundsPerLeg; roundIndex++
+  ) {
+    const roundFixtures = [];
+    for (
+      let slot = 0; slot < matchesPerRound; slot++
+    ) {
+      const firstTeam = rotatingTeams[slot];
+      const secondTeam =
+        rotatingTeams[teamCount - 1 - slot];
+      if (firstTeam && secondTeam) {
+        const homeFirst =
+          (roundIndex + slot) % 2 === 0;
+        const fixture = {
+          homeTeamId: homeFirst ?
+            firstTeam : secondTeam,
+          awayTeamId: homeFirst ?
+            secondTeam : firstTeam,
+          slot: slot + 1
+        };
+        roundFixtures.push(fixture);
+        matches.push(
+          createChampionsLeagueGroupMatch(
+            group.id,
+            fixture.homeTeamId,
+            fixture.awayTeamId,
+            roundIndex,
+            fixture.slot,
+            1
           )
-          .all();
-        return Response.json({
-          success: true,
-          players: result.results || []
-        });
-      } catch (error) {
-        console.error(
-          "Player search error:",
-          error
         );
-        return Response.json({
-          success: false,
-          message: "Failed to search players."
-        }, {
-          status: 500
-        });
       }
     }
-    
-    
-    
-    
-    
-    
-    function createChampionsLeagueGroupMatch(
-      groupId,
-      homeTeamId,
-      awayTeamId,
-      roundIndex,
-      slot,
-      leg
+    firstLegFixtures.push(roundFixtures);
+    rotatingTeams = [
+      rotatingTeams[0],
+      rotatingTeams[teamCount - 1],
+      ...rotatingTeams.slice(1, teamCount - 1)
+    ];
+  }
+  if (doubleLeg) {
+    for (
+      let roundIndex = 1; roundIndex <= roundsPerLeg; roundIndex++
     ) {
-      return {
-        id: crypto.randomUUID(),
-        tournament_id: null,
-        home_team_id: homeTeamId,
-        away_team_id: awayTeamId,
-        home_score: null,
-        away_score: null,
-        played: 0,
-        played_at: null,
-        match_type: "group",
-        group_id: groupId,
-        round: `League Stage - Round ${roundIndex}`,
-        round_index: roundIndex,
-        slot,
-        leg,
-        winner_team_id: null,
-        scheduled_at: null,
-        created_at: Date.now(),
-        updated_at: null,
-        submission_status: null
-      };
+      const fixtures =
+        firstLegFixtures[roundIndex - 1];
+      for (const fixture of fixtures) {
+        matches.push(
+          createChampionsLeagueGroupMatch(
+            group.id,
+            fixture.awayTeamId,
+            fixture.homeTeamId,
+            roundsPerLeg + roundIndex,
+            fixture.slot,
+            2
+          )
+        );
+      }
     }
-    
-    function generateChampionsLeagueGroupMatches(
-      group,
-      teamIds,
-      groupRoundMode = "single"
-    ) {
-      const matches = [];
-      const teams = [...teamIds];
-      if (teams.length < 2) {
-        return matches;
-      }
-      const doubleLeg = groupRoundMode === "double";
-      if (teams.length % 2 !== 0) {
-        teams.push(null);
-      }
-      const teamCount = teams.length;
-      const roundsPerLeg = teamCount - 1;
-      const matchesPerRound = teamCount / 2;
-      const firstLegFixtures = [];
-      let rotatingTeams = [...teams];
-      for (
-        let roundIndex = 1; roundIndex <= roundsPerLeg; roundIndex++
-      ) {
-        const roundFixtures = [];
-        for (
-          let slot = 0; slot < matchesPerRound; slot++
+  }
+  return matches;
+}
+
+
+function generateLimitedOpponentMatches(
+  group,
+  teamIds,
+  opponentsPerTeam,
+  groupRoundMode = "single"
+) {
+  const teamCount = teamIds.length;
+  if (teamCount < 2) {
+    return [];
+  }
+  if (
+    !Number.isInteger(opponentsPerTeam) ||
+    opponentsPerTeam < 1 ||
+    opponentsPerTeam >= teamCount
+  ) {
+    throw new Error(
+      `Opponents per team must be between 1 and ${teamCount - 1}.`
+    );
+  }
+  if ((teamCount * opponentsPerTeam) % 2 !== 0) {
+    throw new Error(
+      "This number of teams and opponents per team cannot produce a valid schedule."
+    );
+  }
+  const teams = [...teamIds];
+  for (let i = teams.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [teams[i], teams[j]] = [teams[j], teams[i]];
+  }
+  const opponentCounts = {};
+  const playedPairs = new Set();
+  teams.forEach(id => {
+    opponentCounts[id] = 0;
+  });
+  const firstLegFixtures = [];
+  const maxAttempts = 1000;
+  let attempts = 0;
+  while (
+    teams.some(id => opponentCounts[id] < opponentsPerTeam) &&
+    attempts < maxAttempts
+  ) {
+    attempts++;
+    const roundFixtures = [];
+    const usedInRound = new Set();
+    const availableTeams = [...teams].sort(
+      (a, b) =>
+      (opponentsPerTeam - opponentCounts[b]) -
+      (opponentsPerTeam - opponentCounts[a])
+    );
+    for (let i = 0; i < availableTeams.length; i++) {
+      const teamA = availableTeams[i];
+      if (usedInRound.has(teamA)) continue;
+      if (opponentCounts[teamA] >= opponentsPerTeam) continue;
+      for (let j = i + 1; j < availableTeams.length; j++) {
+        const teamB = availableTeams[j];
+        if (usedInRound.has(teamB)) continue;
+        if (opponentCounts[teamB] >= opponentsPerTeam) continue;
+        const pairKey1 = `${teamA}-${teamB}`;
+        const pairKey2 = `${teamB}-${teamA}`;
+        if (
+          !playedPairs.has(pairKey1) &&
+          !playedPairs.has(pairKey2)
         ) {
-          const firstTeam = rotatingTeams[slot];
-          const secondTeam =
-            rotatingTeams[teamCount - 1 - slot];
-          if (firstTeam && secondTeam) {
-            const homeFirst =
-              (roundIndex + slot) % 2 === 0;
-            const fixture = {
-              homeTeamId: homeFirst ?
-                firstTeam : secondTeam,
-              awayTeamId: homeFirst ?
-                secondTeam : firstTeam,
-              slot: slot + 1
-            };
-            roundFixtures.push(fixture);
-            matches.push(
-              createChampionsLeagueGroupMatch(
-                group.id,
-                fixture.homeTeamId,
-                fixture.awayTeamId,
-                roundIndex,
-                fixture.slot,
-                1
-              )
-            );
-          }
-        }
-        firstLegFixtures.push(roundFixtures);
-        rotatingTeams = [
-          rotatingTeams[0],
-          rotatingTeams[teamCount - 1],
-          ...rotatingTeams.slice(1, teamCount - 1)
-        ];
-      }
-      if (doubleLeg) {
-        for (
-          let roundIndex = 1; roundIndex <= roundsPerLeg; roundIndex++
-        ) {
-          const fixtures =
-            firstLegFixtures[roundIndex - 1];
-          for (const fixture of fixtures) {
-            matches.push(
-              createChampionsLeagueGroupMatch(
-                group.id,
-                fixture.awayTeamId,
-                fixture.homeTeamId,
-                roundsPerLeg + roundIndex,
-                fixture.slot,
-                2
-              )
-            );
-          }
-        }
-      }
-      return matches;
-    }
-    
-    
-    function generateLimitedOpponentMatches(
-      group,
-      teamIds,
-      opponentsPerTeam,
-      groupRoundMode = "single"
-    ) {
-      const teamCount = teamIds.length;
-      if (teamCount < 2) {
-        return [];
-      }
-      if (
-        !Number.isInteger(opponentsPerTeam) ||
-        opponentsPerTeam < 1 ||
-        opponentsPerTeam >= teamCount
-      ) {
-        throw new Error(
-          `Opponents per team must be between 1 and ${teamCount - 1}.`
-        );
-      }
-      if ((teamCount * opponentsPerTeam) % 2 !== 0) {
-        throw new Error(
-          "This number of teams and opponents per team cannot produce a valid schedule."
-        );
-      }
-      const teams = [...teamIds];
-      for (let i = teams.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [teams[i], teams[j]] = [teams[j], teams[i]];
-      }
-      const opponentCounts = {};
-      const playedPairs = new Set();
-      teams.forEach(id => {
-        opponentCounts[id] = 0;
-      });
-      const firstLegFixtures = [];
-      const maxAttempts = 1000;
-      let attempts = 0;
-      while (
-        teams.some(id => opponentCounts[id] < opponentsPerTeam) &&
-        attempts < maxAttempts
-      ) {
-        attempts++;
-        const roundFixtures = [];
-        const usedInRound = new Set();
-        const availableTeams = [...teams].sort(
-          (a, b) =>
-          (opponentsPerTeam - opponentCounts[b]) -
-          (opponentsPerTeam - opponentCounts[a])
-        );
-        for (let i = 0; i < availableTeams.length; i++) {
-          const teamA = availableTeams[i];
-          if (usedInRound.has(teamA)) continue;
-          if (opponentCounts[teamA] >= opponentsPerTeam) continue;
-          for (let j = i + 1; j < availableTeams.length; j++) {
-            const teamB = availableTeams[j];
-            if (usedInRound.has(teamB)) continue;
-            if (opponentCounts[teamB] >= opponentsPerTeam) continue;
-            const pairKey1 = `${teamA}-${teamB}`;
-            const pairKey2 = `${teamB}-${teamA}`;
-            if (
-              !playedPairs.has(pairKey1) &&
-              !playedPairs.has(pairKey2)
-            ) {
-              playedPairs.add(pairKey1);
-              playedPairs.add(pairKey2);
-              usedInRound.add(teamA);
-              usedInRound.add(teamB);
-              opponentCounts[teamA]++;
-              opponentCounts[teamB]++;
-              const isHome = Math.random() < 0.5;
-              roundFixtures.push({
-                homeTeamId: isHome ? teamA : teamB,
-                awayTeamId: isHome ? teamB : teamA,
-                slot: roundFixtures.length + 1
-              });
-              break;
-            }
-          }
-        }
-        if (roundFixtures.length > 0) {
-          firstLegFixtures.push(roundFixtures);
-        } else {
+          playedPairs.add(pairKey1);
+          playedPairs.add(pairKey2);
+          usedInRound.add(teamA);
+          usedInRound.add(teamB);
+          opponentCounts[teamA]++;
+          opponentCounts[teamB]++;
+          const isHome = Math.random() < 0.5;
+          roundFixtures.push({
+            homeTeamId: isHome ? teamA : teamB,
+            awayTeamId: isHome ? teamB : teamA,
+            slot: roundFixtures.length + 1
+          });
           break;
         }
       }
-      const matches = [];
-      let roundIndex = 1;
-      for (const roundFixtures of firstLegFixtures) {
-        for (const fixture of roundFixtures) {
-          matches.push(
-            createChampionsLeagueGroupMatch(
-              group.id,
-              fixture.homeTeamId,
-              fixture.awayTeamId,
-              roundIndex,
-              fixture.slot,
-              1
-            )
-          );
-        }
-        roundIndex++;
+    }
+    if (roundFixtures.length > 0) {
+      firstLegFixtures.push(roundFixtures);
+    } else {
+      break;
+    }
+  }
+  const matches = [];
+  let roundIndex = 1;
+  for (const roundFixtures of firstLegFixtures) {
+    for (const fixture of roundFixtures) {
+      matches.push(
+        createChampionsLeagueGroupMatch(
+          group.id,
+          fixture.homeTeamId,
+          fixture.awayTeamId,
+          roundIndex,
+          fixture.slot,
+          1
+        )
+      );
+    }
+    roundIndex++;
+  }
+  if (groupRoundMode === "double") {
+    const roundsPerLeg = firstLegFixtures.length;
+    for (let i = 0; i < roundsPerLeg; i++) {
+      const fixtures = firstLegFixtures[i];
+      for (const fixture of fixtures) {
+        matches.push(
+          createChampionsLeagueGroupMatch(
+            group.id,
+            fixture.awayTeamId,
+            fixture.homeTeamId,
+            roundsPerLeg + i + 1,
+            fixture.slot,
+            2
+          )
+        );
       }
-      if (groupRoundMode === "double") {
-        const roundsPerLeg = firstLegFixtures.length;
-        for (let i = 0; i < roundsPerLeg; i++) {
-          const fixtures = firstLegFixtures[i];
-          for (const fixture of fixtures) {
-            matches.push(
-              createChampionsLeagueGroupMatch(
-                group.id,
-                fixture.awayTeamId,
-                fixture.homeTeamId,
-                roundsPerLeg + i + 1,
-                fixture.slot,
-                2
-              )
-            );
-          }
-        }
-      }
-      return matches;
+    }
+  }
+  return matches;
+}
+
+
+async function generateChampionsLeagueRoute(
+  request,
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournamentForUser(
+        env.DB,
+        tournamentId,
+        user.id
+      );
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    if (tournament.admin_uid !== user.id) {
+      return Response.json({
+        success: false,
+        message: "Only the tournament admin can generate the Champions League."
+      }, {
+        status: 403
+      });
+    }
+    const body = await request.json();
+    const settings =
+      body.settings &&
+      typeof body.settings === "object" &&
+      !Array.isArray(body.settings) ?
+      body.settings :
+      body;
+    const groupRoundMode =
+      settings.groupRoundMode === "double" ?
+      "double" :
+      "single";
+    const groupScheduleMode =
+      settings.groupScheduleMode === "limited" ?
+      "limited" :
+      "full";
+    const opponentsPerTeam =
+      Number(settings.opponentsPerTeam);
+    const directQualifiers =
+      Number(settings.directQualifiers);
+    const playoffStartPosition =
+      Number(settings.playoffStartPosition);
+    const playoffEndPosition =
+      Number(settings.playoffEndPosition);
+    
+    const requestedPlayoffRoundMode =
+      settings.playoffRoundMode ?? "single";
+    
+    if (
+      requestedPlayoffRoundMode !== "single" &&
+      requestedPlayoffRoundMode !== "double"
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid playoff round mode."
+      }, {
+        status: 400
+      });
     }
     
+    const playoffRoundMode =
+      requestedPlayoffRoundMode;
     
-    async function generateChampionsLeagueRoute(
-      request,
-      env,
-      tournamentId,
-      user
+    const requestedKnockoutRoundMode =
+      settings.knockoutRoundMode ?? "single";
+    if (
+      requestedKnockoutRoundMode !== "single" &&
+      requestedKnockoutRoundMode !== "double"
     ) {
-      try {
-        const tournament =
-          await getTournamentForUser(
-            env.DB,
-            tournamentId,
-            user.id
-          );
-        if (!tournament) {
-          return Response.json({
-            success: false,
-            message: "Tournament not found."
-          }, {
-            status: 404
-          });
-        }
-        if (tournament.admin_uid !== user.id) {
-          return Response.json({
-            success: false,
-            message: "Only the tournament admin can generate the Champions League."
-          }, {
-            status: 403
-          });
-        }
-        const body = await request.json();
-        const settings =
-          body.settings &&
-          typeof body.settings === "object" &&
-          !Array.isArray(body.settings) ?
-          body.settings :
-          body;
-        const groupRoundMode =
-          settings.groupRoundMode === "double" ?
-          "double" :
-          "single";
-        const groupScheduleMode =
-          settings.groupScheduleMode === "limited" ?
-          "limited" :
-          "full";
-        const opponentsPerTeam =
-          Number(settings.opponentsPerTeam);
-        const directQualifiers =
-          Number(settings.directQualifiers);
-        const playoffStartPosition =
-          Number(settings.playoffStartPosition);
-        const playoffEndPosition =
-          Number(settings.playoffEndPosition);
-        
-        const requestedPlayoffRoundMode =
-          settings.playoffRoundMode ?? "single";
-        
-        if (
-          requestedPlayoffRoundMode !== "single" &&
-          requestedPlayoffRoundMode !== "double"
-        ) {
-          return Response.json({
-            success: false,
-            message: "Invalid playoff round mode."
-          }, {
-            status: 400
-          });
-        }
-        
-        const playoffRoundMode =
-          requestedPlayoffRoundMode;
-        
-        const requestedKnockoutRoundMode =
-          settings.knockoutRoundMode ?? "single";
-        if (
-          requestedKnockoutRoundMode !== "single" &&
-          requestedKnockoutRoundMode !== "double"
-        ) {
-          return Response.json({
-            success: false,
-            message: "Invalid knockout round mode."
-          }, {
-            status: 400
-          });
-        }
-        const knockoutRoundMode =
-          requestedKnockoutRoundMode;
-        const thirdPlaceMatch =
-          settings.thirdPlaceMatch === true;
-        const teams =
-          await getTeamsByTournament(
-            env.DB,
-            tournamentId
-          );
-        if (!teams || teams.length < 4) {
-          return Response.json({
-            success: false,
-            message: "At least 4 teams are required for the Champions League."
-          }, {
-            status: 400
-          });
-        }
-        if (
-          new Set(teams.map(team => team.id)).size !==
-          teams.length
-        ) {
-          return Response.json({
-            success: false,
-            message: "Duplicate team registrations were found. Resolve them before generating fixtures."
-          }, {
-            status: 400
-          });
-        }
-        if (
-          !Number.isInteger(directQualifiers) ||
-          directQualifiers < 0 ||
-          directQualifiers >= teams.length
-        ) {
-          return Response.json({
-            success: false,
-            message: "Direct qualifiers must be a whole number from 0 to one less than the number of registered teams."
-          }, {
-            status: 400
-          });
-        }
-        if (
-          !Number.isInteger(playoffStartPosition) ||
-          !Number.isInteger(playoffEndPosition) ||
-          playoffStartPosition < 1 ||
-          playoffEndPosition > teams.length ||
-          playoffEndPosition < playoffStartPosition
-        ) {
-          return Response.json({
-            success: false,
-            message: "Invalid playoff positions."
-          }, {
-            status: 400
-          });
-        }
-        if (
-          playoffStartPosition !==
-          directQualifiers + 1
-        ) {
-          return Response.json({
-            success: false,
-            message: "Playoffs must start immediately after the direct qualifiers."
-          }, {
-            status: 400
-          });
-        }
-        const playoffTeamCount =
-          playoffEndPosition -
-          playoffStartPosition +
-          1;
-        if (
-          playoffTeamCount < 2 ||
-          playoffTeamCount % 2 !== 0
-        ) {
-          return Response.json({
-            success: false,
-            message: "The playoff positions must contain an even number of at least 2 teams."
-          }, {
-            status: 400
-          });
-        }
-        const knockoutSize =
-          directQualifiers +
-          playoffTeamCount / 2;
-        if (
-          ![2, 4, 8, 16, 32].includes(knockoutSize)
-        ) {
-          return Response.json({
-            success: false,
-            message: "Direct qualifiers plus playoff winners must produce a valid knockout bracket of 2, 4, 8, 16, or 32 teams."
-          }, {
-            status: 400
-          });
-        }
-        if (
-          thirdPlaceMatch &&
-          knockoutSize < 4
-        ) {
-          return Response.json({
-            success: false,
-            message: "A third-place match requires at least 4 knockout teams."
-          }, {
-            status: 400
-          });
-        }
-        if (
-          groupScheduleMode === "limited" &&
-          (
-            !Number.isInteger(opponentsPerTeam) ||
-            opponentsPerTeam < 1 ||
-            opponentsPerTeam >= teams.length
-          )
-        ) {
-          return Response.json({
-            success: false,
-            message: `Opponents per team must be between 1 and ${teams.length - 1}.`
-          }, {
-            status: 400
-          });
-        }
-        if (
-          groupScheduleMode === "limited" &&
-          (
-            teams.length * opponentsPerTeam
-          ) % 2 !== 0
-        ) {
-          return Response.json({
-            success: false,
-            message: "This number of teams and opponents per team cannot produce a valid schedule. Choose a different opponents-per-team value."
-          }, {
-            status: 400
-          });
-        }
-        const now = Date.now();
-        const group = {
-          id: crypto.randomUUID(),
-          tournament_id: tournamentId,
-          name: "League Stage",
-          created_at: now
-        };
-        const teamIds =
-          teams.map(team => team.id);
-        let groupMatches;
-        try {
-          groupMatches =
-            groupScheduleMode === "limited" ?
-            generateLimitedOpponentMatches(
-              group,
-              teamIds,
-              opponentsPerTeam,
-              groupRoundMode
-            ) :
-            generateChampionsLeagueGroupMatches(
-              group,
-              teamIds,
-              groupRoundMode
-            );
-        } catch (error) {
-          return Response.json({
-            success: false,
-            message: error.message ||
-              "Unable to generate league-stage fixtures."
-          }, {
-            status: 400
-          });
-        }
-        for (const match of groupMatches) {
-          match.tournament_id = tournamentId;
-          match.created_at = now;
-        }
-        const existingSettings = (() => {
-          try {
-            if (typeof tournament.settings === "string") {
-              return JSON.parse(tournament.settings) || {};
-            }
-            if (
-              tournament.settings &&
-              typeof tournament.settings === "object"
-            ) {
-              return { ...tournament.settings };
-            }
-            return {};
-          } catch {
-            return {};
-          }
-        })();
-        const updatedSettings = {
-          ...existingSettings,
-          tournamentMode: "champions_league",
-          enableGroups: true,
-          groupingMode: "auto",
-          groupScheduleMode,
-          opponentsPerTeam: groupScheduleMode === "limited" ?
-            opponentsPerTeam : null,
-          groupRoundMode,
-          directQualifiers,
-          playoffStartPosition,
-          playoffEndPosition,
-          playoffRoundMode,
-          knockoutSize,
-          knockoutRoundMode,
-          thirdPlaceMatch,
-          groupStageComplete: false,
-          knockoutGenerated: false
-        };
-        await deleteTournamentCupData(
-          env.DB,
-          tournamentId
+      return Response.json({
+        success: false,
+        message: "Invalid knockout round mode."
+      }, {
+        status: 400
+      });
+    }
+    const knockoutRoundMode =
+      requestedKnockoutRoundMode;
+    const thirdPlaceMatch =
+      settings.thirdPlaceMatch === true;
+    const teams =
+      await getTeamsByTournament(
+        env.DB,
+        tournamentId
+      );
+    if (!teams || teams.length < 4) {
+      return Response.json({
+        success: false,
+        message: "At least 4 teams are required for the Champions League."
+      }, {
+        status: 400
+      });
+    }
+    if (
+      new Set(teams.map(team => team.id)).size !==
+      teams.length
+    ) {
+      return Response.json({
+        success: false,
+        message: "Duplicate team registrations were found. Resolve them before generating fixtures."
+      }, {
+        status: 400
+      });
+    }
+    if (
+      !Number.isInteger(directQualifiers) ||
+      directQualifiers < 0 ||
+      directQualifiers >= teams.length
+    ) {
+      return Response.json({
+        success: false,
+        message: "Direct qualifiers must be a whole number from 0 to one less than the number of registered teams."
+      }, {
+        status: 400
+      });
+    }
+    if (
+      !Number.isInteger(playoffStartPosition) ||
+      !Number.isInteger(playoffEndPosition) ||
+      playoffStartPosition < 1 ||
+      playoffEndPosition > teams.length ||
+      playoffEndPosition < playoffStartPosition
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid playoff positions."
+      }, {
+        status: 400
+      });
+    }
+    if (
+      playoffStartPosition !==
+      directQualifiers + 1
+    ) {
+      return Response.json({
+        success: false,
+        message: "Playoffs must start immediately after the direct qualifiers."
+      }, {
+        status: 400
+      });
+    }
+    const playoffTeamCount =
+      playoffEndPosition -
+      playoffStartPosition +
+      1;
+    if (
+      playoffTeamCount < 2 ||
+      playoffTeamCount % 2 !== 0
+    ) {
+      return Response.json({
+        success: false,
+        message: "The playoff positions must contain an even number of at least 2 teams."
+      }, {
+        status: 400
+      });
+    }
+    const knockoutSize =
+      directQualifiers +
+      playoffTeamCount / 2;
+    if (
+      ![2, 4, 8, 16, 32].includes(knockoutSize)
+    ) {
+      return Response.json({
+        success: false,
+        message: "Direct qualifiers plus playoff winners must produce a valid knockout bracket of 2, 4, 8, 16, or 32 teams."
+      }, {
+        status: 400
+      });
+    }
+    if (
+      thirdPlaceMatch &&
+      knockoutSize < 4
+    ) {
+      return Response.json({
+        success: false,
+        message: "A third-place match requires at least 4 knockout teams."
+      }, {
+        status: 400
+      });
+    }
+    if (
+      groupScheduleMode === "limited" &&
+      (
+        !Number.isInteger(opponentsPerTeam) ||
+        opponentsPerTeam < 1 ||
+        opponentsPerTeam >= teams.length
+      )
+    ) {
+      return Response.json({
+        success: false,
+        message: `Opponents per team must be between 1 and ${teams.length - 1}.`
+      }, {
+        status: 400
+      });
+    }
+    if (
+      groupScheduleMode === "limited" &&
+      (
+        teams.length * opponentsPerTeam
+      ) % 2 !== 0
+    ) {
+      return Response.json({
+        success: false,
+        message: "This number of teams and opponents per team cannot produce a valid schedule. Choose a different opponents-per-team value."
+      }, {
+        status: 400
+      });
+    }
+    const now = Date.now();
+    const group = {
+      id: crypto.randomUUID(),
+      tournament_id: tournamentId,
+      name: "League Stage",
+      created_at: now
+    };
+    const teamIds =
+      teams.map(team => team.id);
+    let groupMatches;
+    try {
+      groupMatches =
+        groupScheduleMode === "limited" ?
+        generateLimitedOpponentMatches(
+          group,
+          teamIds,
+          opponentsPerTeam,
+          groupRoundMode
+        ) :
+        generateChampionsLeagueGroupMatches(
+          group,
+          teamIds,
+          groupRoundMode
         );
-        await env.DB.prepare(`
+    } catch (error) {
+      return Response.json({
+        success: false,
+        message: error.message ||
+          "Unable to generate league-stage fixtures."
+      }, {
+        status: 400
+      });
+    }
+    for (const match of groupMatches) {
+      match.tournament_id = tournamentId;
+      match.created_at = now;
+    }
+    const existingSettings = (() => {
+      try {
+        if (typeof tournament.settings === "string") {
+          return JSON.parse(tournament.settings) || {};
+        }
+        if (
+          tournament.settings &&
+          typeof tournament.settings === "object"
+        ) {
+          return { ...tournament.settings };
+        }
+        return {};
+      } catch {
+        return {};
+      }
+    })();
+    const updatedSettings = {
+      ...existingSettings,
+      tournamentMode: "champions_league",
+      enableGroups: true,
+      groupingMode: "auto",
+      groupScheduleMode,
+      opponentsPerTeam: groupScheduleMode === "limited" ?
+        opponentsPerTeam : null,
+      groupRoundMode,
+      directQualifiers,
+      playoffStartPosition,
+      playoffEndPosition,
+      playoffRoundMode,
+      knockoutSize,
+      knockoutRoundMode,
+      thirdPlaceMatch,
+      groupStageComplete: false,
+      knockoutGenerated: false
+    };
+    await deleteTournamentCupData(
+      env.DB,
+      tournamentId
+    );
+    await env.DB.prepare(`
       UPDATE tournament_players
       SET
         played = 0,
@@ -8919,17 +8821,17 @@ async function reviewMatchSubmissionRoute(
         points = 0
       WHERE tournament_id = ?
     `).bind(
-          tournamentId
-        ).run();
-        await createGroupsBatch(
-          env.DB,
-          [group]
-        );
-        await createMatchesBatch(
-          env.DB,
-          groupMatches
-        );
-        await env.DB.prepare(`
+      tournamentId
+    ).run();
+    await createGroupsBatch(
+      env.DB,
+      [group]
+    );
+    await createMatchesBatch(
+      env.DB,
+      groupMatches
+    );
+    await env.DB.prepare(`
       UPDATE tournaments
       SET
         settings = ?,
@@ -8938,77 +8840,77 @@ async function reviewMatchSubmissionRoute(
         updated_at = ?
       WHERE id = ?
     `).bind(
-          JSON.stringify(updatedSettings),
-          Date.now(),
-          tournamentId
-        ).run();
-        return Response.json({
-          success: true,
-          message: "Champions League league stage generated successfully.",
-          tournamentId,
-          settings: updatedSettings,
-          groups: [group],
-          groupMatches,
-          knockoutMatches: []
-        });
-      } catch (error) {
-        console.error(
-          "generateChampionsLeagueRoute error:",
-          error
-        );
-        return Response.json({
-          success: false,
-          message: error.message ||
-            "Failed to generate Champions League."
-        }, {
-          status: 500
-        });
-      }
-    }
-    
-    async function generateChampionsLeagueMainKnockout(
+      JSON.stringify(updatedSettings),
+      Date.now(),
+      tournamentId
+    ).run();
+    return Response.json({
+      success: true,
+      message: "Champions League league stage generated successfully.",
+      tournamentId,
+      settings: updatedSettings,
+      groups: [group],
+      groupMatches,
+      knockoutMatches: []
+    });
+  } catch (error) {
+    console.error(
+      "generateChampionsLeagueRoute error:",
+      error
+    );
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to generate Champions League."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function generateChampionsLeagueMainKnockout(
+  db,
+  tournamentId,
+  settings
+) {
+  const directQualifiers =
+    Number(settings.directQualifiers);
+  
+  const playoffStartPosition =
+    Number(settings.playoffStartPosition);
+  
+  const playoffEndPosition =
+    Number(settings.playoffEndPosition);
+  
+  const knockoutSize =
+    Number(settings.knockoutSize);
+  
+  const qualification =
+    await getCupQualifiedTeams(
       db,
       tournamentId,
-      settings
-    ) {
-      const directQualifiers =
-        Number(settings.directQualifiers);
-      
-      const playoffStartPosition =
-        Number(settings.playoffStartPosition);
-      
-      const playoffEndPosition =
-        Number(settings.playoffEndPosition);
-      
-      const knockoutSize =
-        Number(settings.knockoutSize);
-      
-      const qualification =
-        await getCupQualifiedTeams(
-          db,
-          tournamentId,
-          playoffEndPosition
-        );
-      
-      const rankedTeams =
-        qualification.qualifiedTeams || [];
-      
-      const directTeams =
-        rankedTeams.filter(
-          team =>
-          Number(team.pos) <= directQualifiers
-        );
-      
-      if (
-        directTeams.length !== directQualifiers
-      ) {
-        throw new Error(
-          "Unable to retrieve all direct qualifiers."
-        );
-      }
-      
-      const playoffMatchesResult =
-        await db.prepare(`
+      playoffEndPosition
+    );
+  
+  const rankedTeams =
+    qualification.qualifiedTeams || [];
+  
+  const directTeams =
+    rankedTeams.filter(
+      team =>
+      Number(team.pos) <= directQualifiers
+    );
+  
+  if (
+    directTeams.length !== directQualifiers
+  ) {
+    throw new Error(
+      "Unable to retrieve all direct qualifiers."
+    );
+  }
+  
+  const playoffMatchesResult =
+    await db.prepare(`
       SELECT
         id,
         slot,
@@ -9022,244 +8924,244 @@ async function reviewMatchSubmissionRoute(
       AND round_index = 0
       ORDER BY slot ASC, leg ASC
     `).bind(
-          tournamentId
-        ).all();
-      
-      const playoffMatches =
-        playoffMatchesResult.results || [];
-      
-      const playoffTeamCount =
-        playoffEndPosition -
-        playoffStartPosition +
-        1;
-      
-      const expectedLegs =
-        settings.playoffRoundMode === "double" ?
-        2 :
-        1;
-      
-      const expectedPlayoffMatches =
-        playoffTeamCount / 2 *
-        expectedLegs;
-      
-      if (
-        playoffMatches.length !==
-        expectedPlayoffMatches
-      ) {
-        throw new Error(
-          "The playoff match count is incorrect."
-        );
-      }
-      
-      if (
-        playoffMatches.some(
-          match =>
-          Number(match.played) !== 1
+      tournamentId
+    ).all();
+  
+  const playoffMatches =
+    playoffMatchesResult.results || [];
+  
+  const playoffTeamCount =
+    playoffEndPosition -
+    playoffStartPosition +
+    1;
+  
+  const expectedLegs =
+    settings.playoffRoundMode === "double" ?
+    2 :
+    1;
+  
+  const expectedPlayoffMatches =
+    playoffTeamCount / 2 *
+    expectedLegs;
+  
+  if (
+    playoffMatches.length !==
+    expectedPlayoffMatches
+  ) {
+    throw new Error(
+      "The playoff match count is incorrect."
+    );
+  }
+  
+  if (
+    playoffMatches.some(
+      match =>
+      Number(match.played) !== 1
+    )
+  ) {
+    return {
+      generated: false,
+      reason: "Playoffs are not complete."
+    };
+  }
+  
+  const playoffWinners = [];
+  
+  const playoffSlots = [
+    ...new Set(
+      playoffMatches.map(
+        match => Number(match.slot)
+      )
+    )
+  ].sort(
+    (a, b) => a - b
+  );
+  
+  for (const slot of playoffSlots) {
+    const tie =
+      playoffMatches.filter(
+        match =>
+        Number(match.slot) === slot
+      );
+    
+    if (
+      tie.length !== expectedLegs ||
+      tie.some(
+        match => !match.winner_team_id
+      )
+    ) {
+      throw new Error(
+        `Playoff tie ${slot + 1} has no confirmed winner.`
+      );
+    }
+    
+    const winnerIds = [
+      ...new Set(
+        tie.map(
+          match => String(match.winner_team_id)
         )
-      ) {
-        return {
-          generated: false,
-          reason: "Playoffs are not complete."
-        };
-      }
-      
-      const playoffWinners = [];
-      
-      const playoffSlots = [
-        ...new Set(
-          playoffMatches.map(
-            match => Number(match.slot)
-          )
-        )
-      ].sort(
-        (a, b) => a - b
+      )
+    ];
+    
+    if (winnerIds.length !== 1) {
+      throw new Error(
+        `Playoff tie ${slot + 1} has inconsistent winners.`
       );
-      
-      for (const slot of playoffSlots) {
-        const tie =
-          playoffMatches.filter(
-            match =>
-            Number(match.slot) === slot
-          );
-        
-        if (
-          tie.length !== expectedLegs ||
-          tie.some(
-            match => !match.winner_team_id
-          )
-        ) {
-          throw new Error(
-            `Playoff tie ${slot + 1} has no confirmed winner.`
-          );
-        }
-        
-        const winnerIds = [
-          ...new Set(
-            tie.map(
-              match => String(match.winner_team_id)
-            )
-          )
-        ];
-        
-        if (winnerIds.length !== 1) {
-          throw new Error(
-            `Playoff tie ${slot + 1} has inconsistent winners.`
-          );
-        }
-        
-        const winnerId =
-          tie[0].winner_team_id;
-        
-        const rankedWinner =
-          rankedTeams.find(
-            team =>
-            String(team.id) ===
-            String(winnerId)
-          );
-        
-        if (!rankedWinner) {
-          throw new Error(
-            `Unable to find the league position for playoff winner ${winnerId}.`
-          );
-        }
-        
-        playoffWinners.push({
-          id: rankedWinner.id,
-          name: rankedWinner.name,
-          seed: playoffEndPosition - slot
-        });
-      }
-      
-      const participants = [
-        ...directTeams.map(
-          team => ({
-            id: team.id,
-            name: team.name,
-            seed: Number(team.pos)
-          })
-        ),
-        ...playoffWinners
-      ];
-      
-      if (
-        participants.length !== knockoutSize
-      ) {
-        throw new Error(
-          `The main knockout requires ${knockoutSize} teams, but ${participants.length} are available.`
-        );
-      }
-      
-      if (
-        new Set(
-          participants.map(
-            team => String(team.id)
-          )
-        ).size !== participants.length
-      ) {
-        throw new Error(
-          "Duplicate teams were found in the main knockout participants."
-        );
-      }
-      
-      participants.sort(
-        (a, b) => a.seed - b.seed
+    }
+    
+    const winnerId =
+      tie[0].winner_team_id;
+    
+    const rankedWinner =
+      rankedTeams.find(
+        team =>
+        String(team.id) ===
+        String(winnerId)
       );
-      
-      const knockoutPairs = [];
-      
-      for (
-        let i = 0; i < participants.length / 2; i++
-      ) {
-        knockoutPairs.push([
-          participants[i].id,
-          participants[
-            participants.length - 1 - i
-          ].id
-        ]);
-      }
-      
-      const knockoutRoundMode =
-        settings.knockoutRoundMode === "double" ?
-        "double" :
-        "single";
-      
-      const knockoutMatches =
-        generateDirectKnockoutMatches(
-          participants.map(
-            team => ({
-              id: team.id,
-              name: team.name
-            })
-          ),
-          knockoutSize,
-          "manual",
-          knockoutRoundMode,
-          settings.thirdPlaceMatch === true,
-          knockoutPairs
-        );
-      
-      const now = Date.now();
-      
-      for (const match of knockoutMatches) {
-        match.tournament_id = tournamentId;
-        match.created_at = now;
-      }
-      
-      await createMatchesBatch(
-        db,
-        knockoutMatches
+    
+    if (!rankedWinner) {
+      throw new Error(
+        `Unable to find the league position for playoff winner ${winnerId}.`
       );
-      
-      await db.prepare(`
+    }
+    
+    playoffWinners.push({
+      id: rankedWinner.id,
+      name: rankedWinner.name,
+      seed: playoffEndPosition - slot
+    });
+  }
+  
+  const participants = [
+    ...directTeams.map(
+      team => ({
+        id: team.id,
+        name: team.name,
+        seed: Number(team.pos)
+      })
+    ),
+    ...playoffWinners
+  ];
+  
+  if (
+    participants.length !== knockoutSize
+  ) {
+    throw new Error(
+      `The main knockout requires ${knockoutSize} teams, but ${participants.length} are available.`
+    );
+  }
+  
+  if (
+    new Set(
+      participants.map(
+        team => String(team.id)
+      )
+    ).size !== participants.length
+  ) {
+    throw new Error(
+      "Duplicate teams were found in the main knockout participants."
+    );
+  }
+  
+  participants.sort(
+    (a, b) => a.seed - b.seed
+  );
+  
+  const knockoutPairs = [];
+  
+  for (
+    let i = 0; i < participants.length / 2; i++
+  ) {
+    knockoutPairs.push([
+      participants[i].id,
+      participants[
+        participants.length - 1 - i
+      ].id
+    ]);
+  }
+  
+  const knockoutRoundMode =
+    settings.knockoutRoundMode === "double" ?
+    "double" :
+    "single";
+  
+  const knockoutMatches =
+    generateDirectKnockoutMatches(
+      participants.map(
+        team => ({
+          id: team.id,
+          name: team.name
+        })
+      ),
+      knockoutSize,
+      "manual",
+      knockoutRoundMode,
+      settings.thirdPlaceMatch === true,
+      knockoutPairs
+    );
+  
+  const now = Date.now();
+  
+  for (const match of knockoutMatches) {
+    match.tournament_id = tournamentId;
+    match.created_at = now;
+  }
+  
+  await createMatchesBatch(
+    db,
+    knockoutMatches
+  );
+  
+  await db.prepare(`
     UPDATE tournaments
     SET
       settings = ?,
       updated_at = ?
     WHERE id = ?
   `).bind(
-        JSON.stringify({
-          ...settings,
-          groupStageComplete: true,
-          playoffsGenerated: true,
-          playoffsComplete: true,
-          knockoutGenerated: true
-        }),
-        now,
-        tournamentId
-      ).run();
-      
-      return {
-        generated: true,
-        knockoutMatches,
-        participants
-      };
-    }
-    
-    async function processChampionsLeaguePlayoffResult(
-      db,
-      tournamentId,
-      match,
-      settings
-    ) {
-      const slot = Number(match.slot);
-      
-      if (
-        !Number.isInteger(slot) ||
-        slot < 0
-      ) {
-        throw new Error(
-          "Invalid playoff match slot."
-        );
-      }
-      
-      const isDoubleLeg =
-        settings.playoffRoundMode === "double";
-      
-      const expectedLegs =
-        isDoubleLeg ? 2 : 1;
-      
-      const tieResult =
-        await db.prepare(`
+    JSON.stringify({
+      ...settings,
+      groupStageComplete: true,
+      playoffsGenerated: true,
+      playoffsComplete: true,
+      knockoutGenerated: true
+    }),
+    now,
+    tournamentId
+  ).run();
+  
+  return {
+    generated: true,
+    knockoutMatches,
+    participants
+  };
+}
+
+async function processChampionsLeaguePlayoffResult(
+  db,
+  tournamentId,
+  match,
+  settings
+) {
+  const slot = Number(match.slot);
+  
+  if (
+    !Number.isInteger(slot) ||
+    slot < 0
+  ) {
+    throw new Error(
+      "Invalid playoff match slot."
+    );
+  }
+  
+  const isDoubleLeg =
+    settings.playoffRoundMode === "double";
+  
+  const expectedLegs =
+    isDoubleLeg ? 2 : 1;
+  
+  const tieResult =
+    await db.prepare(`
       SELECT
         id,
         home_team_id,
@@ -9278,194 +9180,194 @@ async function reviewMatchSubmissionRoute(
       AND slot = ?
       ORDER BY leg ASC
     `).bind(
-          tournamentId,
-          slot
-        ).all();
-      
-      const tie =
-        tieResult.results || [];
-      
-      if (
-        tie.length !== expectedLegs
-      ) {
-        return {
-          processed: false,
-          reason: "The playoff tie does not contain the expected number of legs."
-        };
-      }
-      
-      if (
-        tie.some(
-          item =>
-          Number(item.played) !== 1
-        )
-      ) {
-        return {
-          processed: false,
-          reason: isDoubleLeg ?
-            "Waiting for both playoff legs." : "The playoff match has not been completed."
-        };
-      }
-      
-      let winnerTeamId = null;
-      
-      if (isDoubleLeg) {
-        const leg1 =
-          tie.find(
-            item => Number(item.leg) === 1
-          );
-        
-        const leg2 =
-          tie.find(
-            item => Number(item.leg) === 2
-          );
-        
-        if (
-          !leg1 ||
-          !leg2 ||
-          !leg1.home_team_id ||
-          !leg1.away_team_id ||
-          !leg2.home_team_id ||
-          !leg2.away_team_id
-        ) {
-          return {
-            processed: false,
-            reason: "Both playoff legs must have valid teams."
-          };
-        }
-        
-        const teamA =
-          String(leg1.home_team_id);
-        
-        const teamB =
-          String(leg1.away_team_id);
-        
-        const leg2Teams = [
-          String(leg2.home_team_id),
-          String(leg2.away_team_id)
-        ];
-        
-        if (
-          teamA === teamB ||
-          !leg2Teams.includes(teamA) ||
-          !leg2Teams.includes(teamB)
-        ) {
-          return {
-            processed: false,
-            reason: "The playoff legs do not contain the same two teams."
-          };
-        }
-        
-        const scores = [
-          leg1.home_score,
-          leg1.away_score,
-          leg2.home_score,
-          leg2.away_score
-        ];
-        
-        if (
-          scores.some(
-            score =>
-            score === null ||
-            score === undefined ||
-            !Number.isInteger(Number(score)) ||
-            Number(score) < 0
-          )
-        ) {
-          return {
-            processed: false,
-            reason: "Invalid playoff scores."
-          };
-        }
-        
-        let teamAScore = 0;
-        let teamBScore = 0;
-        
-        if (
-          String(leg1.home_team_id) === teamA
-        ) {
-          teamAScore += Number(leg1.home_score);
-          teamBScore += Number(leg1.away_score);
-        } else {
-          teamAScore += Number(leg1.away_score);
-          teamBScore += Number(leg1.home_score);
-        }
-        
-        if (
-          String(leg2.home_team_id) === teamA
-        ) {
-          teamAScore += Number(leg2.home_score);
-          teamBScore += Number(leg2.away_score);
-        } else {
-          teamAScore += Number(leg2.away_score);
-          teamBScore += Number(leg2.home_score);
-        }
-        
-        if (teamAScore === teamBScore) {
-          return {
-            processed: false,
-            reason: "The playoff aggregate score is tied."
-          };
-        }
-        
-        winnerTeamId =
-          teamAScore > teamBScore ?
-          leg1.home_team_id === teamA ?
-          leg1.home_team_id :
-          leg1.away_team_id :
-          leg1.home_team_id === teamA ?
-          leg1.away_team_id :
-          leg1.home_team_id;
-      } else {
-        const homeScore =
-          Number(match.home_score);
-        
-        const awayScore =
-          Number(match.away_score);
-        
-        if (
-          !Number.isInteger(homeScore) ||
-          !Number.isInteger(awayScore) ||
-          homeScore < 0 ||
-          awayScore < 0
-        ) {
-          return {
-            processed: false,
-            reason: "Invalid playoff score."
-          };
-        }
-        
-        if (homeScore === awayScore) {
-          return {
-            processed: false,
-            reason: "The playoff match is tied."
-          };
-        }
-        
-        winnerTeamId =
-          homeScore > awayScore ?
-          match.home_team_id :
-          match.away_team_id;
-      }
-      
-      const now = Date.now();
-      
-      for (const leg of tie) {
-        await db.prepare(`
+      tournamentId,
+      slot
+    ).all();
+  
+  const tie =
+    tieResult.results || [];
+  
+  if (
+    tie.length !== expectedLegs
+  ) {
+    return {
+      processed: false,
+      reason: "The playoff tie does not contain the expected number of legs."
+    };
+  }
+  
+  if (
+    tie.some(
+      item =>
+      Number(item.played) !== 1
+    )
+  ) {
+    return {
+      processed: false,
+      reason: isDoubleLeg ?
+        "Waiting for both playoff legs." : "The playoff match has not been completed."
+    };
+  }
+  
+  let winnerTeamId = null;
+  
+  if (isDoubleLeg) {
+    const leg1 =
+      tie.find(
+        item => Number(item.leg) === 1
+      );
+    
+    const leg2 =
+      tie.find(
+        item => Number(item.leg) === 2
+      );
+    
+    if (
+      !leg1 ||
+      !leg2 ||
+      !leg1.home_team_id ||
+      !leg1.away_team_id ||
+      !leg2.home_team_id ||
+      !leg2.away_team_id
+    ) {
+      return {
+        processed: false,
+        reason: "Both playoff legs must have valid teams."
+      };
+    }
+    
+    const teamA =
+      String(leg1.home_team_id);
+    
+    const teamB =
+      String(leg1.away_team_id);
+    
+    const leg2Teams = [
+      String(leg2.home_team_id),
+      String(leg2.away_team_id)
+    ];
+    
+    if (
+      teamA === teamB ||
+      !leg2Teams.includes(teamA) ||
+      !leg2Teams.includes(teamB)
+    ) {
+      return {
+        processed: false,
+        reason: "The playoff legs do not contain the same two teams."
+      };
+    }
+    
+    const scores = [
+      leg1.home_score,
+      leg1.away_score,
+      leg2.home_score,
+      leg2.away_score
+    ];
+    
+    if (
+      scores.some(
+        score =>
+        score === null ||
+        score === undefined ||
+        !Number.isInteger(Number(score)) ||
+        Number(score) < 0
+      )
+    ) {
+      return {
+        processed: false,
+        reason: "Invalid playoff scores."
+      };
+    }
+    
+    let teamAScore = 0;
+    let teamBScore = 0;
+    
+    if (
+      String(leg1.home_team_id) === teamA
+    ) {
+      teamAScore += Number(leg1.home_score);
+      teamBScore += Number(leg1.away_score);
+    } else {
+      teamAScore += Number(leg1.away_score);
+      teamBScore += Number(leg1.home_score);
+    }
+    
+    if (
+      String(leg2.home_team_id) === teamA
+    ) {
+      teamAScore += Number(leg2.home_score);
+      teamBScore += Number(leg2.away_score);
+    } else {
+      teamAScore += Number(leg2.away_score);
+      teamBScore += Number(leg2.home_score);
+    }
+    
+    if (teamAScore === teamBScore) {
+      return {
+        processed: false,
+        reason: "The playoff aggregate score is tied."
+      };
+    }
+    
+    winnerTeamId =
+      teamAScore > teamBScore ?
+      leg1.home_team_id === teamA ?
+      leg1.home_team_id :
+      leg1.away_team_id :
+      leg1.home_team_id === teamA ?
+      leg1.away_team_id :
+      leg1.home_team_id;
+  } else {
+    const homeScore =
+      Number(match.home_score);
+    
+    const awayScore =
+      Number(match.away_score);
+    
+    if (
+      !Number.isInteger(homeScore) ||
+      !Number.isInteger(awayScore) ||
+      homeScore < 0 ||
+      awayScore < 0
+    ) {
+      return {
+        processed: false,
+        reason: "Invalid playoff score."
+      };
+    }
+    
+    if (homeScore === awayScore) {
+      return {
+        processed: false,
+        reason: "The playoff match is tied."
+      };
+    }
+    
+    winnerTeamId =
+      homeScore > awayScore ?
+      match.home_team_id :
+      match.away_team_id;
+  }
+  
+  const now = Date.now();
+  
+  for (const leg of tie) {
+    await db.prepare(`
       UPDATE matches
       SET
         winner_team_id = ?,
         updated_at = ?
       WHERE id = ?
     `).bind(
-          winnerTeamId,
-          now,
-          leg.id
-        ).run();
-      }
-      
-      const remainingResult =
-        await db.prepare(`
+      winnerTeamId,
+      now,
+      leg.id
+    ).run();
+  }
+  
+  const remainingResult =
+    await db.prepare(`
       SELECT COUNT(*) AS remaining
       FROM matches
       WHERE tournament_id = ?
@@ -9473,69 +9375,69 @@ async function reviewMatchSubmissionRoute(
       AND round = 'Playoff'
       AND played = 0
     `).bind(
-          tournamentId
-        ).first();
-      
-      const remaining =
-        Number(remainingResult?.remaining) || 0;
-      
-      if (remaining > 0) {
-        return {
-          processed: true,
-          winnerTeamId,
-          playoffsComplete: false,
-          remaining
-        };
-      }
-      
-      const latestTournament =
-        await db.prepare(`
+      tournamentId
+    ).first();
+  
+  const remaining =
+    Number(remainingResult?.remaining) || 0;
+  
+  if (remaining > 0) {
+    return {
+      processed: true,
+      winnerTeamId,
+      playoffsComplete: false,
+      remaining
+    };
+  }
+  
+  const latestTournament =
+    await db.prepare(`
       SELECT settings
       FROM tournaments
       WHERE id = ?
     `).bind(
-          tournamentId
-        ).first();
-      
-      let latestSettings = {};
-      
-      try {
-        latestSettings =
-          typeof latestTournament?.settings === "string" ?
-          JSON.parse(latestTournament.settings) || {} :
-          latestTournament?.settings || {};
-      } catch {
-        latestSettings = {};
-      }
-      
-      if (
-        latestSettings.knockoutGenerated === true
-      ) {
-        return {
-          processed: true,
-          winnerTeamId,
-          playoffsComplete: true,
-          knockoutGenerated: true,
-          alreadyGenerated: true
-        };
-      }
-      
-      const knockoutResult =
-        await generateChampionsLeagueMainKnockout(
-          db,
-          tournamentId,
-          latestSettings
-        );
-      
-      return {
-        processed: true,
-        winnerTeamId,
-        playoffsComplete: true,
-        knockoutGenerated: knockoutResult.generated,
-        knockoutMatches: knockoutResult.knockoutMatches || []
-      };
-    }
-    
-    
-    
-    //end
+      tournamentId
+    ).first();
+  
+  let latestSettings = {};
+  
+  try {
+    latestSettings =
+      typeof latestTournament?.settings === "string" ?
+      JSON.parse(latestTournament.settings) || {} :
+      latestTournament?.settings || {};
+  } catch {
+    latestSettings = {};
+  }
+  
+  if (
+    latestSettings.knockoutGenerated === true
+  ) {
+    return {
+      processed: true,
+      winnerTeamId,
+      playoffsComplete: true,
+      knockoutGenerated: true,
+      alreadyGenerated: true
+    };
+  }
+  
+  const knockoutResult =
+    await generateChampionsLeagueMainKnockout(
+      db,
+      tournamentId,
+      latestSettings
+    );
+  
+  return {
+    processed: true,
+    winnerTeamId,
+    playoffsComplete: true,
+    knockoutGenerated: knockoutResult.generated,
+    knockoutMatches: knockoutResult.knockoutMatches || []
+  };
+}
+
+
+
+//end

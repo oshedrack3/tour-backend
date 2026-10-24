@@ -8,7 +8,7 @@ import {
 
 import {
   sendPushToUser
-} from "../pushNotifications.js";
+} from "./pushNotifications.js";
 
 export async function handleAuthRequest(request, env) {
   const url = new URL(request.url);
