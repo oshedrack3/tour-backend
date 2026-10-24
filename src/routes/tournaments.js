@@ -2811,7 +2811,7 @@ async function createMatchSubmissionRoute(
           env,
           tournament.admin_uid,
           "Match Result Submitted",
-          `${submitterName} submitted a result: ${homeTeamName} ${homeGoals}-${awayGoals} ${awayTeamName}.`,
+          `${submitterName} submitted a result: ${homeTeamName} ${homeGoals}-${awayGoals} ${awayTeamName} in ${tournament.name || "Unknown Tournament"}.`,
           `/tournament/${tournamentId}`
         );
       } catch (pushError) {
@@ -3156,8 +3156,7 @@ async function reviewMatchSubmissionRoute(
         played_at: now,
         winner_team_id: winnerTeamId,
         stats: submittedStats ?
-          JSON.stringify(submittedStats) :
-          null
+          JSON.stringify(submittedStats) : null
       },
       match.home_team_id,
       match.away_team_id,
