@@ -60,6 +60,12 @@ export async function handleAuthRequest(request, env) {
     return await passkeyLoginVerify(request, env);
   }
   
+  if (
+  request.method === "GET" &&
+  pathname === "/auth/passkey/status"
+) {
+  return await passkeyStatus(request, env);
+}
   return Response.json(
   {
     success: false,
@@ -1104,4 +1110,40 @@ function base64UrlToUint8Array(value) {
   }
 
   return bytes;
+}
+
+async function passkeyStatus(request, env) {
+  try {
+    const user = await getPasskeySessionUser(request, env);
+    if (!user) {
+      return Response.json({
+        success: false,
+        message: "Please log in to check your biometric status."
+      }, {
+        status: 401
+      });
+    }
+    const result = await env.DB.prepare(`
+      SELECT device_name, created_at, last_used_at
+      FROM passkey_credentials
+      WHERE user_id = ?
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).bind(user.id).first();
+    return Response.json({
+      success: true,
+      enabled: !!result,
+      deviceName: result?.device_name || null,
+      createdAt: result?.created_at || null,
+      lastUsedAt: result?.last_used_at || null
+    });
+  } catch (error) {
+    console.error("Passkey status error:", error);
+    return Response.json({
+      success: false,
+      message: "Unable to check biometric status."
+    }, {
+      status: 500
+    });
+  }
 }
