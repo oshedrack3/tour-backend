@@ -55,6 +55,15 @@ export async function handleGeneralRequest(
   }
   
   if (
+  request.method === "GET" &&
+  pathname === "/notification-status"
+) {
+  return await getNotificationStatusRoute(
+    env,
+    user
+  );
+}
+  if (
     request.method === "POST" &&
     pathname === "/test"
   ) {
@@ -251,15 +260,15 @@ export async function handleGeneralRequest(
   }
   
   if (
-  request.method === "POST" &&
-  pathname === "/admin/ratings/end-season"
-) {
-  return await endSeasonRatingsRoute(
-    request,
-    env,
-    user
-  );
-}
+    request.method === "POST" &&
+    pathname === "/admin/ratings/end-season"
+  ) {
+    return await endSeasonRatingsRoute(
+      request,
+      env,
+      user
+    );
+  }
   
   if (
     request.method === "POST" &&
@@ -1256,7 +1265,35 @@ async function subscribePushRoute(
   }
 }
 
-
+async function getNotificationStatusRoute(
+  env,
+  user
+) {
+  try {
+    const subscription = await getPushSubscription(
+      env.DB,
+      user.id
+    );
+    
+    return Response.json({
+      success: true,
+      enabled: Boolean(subscription),
+      endpoint: subscription?.endpoint || null
+    });
+  } catch (error) {
+    console.error(
+      "Notification status error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: "Unable to check notification status."
+    }, {
+      status: 500
+    });
+  }
+}
 async function testPushRoute(
   request,
   env,
@@ -2113,18 +2150,18 @@ async function recalculateHistoricalRatingsRoute(
     for (const [userId, rating] of ratings) {
       statements.push(
         env.DB
-          .prepare(`
+        .prepare(`
             UPDATE users
             SET rating = ?
             WHERE id = ?
           `)
-          .bind(rating, userId)
+        .bind(rating, userId)
       );
     }
     for (const match of matchChanges) {
       statements.push(
         env.DB
-          .prepare(`
+        .prepare(`
             UPDATE matches
             SET
               home_rating_change = ?,
@@ -2138,19 +2175,17 @@ async function recalculateHistoricalRatingsRoute(
                   AND id != ?
               )
           `)
-          .bind(
-            match.homeChange,
-            match.awayChange,
-            match.id,
-            testingTournamentId
-          )
+        .bind(
+          match.homeChange,
+          match.awayChange,
+          match.id,
+          testingTournamentId
+        )
       );
     }
     step = "write_database_batches";
     for (
-      let i = 0;
-      i < statements.length;
-      i += 50
+      let i = 0; i < statements.length; i += 50
     ) {
       await env.DB.batch(
         statements.slice(i, i + 50)
@@ -2311,8 +2346,7 @@ async function endSeasonRatingsRoute(
       return Response.json({
         success: false,
         message: existing.status === "completed" ?
-          "This season has already been processed." :
-          "This season-ending operation is already running.",
+          "This season has already been processed." : "This season-ending operation is already running.",
         seasonKey,
         status: existing.status
       }, {
