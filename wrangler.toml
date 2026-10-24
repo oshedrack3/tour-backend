@@ -14,3 +14,4 @@ crons = ["0 0 1 * *"]
 FLW_REDIRECT_URL = "https://galaticoesport.pages.dev/"
 RP_NAME = "Galatico eSport"
 RP_ID = "galaticoesport.pages.dev"
+VAPID_SUBJECT = "mailto:Oshedrack3@gmail.com"
