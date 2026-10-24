@@ -1679,6 +1679,43 @@ export async function getMatchSubmissions(
   
   return result.results || [];
 }
+export async function getMatchSubmissionTeams(
+  db,
+  tournamentId,
+  submissionId
+) {
+  return await db.prepare(`
+    SELECT
+      ms.id AS submission_id,
+      ms.match_id,
+      ms.tournament_id,
+      ms.submitted_by,
+      ms.home_goals,
+      ms.away_goals,
+      ms.team_id,
+      ms.status,
+      u.username AS submitter_username,
+      ht.id AS home_team_id,
+      ht.name AS home_team_name,
+      at.id AS away_team_id,
+      at.name AS away_team_name
+    FROM match_submissions ms
+    LEFT JOIN users u
+      ON u.id = ms.submitted_by
+    LEFT JOIN matches m
+      ON m.id = ms.match_id
+    LEFT JOIN teams ht
+      ON ht.id = m.home_team_id
+    LEFT JOIN teams at
+      ON at.id = m.away_team_id
+    WHERE ms.tournament_id = ?
+      AND ms.id = ?
+    LIMIT 1
+  `).bind(
+    tournamentId,
+    submissionId
+  ).first();
+}
 
 export async function createMatchSubmission(
   db,

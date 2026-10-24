@@ -2768,6 +2768,7 @@ async function createMatchSubmissionRoute(
         tournamentId
       )
       .run();
+    
     if (
       tournament.admin_uid &&
       String(tournament.admin_uid) !== String(user.id)
@@ -2785,7 +2786,7 @@ async function createMatchSubmissionRoute(
           AND m.tournament_id = ?
         LIMIT 1
       `)
-          .bind(match.id, tournamentId)
+          .bind(matchId, tournamentId)
           .first(),
           env.DB.prepare(`
         SELECT username
@@ -2799,13 +2800,13 @@ async function createMatchSubmissionRoute(
         const submitterName =
           submitter?.username ||
           user.username ||
-          "A player";
+          "Unknown Player";
         const homeTeamName =
           matchTeams?.home_team_name ||
-          "Unknown Home Team";
+          "Unknown Team";
         const awayTeamName =
           matchTeams?.away_team_name ||
-          "Unknown Away Team";
+          "Unknown Team";
         await sendPushToUser(
           env,
           tournament.admin_uid,
@@ -2820,6 +2821,8 @@ async function createMatchSubmissionRoute(
         );
       }
     }
+    
+    
     return Response.json({
       success: true,
       submission
