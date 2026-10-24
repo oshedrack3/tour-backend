@@ -50,42 +50,38 @@ function concatBytes(...arrays) {
 
 function pemToArrayBuffer(key) {
   const value = key.trim();
-  
   if (value.includes("-----BEGIN PRIVATE KEY-----")) {
     const base64 = value
       .replace(/-----BEGIN PRIVATE KEY-----/, "")
       .replace(/-----END PRIVATE KEY-----/, "")
       .replace(/\s/g, "");
-    
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
-    
     for (let i = 0; i < binary.length; i++) {
       bytes[i] = binary.charCodeAt(i);
     }
-    
     return bytes.buffer;
   }
-  
   const rawKey = base64UrlDecode(value);
-  
   if (rawKey.length !== 32) {
     throw new Error(
       "VAPID private key must decode to exactly 32 bytes."
     );
   }
-  
   const prefix = new Uint8Array([
-    0x30, 0x45, 0x02, 0x01, 0x00,
-    0x30, 0x13, 0x06, 0x07, 0x2a,
-    0x86, 0x48, 0xce, 0x3d, 0x02,
-    0x01, 0x06, 0x08, 0x2a, 0x86,
-    0x48, 0xce, 0x3d, 0x03, 0x01,
-    0x07, 0x04, 0x29, 0x30, 0x27,
-    0x02, 0x01, 0x01, 0x04, 0x20
+    0x30, 0x31,
+    0x02, 0x01, 0x00,
+    0x30, 0x13,
+    0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01,
+    0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07,
+    0x04, 0x17,
+    0x30, 0x15,
+    0x02, 0x01, 0x01,
+    0x04, 0x10
   ]);
-  
-  return concatBytes(prefix, rawKey).buffer;
+  throw new Error(
+    "Raw VAPID private keys require a proper EC PKCS#8 conversion. Use a PEM private key instead."
+  );
 }
 async function importPublicKey(key) {
   return await crypto.subtle.importKey(
