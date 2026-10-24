@@ -97,10 +97,53 @@ async function importPublicKey(key) {
   );
 }
 
-async function importPrivateKey(key) {
+async function importPrivateKey(key, publicKey) {
+  const value = key.trim();
+  
+  if (value.includes("-----BEGIN PRIVATE KEY-----")) {
+    return await crypto.subtle.importKey(
+      "pkcs8",
+      pemToArrayBuffer(value),
+      {
+        name: "ECDSA",
+        namedCurve: "P-256"
+      },
+      false,
+      ["sign"]
+    );
+  }
+  
+  const privateBytes = base64UrlDecode(value);
+  const publicBytes = base64UrlDecode(publicKey.trim());
+  
+  if (privateBytes.length !== 32) {
+    throw new Error(
+      "VAPID private key must decode to 32 bytes."
+    );
+  }
+  
+  if (
+    publicBytes.length !== 65 ||
+    publicBytes[0] !== 4
+  ) {
+    throw new Error(
+      "VAPID public key must be an uncompressed P-256 key."
+    );
+  }
+  
+  const jwk = {
+    kty: "EC",
+    crv: "P-256",
+    d: base64UrlEncode(privateBytes),
+    x: base64UrlEncode(publicBytes.slice(1, 33)),
+    y: base64UrlEncode(publicBytes.slice(33, 65)),
+    ext: true,
+    key_ops: ["sign"]
+  };
+  
   return await crypto.subtle.importKey(
-    "pkcs8",
-    key,
+    "jwk",
+    jwk,
     {
       name: "ECDSA",
       namedCurve: "P-256"
@@ -118,35 +161,28 @@ async function createVapidJwt(env, audience) {
   ) {
     throw new Error("Missing VAPID configuration.");
   }
-
   const header = {
     typ: "JWT",
     alg: "ES256"
   };
-
   const now = Math.floor(Date.now() / 1000);
-
   const claims = {
     aud: audience,
     exp: now + 12 * 60 * 60,
     sub: env.VAPID_SUBJECT
   };
-
   const encodedHeader = base64UrlEncode(
     JSON.stringify(header)
   );
-
   const encodedClaims = base64UrlEncode(
     JSON.stringify(claims)
   );
-
   const unsignedToken =
     `${encodedHeader}.${encodedClaims}`;
-
   const privateKey = await importPrivateKey(
-    pemToArrayBuffer(env.VAPID_PRIVATE_KEY)
+    env.VAPID_PRIVATE_KEY,
+    env.VAPID_PUBLIC_KEY
   );
-
   const signature = await crypto.subtle.sign(
     {
       name: "ECDSA",
@@ -155,7 +191,6 @@ async function createVapidJwt(env, audience) {
     privateKey,
     new TextEncoder().encode(unsignedToken)
   );
-
   return `${unsignedToken}.${base64UrlEncode(
     new Uint8Array(signature)
   )}`;
