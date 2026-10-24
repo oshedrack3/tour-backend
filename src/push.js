@@ -48,43 +48,44 @@ function concatBytes(...arrays) {
   return result;
 }
 
-function pemToArrayBuffer(pem) {
-  if (typeof pem !== "string" || !pem.trim()) {
-    throw new Error("VAPID_PRIVATE_KEY is empty or invalid.");
+function pemToArrayBuffer(key) {
+  const value = key.trim();
+  
+  if (value.includes("-----BEGIN PRIVATE KEY-----")) {
+    const base64 = value
+      .replace(/-----BEGIN PRIVATE KEY-----/, "")
+      .replace(/-----END PRIVATE KEY-----/, "")
+      .replace(/\s/g, "");
+    
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    
+    return bytes.buffer;
   }
   
-  const base64 = pem
-    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
-    .replace(/-----END PRIVATE KEY-----/g, "")
-    .replace(/\s/g, "");
+  const rawKey = base64UrlDecode(value);
   
-  if (
-    !base64 ||
-    !/^[A-Za-z0-9+/]+={0,2}$/.test(base64) ||
-    base64.length % 4 === 1
-  ) {
+  if (rawKey.length !== 32) {
     throw new Error(
-      "VAPID_PRIVATE_KEY is not a valid Base64-encoded PKCS#8 PEM key."
+      "VAPID private key must decode to exactly 32 bytes."
     );
   }
   
-  let binary;
+  const prefix = new Uint8Array([
+    0x30, 0x45, 0x02, 0x01, 0x00,
+    0x30, 0x13, 0x06, 0x07, 0x2a,
+    0x86, 0x48, 0xce, 0x3d, 0x02,
+    0x01, 0x06, 0x08, 0x2a, 0x86,
+    0x48, 0xce, 0x3d, 0x03, 0x01,
+    0x07, 0x04, 0x29, 0x30, 0x27,
+    0x02, 0x01, 0x01, 0x04, 0x20
+  ]);
   
-  try {
-    binary = atob(base64);
-  } catch {
-    throw new Error(
-      "Unable to decode VAPID_PRIVATE_KEY. Check its format in Cloudflare."
-    );
-  }
-  
-  const bytes = new Uint8Array(binary.length);
-  
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  
-  return bytes.buffer;
+  return concatBytes(prefix, rawKey).buffer;
 }
 async function importPublicKey(key) {
   return await crypto.subtle.importKey(
