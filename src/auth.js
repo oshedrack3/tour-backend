@@ -6,6 +6,10 @@ import {
   verifyAuthenticationResponse
 } from "@simplewebauthn/server";
 
+import {
+  sendPushToUser
+} from "../pushNotifications.js";
+
 export async function handleAuthRequest(request, env) {
   const url = new URL(request.url);
   const pathname = url.pathname.replace(/\/+$/, "") || "/";
@@ -19,11 +23,11 @@ export async function handleAuthRequest(request, env) {
   }
   
   if (
-  request.method === "POST" &&
-  pathname === "/auth/reset-password"
-) {
-  return await resetPassword(request, env);
-}
+    request.method === "POST" &&
+    pathname === "/auth/reset-password"
+  ) {
+    return await resetPassword(request, env);
+  }
   if (request.method === "POST" && pathname === "/auth/logout") {
     return await logout(request, env);
   }
@@ -32,7 +36,7 @@ export async function handleAuthRequest(request, env) {
     return await verify(request, env);
   }
   
-    if (
+  if (
     request.method === "POST" &&
     pathname === "/auth/passkey/register-options"
   ) {
@@ -61,11 +65,11 @@ export async function handleAuthRequest(request, env) {
   }
   
   if (
-  request.method === "GET" &&
-  pathname === "/auth/passkey/status"
-) {
-  return await passkeyStatus(request, env);
-}
+    request.method === "GET" &&
+    pathname === "/auth/passkey/status"
+  ) {
+    return await passkeyStatus(request, env);
+  }
   return Response.json(
   {
     success: false,
@@ -598,18 +602,21 @@ async function resetPassword(request, env) {
     const email = String(body.email || "").trim().toLowerCase();
     const phone = String(body.phone || "").trim();
     const password = String(body.password || "");
+    
     if (!email || !phone || !password) {
       return Response.json({
         success: false,
         message: "Email, phone number and new password are required."
       }, { status: 400 });
     }
+    
     if (password.length < 6) {
       return Response.json({
         success: false,
         message: "Password must be at least 6 characters."
       }, { status: 400 });
     }
+    
     const user = await env.DB
       .prepare(`
         SELECT id
@@ -620,13 +627,16 @@ async function resetPassword(request, env) {
       `)
       .bind(email, phone)
       .first();
+    
     if (!user) {
       return Response.json({
         success: false,
         message: "The email address and phone number do not match an account."
       }, { status: 400 });
     }
+    
     const passwordHash = await hashPassword(password);
+    
     await env.DB
       .prepare(`
         UPDATE users
@@ -635,6 +645,7 @@ async function resetPassword(request, env) {
       `)
       .bind(passwordHash, user.id)
       .run();
+    
     await env.DB
       .prepare(`
         DELETE FROM sessions
@@ -642,12 +653,29 @@ async function resetPassword(request, env) {
       `)
       .bind(user.id)
       .run();
+    
+    try {
+      await sendPushToUser(
+        env,
+        user.id,
+        "Password Reset",
+        "Your Galatico eSport password has been reset. If you did not make this change, contact support.",
+        "/"
+      );
+    } catch (error) {
+      console.error(
+        "Password reset push notification failed:",
+        error.message
+      );
+    }
+    
     return Response.json({
       success: true,
       message: "Password reset successfully. Please log in with your new password."
     });
   } catch (error) {
     console.error("Password reset error:", error);
+    
     return Response.json({
       success: false,
       message: "Unable to reset password. Please try again."
@@ -656,35 +684,34 @@ async function resetPassword(request, env) {
 }
 
 
-
 async function passkeyRegisterOptions(request, env) {
   try {
     const body = await request.json();
     const user = await getPasskeySessionUser(request, env, body.token);
-
+    
     if (!user) {
       return Response.json({
         success: false,
         message: "Please log in before registering a passkey."
       }, { status: 401 });
     }
-
+    
     const rpID = env.RP_ID;
     const rpName = env.RP_NAME || "Galatico eSport";
-
+    
     if (!rpID) {
       return Response.json({
         success: false,
         message: "Passkey configuration is incomplete."
       }, { status: 500 });
     }
-
+    
     const existing = await env.DB.prepare(`
       SELECT credential_id, transports
       FROM passkey_credentials
       WHERE user_id = ?
     `).bind(user.id).all();
-
+    
     const options = await generateRegistrationOptions({
       rpName,
       rpID,
@@ -703,16 +730,16 @@ async function passkeyRegisterOptions(request, env) {
       },
       supportedAlgorithmIDs: [-7, -257]
     });
-
+    
     const now = Date.now();
     const challengeId = uuid();
-
+    
     await env.DB.prepare(`
       DELETE FROM passkey_challenges
       WHERE user_id = ?
         AND purpose = 'register'
     `).bind(user.id).run();
-
+    
     await env.DB.prepare(`
       INSERT INTO passkey_challenges (
         id, user_id, challenge, purpose, created_at, expires_at
@@ -725,7 +752,7 @@ async function passkeyRegisterOptions(request, env) {
       now,
       now + 5 * 60 * 1000
     ).run();
-
+    
     return Response.json({
       success: true,
       challengeId,
@@ -733,7 +760,7 @@ async function passkeyRegisterOptions(request, env) {
     });
   } catch (error) {
     console.error("Passkey registration options error:", error);
-
+    
     return Response.json({
       success: false,
       message: "Unable to start passkey registration."
@@ -745,24 +772,24 @@ async function passkeyRegisterVerify(request, env) {
   try {
     const body = await request.json();
     const user = await getPasskeySessionUser(request, env, body.token);
-
+    
     if (!user) {
       return Response.json({
         success: false,
         message: "Please log in before registering a passkey."
       }, { status: 401 });
     }
-
+    
     const challengeId = String(body.challengeId || "");
     const response = body.response;
-
+    
     if (!challengeId || !response) {
       return Response.json({
         success: false,
         message: "Passkey verification details are missing."
       }, { status: 400 });
     }
-
+    
     const challengeRecord = await env.DB.prepare(`
       SELECT id, challenge
       FROM passkey_challenges
@@ -776,17 +803,17 @@ async function passkeyRegisterVerify(request, env) {
       user.id,
       Date.now()
     ).first();
-
+    
     if (!challengeRecord) {
       return Response.json({
         success: false,
         message: "The registration request expired. Please try again."
       }, { status: 400 });
     }
-
+    
     const rpID = env.RP_ID;
     const expectedOrigin = `https://${rpID}`;
-
+    
     const verification = await verifyRegistrationResponse({
       response,
       expectedChallenge: challengeRecord.challenge,
@@ -794,19 +821,19 @@ async function passkeyRegisterVerify(request, env) {
       expectedRPID: rpID,
       requireUserVerification: true
     });
-
+    
     await env.DB.prepare(`
       DELETE FROM passkey_challenges
       WHERE id = ?
     `).bind(challengeId).run();
-
+    
     if (!verification.verified || !verification.registrationInfo) {
       return Response.json({
         success: false,
         message: "Passkey verification failed."
       }, { status: 400 });
     }
-
+    
     const credential = verification.registrationInfo.credential;
     const credentialId = credential.id;
     const publicKey = uint8ArrayToBase64Url(credential.publicKey);
@@ -814,7 +841,7 @@ async function passkeyRegisterVerify(request, env) {
     const transports = JSON.stringify(
       response.response?.transports || []
     );
-
+    
     await env.DB.prepare(`
       INSERT INTO passkey_credentials (
         id,
@@ -837,16 +864,30 @@ async function passkeyRegisterVerify(request, env) {
       String(body.deviceName || "Passkey").slice(0, 100),
       Date.now()
     ).run();
-
+    
+    try {
+      await sendPushToUser(
+        env,
+        user.id,
+        "Passkey Added",
+        `A new passkey (${String(body.deviceName || "Passkey").slice(0, 100)}) was added to your Galatico eSport account.`,
+        "/"
+      );
+    } catch (error) {
+      console.error("Passkey registration push notification failed:", error.message);
+    }
+    
     return Response.json({
       success: true,
       message: "Passkey registered successfully."
     });
+    
+    
   } catch (error) {
     console.error("Passkey registration verification error:", error);
-
+    
     const message = String(error?.message || "").toLowerCase();
-
+    
     if (
       message.includes("unique constraint") ||
       message.includes("already exists")
@@ -856,7 +897,7 @@ async function passkeyRegisterVerify(request, env) {
         message: "This passkey is already registered."
       }, { status: 409 });
     }
-
+    
     return Response.json({
       success: false,
       message: "Unable to verify the passkey. Please try again."
@@ -1046,13 +1087,13 @@ async function getPasskeySessionUser(request, env, bodyToken) {
   const authorization = request.headers.get("Authorization") || "";
   const headerToken = authorization.replace(/^Bearer\s+/i, "").trim();
   const token = headerToken || String(bodyToken || "").trim();
-
+  
   if (!token) {
     return null;
   }
-
+  
   const now = Date.now();
-
+  
   const session = await env.DB.prepare(`
     SELECT
       u.id,
@@ -1066,17 +1107,17 @@ async function getPasskeySessionUser(request, env, bodyToken) {
       AND s.expires_at > ?
     LIMIT 1
   `).bind(token, now).first();
-
+  
   return session || null;
 }
 
 function parseTransports(value) {
   try {
     const parsed = JSON.parse(value || "[]");
-
-    return Array.isArray(parsed)
-      ? parsed.filter(item => typeof item === "string")
-      : [];
+    
+    return Array.isArray(parsed) ?
+      parsed.filter(item => typeof item === "string") :
+      [];
   } catch {
     return [];
   }
@@ -1085,11 +1126,11 @@ function parseTransports(value) {
 function uint8ArrayToBase64Url(value) {
   const bytes = new Uint8Array(value);
   let binary = "";
-
+  
   for (const byte of bytes) {
     binary += String.fromCharCode(byte);
   }
-
+  
   return btoa(binary)
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
@@ -1100,15 +1141,15 @@ function base64UrlToUint8Array(value) {
   const base64 = value
     .replace(/-/g, "+")
     .replace(/_/g, "/");
-
+  
   const padded = base64 + "=".repeat((4 - base64.length % 4) % 4);
   const binary = atob(padded);
   const bytes = new Uint8Array(binary.length);
-
+  
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
-
+  
   return bytes;
 }
 

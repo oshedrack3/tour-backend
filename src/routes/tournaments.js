@@ -250,7 +250,23 @@ export async function handleTournamentRequest(
       user
     );
   }
-  
+  if (
+    request.method === "PATCH" &&
+    /^\/tournaments\/[^/]+\/players\/[^/]+\/replace$/.test(pathname)
+  ) {
+    const parts = pathname.split("/");
+    
+    const tournamentId = parts[2];
+    const playerId = parts[4];
+    
+    return await replaceTournamentPlayerRoute(
+      request,
+      env,
+      tournamentId,
+      playerId,
+      user
+    );
+  }
   if (
     request.method === "GET" &&
     url.pathname.match(
@@ -2086,8 +2102,7 @@ async function joinTournamentRoute(
       .json()
       .catch(() => ({}));
     let teamIds = Array.isArray(body.team_ids) ?
-      body.team_ids :
-      [];
+      body.team_ids : [];
     teamIds = [
       ...new Set(
         teamIds
@@ -2108,8 +2123,7 @@ async function joinTournamentRoute(
       return Response.json({
         success: false,
         message: user.role === "admin" ?
-          "You can register a maximum of 20 teams." :
-          "You can register only one team."
+          "You can register a maximum of 20 teams." : "You can register only one team."
       }, {
         status: 400
       });
@@ -2230,9 +2244,9 @@ async function joinTournamentRoute(
         ...teamIds
       )
       .all();
-    const registeredTeams = teams
-      .map(team => team.name)
-      .join(", ");
+      
+    const registeredTeam = teams[0]?.name || "No team name available";
+    
     if (
       tournament.admin_uid &&
       String(tournament.admin_uid) !== String(user.id)
@@ -2241,7 +2255,7 @@ async function joinTournamentRoute(
         env,
         tournament.admin_uid,
         "New Tournament Player",
-        `${user.username || "A player"} joined ${tournament.name || "your tournament"} with ${registeredTeams}.`,
+        `${user.username || "A player"} joined ${tournament.name || "your tournament"} with the team ${registeredTeam}.`,
         `/tournament/${tournamentId}`
       );
     }
@@ -2757,16 +2771,54 @@ async function createMatchSubmissionRoute(
     
     if (
       tournament.admin_uid &&
-      String(tournament.admin_uid) !==
-      String(user.id)
+      String(tournament.admin_uid) !== String(user.id)
     ) {
-      await sendPushToUser(
-        env,
-        tournament.admin_uid,
-        "Match Result Submitted",
-        `A player submitted a ${homeGoals}-${awayGoals} match result for ${tournament.name}.`,
-        `/tournament/${tournamentId}`
-      );
+      try {
+        const [homeTeam, awayTeam, submitter] =
+        await Promise.all([
+          env.DB.prepare(`
+          SELECT name
+          FROM teams
+          WHERE id = ?
+        `)
+          .bind(match.home_team_id)
+          .first(),
+          env.DB.prepare(`
+          SELECT name
+          FROM teams
+          WHERE id = ?
+        `)
+          .bind(match.away_team_id)
+          .first(),
+          env.DB.prepare(`
+          SELECT username
+          FROM users
+          WHERE id = ?
+        `)
+          .bind(user.id)
+          .first()
+        ]);
+        const submitterName =
+          submitter?.username ||
+          user.username ||
+          "A player";
+        const homeTeamName =
+          homeTeam?.name || "Home Team";
+        const awayTeamName =
+          awayTeam?.name || "Away Team";
+        await sendPushToUser(
+          env,
+          tournament.admin_uid,
+          "Match Result Submitted",
+          `${submitterName} submitted a result for ${homeTeamName} vs ${awayTeamName}: ${homeGoals}-${awayGoals}.`,
+          `/tournament/${tournamentId}`
+        );
+      } catch (pushError) {
+        console.error(
+          "Match submission notification failed:",
+          pushError.message
+        );
+      }
     }
     
     return Response.json({
@@ -2981,14 +3033,31 @@ async function reviewMatchSubmissionRoute(
         )
         .run();
       
+      const [homeTeam, awayTeam] = await Promise.all([
+        env.DB.prepare(`
+    SELECT name
+    FROM teams
+    WHERE id = ?
+  `)
+        .bind(submission.home_team_id)
+        .first(),
+        
+        env.DB.prepare(`
+    SELECT name
+    FROM teams
+    WHERE id = ?
+  `)
+        .bind(submission.away_team_id)
+        .first()
+      ]);
+      
       await sendPushToUser(
         env,
         submission.submitted_by,
         "Match Result Rejected",
-        `Your ${submission.home_goals}-${submission.away_goals} match result for ${tournament.name} was rejected${rejectionReason ? `: ${rejectionReason}` : "."}`,
+        `Your result for ${homeTeam?.name || "Home Team"} vs ${awayTeam?.name || "Away Team"} (${submission.home_goals}-${submission.away_goals}) in ${tournament.name} was rejected${rejectionReason ? `: ${rejectionReason}` : "."}`,
         `/tournament/${tournamentId}`
       );
-      
       return Response.json({
         success: true,
         message: "Submission rejected.",
@@ -3225,14 +3294,31 @@ async function reviewMatchSubmissionRoute(
         );
     }
     
+    const [homeTeam, awayTeam] = await Promise.all([
+      env.DB.prepare(`
+    SELECT name
+    FROM teams
+    WHERE id = ?
+  `)
+      .bind(submission.home_team_id)
+      .first(),
+      
+      env.DB.prepare(`
+    SELECT name
+    FROM teams
+    WHERE id = ?
+  `)
+      .bind(submission.away_team_id)
+      .first()
+    ]);
+    
     await sendPushToUser(
       env,
       submission.submitted_by,
       "Match Result Approved",
-      `Your ${homeScore}-${awayScore} match result for ${tournament.name} was approved.`,
+      `Your result for ${homeTeam?.name || "Home Team"} vs ${awayTeam?.name || "Away Team"} (${homeScore}-${awayScore}) in ${tournament.name} was approved.`,
       `/tournament/${tournamentId}`
     );
-    
     return Response.json({
       success: true,
       message: "Submission approved.",
@@ -4857,8 +4943,8 @@ async function checkGroupStageCompletion(
       const rankedTeams =
         table.filter(
           team =>
-            team.pos >= playoffStartPosition &&
-            team.pos <= playoffEndPosition
+          team.pos >= playoffStartPosition &&
+          team.pos <= playoffEndPosition
         );
       if (
         rankedTeams.length !== playoffTeamCount
@@ -4885,25 +4971,23 @@ async function checkGroupStageCompletion(
         );
       }
       const playoffRoundMode =
-        settings.playoffRoundMode === "double"
-          ? "double"
-          : "single";
+        settings.playoffRoundMode === "double" ?
+        "double" :
+        "single";
       const now = Date.now();
       const playoffMatches = [];
       for (
-        let i = 0;
-        i < playoffTeamCount / 2;
-        i++
+        let i = 0; i < playoffTeamCount / 2; i++
       ) {
         const higherRankedTeam =
           table.find(
             team =>
-              team.pos === playoffStartPosition + i
+            team.pos === playoffStartPosition + i
           );
         const lowerRankedTeam =
           table.find(
             team =>
-              team.pos === playoffEndPosition - i
+            team.pos === playoffEndPosition - i
           );
         if (
           !higherRankedTeam ||
@@ -5040,9 +5124,7 @@ async function checkGroupStageCompletion(
       );
     const knockoutPairs = [];
     for (
-      let i = 0;
-      i < pairedTeams.length;
-      i += 2
+      let i = 0; i < pairedTeams.length; i += 2
     ) {
       knockoutPairs.push([
         pairedTeams[i].id,
@@ -5050,9 +5132,9 @@ async function checkGroupStageCompletion(
       ]);
     }
     const knockoutRoundMode =
-      settings.knockoutRoundMode === "double"
-        ? "double"
-        : "single";
+      settings.knockoutRoundMode === "double" ?
+      "double" :
+      "single";
     const thirdPlaceMatch =
       settings.thirdPlaceMatch === true;
     const knockoutMatches =
@@ -6097,36 +6179,30 @@ async function updateSubmissionDeadlineRoute(
       )
       .run();
     
-    const players =
-      await env.DB
+    const players = await env.DB
       .prepare(`
-        SELECT user_id
-        FROM tournament_players
-        WHERE tournament_id = ?
-      `)
+    SELECT user_id
+    FROM tournament_players
+    WHERE tournament_id = ?
+  `)
       .bind(tournamentId)
       .all();
     
-    let pushTitle =
-      "Submission Deadline Updated";
+    const pushTitle = "New Submission Deadline Set";
     
     let pushBody;
     
-    if (
-      enabled &&
-      deadline !== null
-    ) {
-      const deadlineDate =
-        new Date(deadline);
+    if (enabled && deadline !== null) {
+      const deadlineDate = new Date(deadline);
       
       pushBody =
-        `Match submissions for rounds ${fromRound}-${toRound} are due by ${deadlineDate.toLocaleString()}.`;
+        `${tournament.name}: Match submissions for rounds ${fromRound}-${toRound} are due by ${deadlineDate.toLocaleString()}.`;
     } else if (!enabled) {
       pushBody =
-        `The submission deadline for rounds ${fromRound}-${toRound} has been disabled.`;
+        `${tournament.name}: The submission deadline for rounds ${fromRound}-${toRound} has been disabled.`;
     } else {
       pushBody =
-        `The submission deadline for rounds ${fromRound}-${toRound} has been updated.`;
+        `${tournament.name}: The submission deadline for rounds ${fromRound}-${toRound} has been updated.`;
     }
     
     await Promise.all(
@@ -6134,11 +6210,9 @@ async function updateSubmissionDeadlineRoute(
       .filter(
         player =>
         player.user_id &&
-        String(player.user_id) !==
-        String(user.id)
+        String(player.user_id) !== String(user.id)
       )
-      .map(
-        player =>
+      .map(player =>
         sendPushToUser(
           env,
           player.user_id,
@@ -6148,7 +6222,6 @@ async function updateSubmissionDeadlineRoute(
         )
       )
     );
-    
     return Response.json({
       success: true,
       submissionDeadline: settings.submissionDeadline
@@ -8376,11 +8449,9 @@ function generateChampionsLeagueGroupMatches(
           (roundIndex + slot) % 2 === 0;
         const fixture = {
           homeTeamId: homeFirst ?
-            firstTeam :
-            secondTeam,
+            firstTeam : secondTeam,
           awayTeamId: homeFirst ?
-            secondTeam :
-            firstTeam,
+            secondTeam : firstTeam,
           slot: slot + 1
         };
         roundFixtures.push(fixture);
@@ -8827,8 +8898,7 @@ async function generateChampionsLeagueRoute(
       groupingMode: "auto",
       groupScheduleMode,
       opponentsPerTeam: groupScheduleMode === "limited" ?
-        opponentsPerTeam :
-        null,
+        opponentsPerTeam : null,
       groupRoundMode,
       directQualifiers,
       playoffStartPosition,

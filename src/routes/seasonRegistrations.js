@@ -1,3 +1,8 @@
+import {
+  sendPushToUser
+} from "../pushNotifications.js";
+
+
 function json(data, status = 200) {
   return Response.json(data, { status });
 }
@@ -473,6 +478,37 @@ async function handleVerifyPayment(request, env, user) {
     }
   }
   
+  try {
+    const tournament = await env.DB.prepare(`
+    SELECT name, admin_uid
+    FROM tournaments
+    WHERE id = ?
+    LIMIT 1
+  `).bind(registration.tournament_id).first();
+    
+    await sendPushToUser(
+      env,
+      user.id,
+      "Registration Payment Successful",
+      `Your payment for ${tournament?.name || "the season"} has been confirmed. Your registration is complete.`,
+      `/tournament/${registration.tournament_id}`
+    );
+    
+    if (
+      tournament?.admin_uid &&
+      String(tournament.admin_uid) !== String(user.id)
+    ) {
+      await sendPushToUser(
+        env,
+        tournament.admin_uid,
+        "New Season Registration",
+        `${user.username || "A player"} has paid for registration in ${tournament.name || "your season"}.`,
+        `/tournament/${registration.tournament_id}`
+      );
+    }
+  } catch (error) {
+    console.error("Registration payment notification failed:", error.message);
+  }
   return json({
     success: true,
     message: "Payment verified successfully.",
