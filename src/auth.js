@@ -691,7 +691,7 @@ async function passkeyRegisterOptions(request, env) {
         transports: parseTransports(item.transports)
       })),
       authenticatorSelection: {
-        residentKey: "preferred",
+        residentKey: "required",
         userVerification: "required"
       },
       supportedAlgorithmIDs: [-7, -257]
@@ -859,75 +859,32 @@ async function passkeyRegisterVerify(request, env) {
 
 async function passkeyLoginOptions(request, env) {
   try {
-    const body = await request.json();
-    const loginValue = String(body.login || "").trim().toLowerCase();
-
-    if (!loginValue) {
-      return Response.json({
-        success: false,
-        message: "Enter your username or email first."
-      }, { status: 400 });
-    }
-
-    const user = await env.DB.prepare(`
-      SELECT id, username, email
-      FROM users
-      WHERE LOWER(username) = ?
-         OR LOWER(email) = ?
-      LIMIT 1
-    `).bind(loginValue, loginValue).first();
-
-    if (!user) {
-      return Response.json({
-        success: false,
-        message: "Unable to find an account with a registered passkey."
-      }, { status: 404 });
-    }
-
-    const credentials = await env.DB.prepare(`
-      SELECT credential_id, transports
-      FROM passkey_credentials
-      WHERE user_id = ?
-    `).bind(user.id).all();
-
-    if (!credentials.results?.length) {
-      return Response.json({
-        success: false,
-        message: "This account has no registered passkey."
-      }, { status: 404 });
-    }
-
     const options = await generateAuthenticationOptions({
       rpID: env.RP_ID,
-      allowCredentials: credentials.results.map(item => ({
-        id: item.credential_id,
-        transports: parseTransports(item.transports)
-      })),
       userVerification: "required"
     });
-
-    const now = Date.now();
+    
     const challengeId = uuid();
-
-    await env.DB.prepare(`
-      DELETE FROM passkey_challenges
-      WHERE user_id = ?
-        AND purpose = 'login'
-    `).bind(user.id).run();
-
+    const now = Date.now();
+    const expiresAt = now + 5 * 60 * 1000;
+    
     await env.DB.prepare(`
       INSERT INTO passkey_challenges (
-        id, user_id, challenge, purpose, created_at, expires_at
+        id,
+        user_id,
+        challenge,
+        purpose,
+        created_at,
+        expires_at
       )
-      VALUES (?, ?, ?, 'login', ?, ?)
+      VALUES (?, NULL, ?, 'login', ?, ?)
     `).bind(
       challengeId,
-      user.id,
       options.challenge,
       now,
-      now + 5 * 60 * 1000
+      expiresAt
     ).run();
-
+    
     return Response.json({
       success: true,
       challengeId,
@@ -935,71 +892,72 @@ async function passkeyLoginOptions(request, env) {
     });
   } catch (error) {
     console.error("Passkey login options error:", error);
-
+    
     return Response.json({
       success: false,
-      message: "Unable to start passkey login."
-    }, { status: 500 });
+      message: "Unable to start biometric login."
+    }, {
+      status: 500
+    });
   }
 }
-
 async function passkeyLoginVerify(request, env) {
   try {
     const body = await request.json();
-    const challengeId = String(body.challengeId || "");
-    const response = body.response;
-
-    if (!challengeId || !response?.id) {
+    if (!body.challengeId || !body.response?.id) {
       return Response.json({
         success: false,
-        message: "Passkey verification details are missing."
+        message: "Invalid biometric authentication response."
       }, { status: 400 });
     }
-
-    const challengeRecord = await env.DB.prepare(`
-      SELECT id, user_id, challenge
+    const now = Date.now();
+    const challenge = await env.DB.prepare(`
+      SELECT id, challenge
       FROM passkey_challenges
       WHERE id = ?
         AND purpose = 'login'
         AND expires_at > ?
+        AND user_id IS NULL
       LIMIT 1
     `).bind(
-      challengeId,
-      Date.now()
+      body.challengeId,
+      now
     ).first();
-
-    if (!challengeRecord) {
+    if (!challenge) {
       return Response.json({
         success: false,
-        message: "The login request expired. Please try again."
+        message: "Authentication expired. Please try again."
       }, { status: 400 });
     }
-
     const passkey = await env.DB.prepare(`
       SELECT
+        id,
+        user_id,
         credential_id,
         public_key,
         counter,
         transports
       FROM passkey_credentials
-      WHERE user_id = ?
-        AND credential_id = ?
+      WHERE credential_id = ?
       LIMIT 1
     `).bind(
-      challengeRecord.user_id,
-      response.id
+      body.response.id
     ).first();
-
     if (!passkey) {
       return Response.json({
         success: false,
-        message: "This passkey is not registered to the account."
+        message: "Passkey not recognized. Please sign in with your password."
       }, { status: 401 });
     }
-
+    await env.DB.prepare(`
+      DELETE FROM passkey_challenges
+      WHERE id = ?
+    `).bind(
+      body.challengeId
+    ).run();
     const verification = await verifyAuthenticationResponse({
-      response,
-      expectedChallenge: challengeRecord.challenge,
+      response: body.response,
+      expectedChallenge: challenge.challenge,
       expectedOrigin: `https://${env.RP_ID}`,
       expectedRPID: env.RP_ID,
       credential: {
@@ -1010,78 +968,70 @@ async function passkeyLoginVerify(request, env) {
       },
       requireUserVerification: true
     });
-
-    await env.DB.prepare(`
-      DELETE FROM passkey_challenges
-      WHERE id = ?
-    `).bind(challengeId).run();
-
     if (!verification.verified) {
       return Response.json({
         success: false,
-        message: "Passkey verification failed."
+        message: "Biometric authentication failed."
       }, { status: 401 });
     }
-
-    const now = Date.now();
-
-    await env.DB.prepare(`
-      UPDATE passkey_credentials
-      SET counter = ?, last_used_at = ?
-      WHERE credential_id = ?
-    `).bind(
-      verification.authenticationInfo.newCounter,
-      now,
-      passkey.credential_id
-    ).run();
-
     const user = await env.DB.prepare(`
-      SELECT id, username, email, role, created_at
+      SELECT *
       FROM users
       WHERE id = ?
       LIMIT 1
-    `).bind(challengeRecord.user_id).first();
-
+    `).bind(
+      passkey.user_id
+    ).first();
     if (!user) {
       return Response.json({
         success: false,
         message: "Account not found."
       }, { status: 404 });
     }
-
+    const updatedCounter = verification.authenticationInfo.newCounter;
+    const currentTime = Date.now();
+    await env.DB.prepare(`
+      UPDATE passkey_credentials
+      SET counter = ?,
+          last_used_at = ?
+      WHERE id = ?
+    `).bind(
+      updatedCounter,
+      currentTime,
+      passkey.id
+    ).run();
     const token = uuid();
-    const expiresAt = now + 30 * 24 * 60 * 60 * 1000;
-
+    const expiresAt = currentTime + 30 * 24 * 60 * 60 * 1000;
     await env.DB.prepare(`
       INSERT INTO sessions (
-        token, user_id, created_at, expires_at, active
+        token,
+        user_id,
+        created_at,
+        expires_at,
+        active
       )
       VALUES (?, ?, ?, ?, 1)
     `).bind(
       token,
       user.id,
-      now,
+      currentTime,
       expiresAt
     ).run();
-
+    const {
+      password_hash,
+      ...safeUser
+    } = user;
     return Response.json({
       success: true,
       token,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        created_at: user.created_at
-      }
+      user: safeUser
     });
   } catch (error) {
     console.error("Passkey login verification error:", error);
-
     return Response.json({
       success: false,
-      message: "Unable to verify the passkey. Please try again."
-    }, { status: 400 });
+      message: "Biometric login failed. Please try again."
+    }, { status: 500 });
   }
 }
 
