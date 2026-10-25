@@ -884,7 +884,7 @@ async function getTournamentRoute(
   }
 }
 
-function parseTournament(tournament) {
+export function parseTournament(tournament) {
   if (!tournament) {
     return tournament;
   }
@@ -9494,7 +9494,371 @@ async function processChampionsLeaguePlayoffResult(
 
 
 
-
+export async function runTournamentReminders(
+  env,
+  sendPushToUser,
+  parseTournament
+) {
+  const now = Date.now();
+  const pendingCutoff = now - 12 * 60 * 60 * 1000;
+  const stats = {
+    tournamentsChecked: 0,
+    unplayedRemindersSent: 0,
+    overdueRemindersSent: 0,
+    pendingSubmissionRemindersSent: 0,
+    failed: 0
+  };
+  async function sendTrackedReminder({
+    reminderType,
+    tournamentId,
+    referenceId,
+    userId,
+    fromRound = 0,
+    toRound = 0,
+    deadlineAt = 0,
+    title,
+    body
+  }) {
+    const existing = await env.DB
+      .prepare(`
+        SELECT id
+        FROM notification_reminders
+        WHERE reminder_type = ?
+        AND reference_id = ?
+        AND user_id = ?
+        LIMIT 1
+      `)
+      .bind(
+        reminderType,
+        referenceId,
+        userId
+      )
+      .first();
+    if (existing) {
+      return false;
+    }
+    const result = await sendPushToUser(
+      env,
+      userId,
+      title,
+      body
+    );
+    if (!result?.success) {
+      stats.failed++;
+      return false;
+    }
+    await env.DB
+      .prepare(`
+        INSERT OR IGNORE INTO notification_reminders (
+          id,
+          reminder_type,
+          reference_id,
+          user_id,
+          sent_at,
+          tournament_id,
+          from_round,
+          to_round,
+          deadline_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .bind(
+        crypto.randomUUID(),
+        reminderType,
+        referenceId,
+        userId,
+        Date.now(),
+        tournamentId,
+        fromRound,
+        toRound,
+        deadlineAt
+      )
+      .run();
+    return true;
+  }
+  try {
+    const result = await env.DB
+      .prepare(`
+        SELECT *
+        FROM tournaments
+        WHERE season_status = 'active'
+      `)
+      .all();
+    const tournaments = result.results || [];
+    for (const rawTournament of tournaments) {
+      try {
+        const tournament = parseTournament({
+          ...rawTournament
+        });
+        if (!tournament) {
+          continue;
+        }
+        stats.tournamentsChecked++;
+        const deadline =
+          tournament.settings?.submissionDeadline;
+        if (!deadline) {
+          continue;
+        }
+        const fromRound = Number(
+          deadline.fromRound
+        );
+        const toRound = Number(
+          deadline.toRound
+        );
+        if (
+          !Number.isInteger(fromRound) ||
+          !Number.isInteger(toRound) ||
+          fromRound < 0 ||
+          toRound < fromRound
+        ) {
+          continue;
+        }
+        const deadlineAt =
+          deadline.enabled === true &&
+          Number.isFinite(Number(deadline.deadline))
+            ? Number(deadline.deadline)
+            : 0;
+        const matchResult = await env.DB
+          .prepare(`
+            SELECT
+              m.id,
+              m.home_team_id,
+              m.away_team_id,
+              m.round,
+              m.round_index,
+              m.slot,
+              ht.name AS home_team_name,
+              at.name AS away_team_name
+            FROM matches m
+            LEFT JOIN teams ht
+              ON ht.id = m.home_team_id
+            LEFT JOIN teams at
+              ON at.id = m.away_team_id
+            WHERE m.tournament_id = ?
+            AND m.played = 0
+            AND m.round_index >= ?
+            AND m.round_index <= ?
+            AND m.home_team_id IS NOT NULL
+            AND m.away_team_id IS NOT NULL
+            ORDER BY
+              m.round_index ASC,
+              m.slot ASC
+          `)
+          .bind(
+            tournament.id,
+            fromRound,
+            toRound
+          )
+          .all();
+        const matches = matchResult.results || [];
+        if (!matches.length) {
+          continue;
+        }
+        const playerResult = await env.DB
+          .prepare(`
+            SELECT
+              user_id,
+              team_id
+            FROM tournament_players
+            WHERE tournament_id = ?
+            AND status = 'accepted'
+          `)
+          .bind(tournament.id)
+          .all();
+        const participants = playerResult.results || [];
+        const teamsByUser = new Map();
+        for (const participant of participants) {
+          const userId = String(
+            participant.user_id || ""
+          );
+          const teamId = String(
+            participant.team_id || ""
+          );
+          if (!userId || !teamId) {
+            continue;
+          }
+          if (!teamsByUser.has(userId)) {
+            teamsByUser.set(userId, new Set());
+          }
+          teamsByUser.get(userId).add(teamId);
+        }
+        const matchesByUser = new Map();
+        for (const match of matches) {
+          const homeTeamId = String(
+            match.home_team_id
+          );
+          const awayTeamId = String(
+            match.away_team_id
+          );
+          const recipients = new Set();
+          for (const [userId, teamIds] of teamsByUser) {
+            if (
+              teamIds.has(homeTeamId) ||
+              teamIds.has(awayTeamId)
+            ) {
+              recipients.add(userId);
+            }
+          }
+          const roundLabel =
+            match.round ||
+            `Round ${match.round_index}`;
+          const matchLabel =
+            `${roundLabel}: ` +
+            `${match.home_team_name || "Home team"} vs ` +
+            `${match.away_team_name || "Away team"}`;
+          for (const userId of recipients) {
+            if (!matchesByUser.has(userId)) {
+              matchesByUser.set(userId, []);
+            }
+            matchesByUser.get(userId).push({
+              id: match.id,
+              label: matchLabel
+            });
+          }
+        }
+        const configReference = [
+          tournament.id,
+          fromRound,
+          toRound,
+          deadlineAt
+        ].join(":");
+        const isOverdue =
+          deadline.enabled === true &&
+          deadlineAt > 0 &&
+          now > deadlineAt;
+        for (const [userId, userMatches] of matchesByUser) {
+          const matchList = userMatches
+            .map((match, index) =>
+              `${index + 1}. ${match.label}`
+            )
+            .join("\n");
+          if (isOverdue) {
+            const sent = await sendTrackedReminder({
+              reminderType: "overdue_deadline",
+              tournamentId: tournament.id,
+              referenceId: configReference,
+              userId,
+              fromRound,
+              toRound,
+              deadlineAt,
+              title: "Tournament Deadline Passed",
+              body:
+                `${tournament.name}: the submission deadline has passed. ` +
+                `You have ${userMatches.length} unplayed match(es):\n` +
+                matchList
+            });
+            if (sent) {
+              stats.overdueRemindersSent++;
+            }
+          } else {
+            const sent = await sendTrackedReminder({
+              reminderType: "unplayed_matches",
+              tournamentId: tournament.id,
+              referenceId: configReference,
+              userId,
+              fromRound,
+              toRound,
+              deadlineAt,
+              title: "Unplayed Tournament Matches",
+              body:
+                `${tournament.name}: you have ${userMatches.length} ` +
+                `unplayed match(es) in the current submission range:\n` +
+                matchList
+            });
+            if (sent) {
+              stats.unplayedRemindersSent++;
+            }
+          }
+        }
+      } catch (error) {
+        stats.failed++;
+        console.error(
+          `Tournament reminder failed for ${rawTournament.id}:`,
+          error
+        );
+      }
+    }
+  } catch (error) {
+    stats.failed++;
+    console.error(
+      "Failed to retrieve active tournaments:",
+      error
+    );
+  }
+  try {
+    const pendingResult = await env.DB
+      .prepare(`
+        SELECT
+          ms.id AS submission_id,
+          ms.tournament_id,
+          ms.match_id,
+          ms.created_at,
+          ms.submitted_by,
+          t.name AS tournament_name,
+          t.admin_uid,
+          m.home_team_id,
+          m.away_team_id,
+          ht.name AS home_team_name,
+          at.name AS away_team_name
+        FROM match_submissions ms
+        INNER JOIN tournaments t
+          ON t.id = ms.tournament_id
+        LEFT JOIN matches m
+          ON m.id = ms.match_id
+        LEFT JOIN teams ht
+          ON ht.id = m.home_team_id
+        LEFT JOIN teams at
+          ON at.id = m.away_team_id
+        WHERE ms.status = 'pending'
+        AND ms.created_at <= ?
+        AND t.season_status = 'active'
+        AND t.admin_uid IS NOT NULL
+        ORDER BY ms.created_at ASC
+      `)
+      .bind(pendingCutoff)
+      .all();
+    const pendingSubmissions =
+      pendingResult.results || [];
+    for (const submission of pendingSubmissions) {
+      try {
+        const matchDescription =
+          `${submission.home_team_name || "Home team"} vs ` +
+          `${submission.away_team_name || "Away team"}`;
+        const sent = await sendTrackedReminder({
+          reminderType: "pending_submission",
+          tournamentId: submission.tournament_id,
+          referenceId: submission.submission_id,
+          userId: submission.admin_uid,
+          title: "Match Submission Awaiting Review",
+          body:
+            `A match submission for ${submission.tournament_name} ` +
+            `has been pending for at least 12 hours. ` +
+            `Match: ${matchDescription}. Please review it.`
+        });
+        if (sent) {
+          stats.pendingSubmissionRemindersSent++;
+        }
+      } catch (error) {
+        stats.failed++;
+        console.error(
+          `Pending submission reminder failed for ${submission.submission_id}:`,
+          error
+        );
+      }
+    }
+  } catch (error) {
+    stats.failed++;
+    console.error(
+      "Failed to process pending submission reminders:",
+      error
+    );
+  }
+  console.log(
+    "Tournament reminder results:",
+    JSON.stringify(stats)
+  );
+  return stats;
+}
 
 
 //end
