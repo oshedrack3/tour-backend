@@ -2770,9 +2770,9 @@ async function createMatchSubmissionRoute(
       .run();
     
     const notificationTasks = [];
-try {
-  const [matchTeams, submitter] = await Promise.all([
-    env.DB.prepare(`
+    try {
+      const [matchTeams, submitter] = await Promise.all([
+        env.DB.prepare(`
       SELECT
         ht.name AS home_team_name,
         at.name AS away_team_name
@@ -2783,40 +2783,40 @@ try {
         AND m.tournament_id = ?
       LIMIT 1
     `)
-    .bind(matchId, tournamentId)
-    .first(),
-    env.DB.prepare(`
+        .bind(matchId, tournamentId)
+        .first(),
+        env.DB.prepare(`
       SELECT username
       FROM users
       WHERE id = ?
       LIMIT 1
     `)
-    .bind(user.id)
-    .first()
-  ]);
-  const submitterName =
-    submitter?.username ||
-    user.username ||
-    "Unknown Player";
-  const homeTeamName =
-    matchTeams?.home_team_name ||
-    "Unknown Team";
-  const awayTeamName =
-    matchTeams?.away_team_name ||
-    "Unknown Team";
-  const tournamentName =
-    tournament.name ||
-    tournament.title ||
-    "Unknown Tournament";
-  const message =
-    `${submitterName} submitted a match result: ` +
-    `${homeTeamName} ${homeGoals}-${awayGoals} ${awayTeamName} ` +
-    `in ${tournamentName}. Review the result and contest it if incorrect.`;
-  const opponentTeamId =
-    String(submittingTeamId) === String(match.home_team_id) ?
-    String(match.away_team_id) :
-    String(match.home_team_id);
-  const opponent = await env.DB.prepare(`
+        .bind(user.id)
+        .first()
+      ]);
+      const submitterName =
+        submitter?.username ||
+        user.username ||
+        "Unknown Player";
+      const homeTeamName =
+        matchTeams?.home_team_name ||
+        "Unknown Team";
+      const awayTeamName =
+        matchTeams?.away_team_name ||
+        "Unknown Team";
+      const tournamentName =
+        tournament.name ||
+        tournament.title ||
+        "Unknown Tournament";
+      const message =
+        `${submitterName} submitted a match result: ` +
+        `${homeTeamName} ${homeGoals}-${awayGoals} ${awayTeamName} ` +
+        `in ${tournamentName}. Review the result and contest it if incorrect.`;
+      const opponentTeamId =
+        String(submittingTeamId) === String(match.home_team_id) ?
+        String(match.away_team_id) :
+        String(match.home_team_id);
+      const opponent = await env.DB.prepare(`
     SELECT DISTINCT user_id
     FROM tournament_players
     WHERE tournament_id = ?
@@ -2824,59 +2824,59 @@ try {
       AND status = 'accepted'
       AND user_id != ?
   `)
-    .bind(
-      tournamentId,
-      opponentTeamId,
-      user.id
-    )
-    .all();
-  const opponentIds = [
-    ...new Set(
-      (opponent.results || [])
-      .map(player => player.user_id)
-      .filter(Boolean)
-      .map(String)
-    )
-  ];
-  for (const opponentId of opponentIds) {
-    notificationTasks.push(
-      sendPushToUser(
-        env,
-        opponentId,
-        "Match Result Submitted",
-        message
-      )
-    );
-  }
-  if (
-    tournament.admin_uid &&
-    String(tournament.admin_uid) !== String(user.id)
-  ) {
-    notificationTasks.push(
-      sendPushToUser(
-        env,
-        tournament.admin_uid,
-        "Match Result Submitted",
-        message
-      )
-    );
-  }
-  const results = await Promise.allSettled(notificationTasks);
-  for (const result of results) {
-    if (result.status === "rejected") {
+        .bind(
+          tournamentId,
+          opponentTeamId,
+          user.id
+        )
+        .all();
+      const opponentIds = [
+        ...new Set(
+          (opponent.results || [])
+          .map(player => player.user_id)
+          .filter(Boolean)
+          .map(String)
+        )
+      ];
+      for (const opponentId of opponentIds) {
+        notificationTasks.push(
+          sendPushToUser(
+            env,
+            opponentId,
+            "Match Result Submitted",
+            message
+          )
+        );
+      }
+      if (
+        tournament.admin_uid &&
+        String(tournament.admin_uid) !== String(user.id)
+      ) {
+        notificationTasks.push(
+          sendPushToUser(
+            env,
+            tournament.admin_uid,
+            "Match Result Submitted",
+            message
+          )
+        );
+      }
+      const results = await Promise.allSettled(notificationTasks);
+      for (const result of results) {
+        if (result.status === "rejected") {
+          console.error(
+            "Match submission notification failed:",
+            result.reason
+          );
+        }
+      }
+    } catch (pushError) {
       console.error(
         "Match submission notification failed:",
-        result.reason
+        pushError.message
       );
     }
-  }
-} catch (pushError) {
-  console.error(
-    "Match submission notification failed:",
-    pushError.message
-  );
-}
-
+    
     
     return Response.json({
       success: true,
@@ -6137,21 +6137,46 @@ async function updateSubmissionDeadlineRoute(
       .bind(tournamentId)
       .all();
     
-    const pushTitle = "New Submission Deadline Set";
-    
+    const pushTitle = "Submission Deadline Update";
     let pushBody;
-    
     if (enabled && deadline !== null) {
       const deadlineDate = new Date(deadline);
-      
-      pushBody =
-        `${tournament.name}: Match submissions for rounds ${fromRound}-${toRound} are due by ${deadlineDate.toLocaleString()}.`;
+      const now = Date.now();
+      const remainingMs = deadlineDate.getTime() - now;
+      const formattedDeadline = deadlineDate.toLocaleString("en-GB", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true
+      });
+      if (remainingMs > 0) {
+        const totalMinutes = Math.floor(
+          remainingMs / (1000 * 60)
+        );
+        const days = Math.floor(totalMinutes / 1440);
+        const hours = Math.floor((totalMinutes % 1440) / 60);
+        const minutes = totalMinutes % 60;
+        const parts = [];
+        if (days > 0) {
+          parts.push(`${days} ${days === 1 ? "day" : "days"}`);
+        }
+        if (hours > 0) {
+          parts.push(`${hours} ${hours === 1 ? "hour" : "hours"}`);
+        }
+        if (minutes > 0 || parts.length === 0) {
+          parts.push(`${minutes} ${minutes === 1 ? "minute" : "minutes"}`);
+        }
+        pushBody = `${tournament.name}: The submission deadline for rounds ${fromRound}-${toRound} is ${formattedDeadline}. ${parts.join(", ")} remaining.`;
+      } else {
+        pushBody = `${tournament.name}: The submission deadline for rounds ${fromRound}-${toRound} was ${formattedDeadline}. The deadline has passed, contact admin if you have any complains.`;
+      }
     } else if (!enabled) {
-      pushBody =
-        `${tournament.name}: The submission deadline for rounds ${fromRound}-${toRound} has been disabled.`;
+      pushBody = `${tournament.name}: The submission deadline for rounds ${fromRound}-${toRound} has been disabled.`;
     } else {
-      pushBody =
-        `${tournament.name}: The submission deadline for rounds ${fromRound}-${toRound} has been updated.`;
+      pushBody = `${tournament.name}: The submission deadline for rounds ${fromRound}-${toRound} has been updated, but no active deadline is currently set.`;
     }
     
     await Promise.all(
@@ -6171,6 +6196,7 @@ async function updateSubmissionDeadlineRoute(
         )
       )
     );
+    
     return Response.json({
       success: true,
       submissionDeadline: settings.submissionDeadline
@@ -9615,9 +9641,9 @@ export async function runTournamentReminders(
         }
         const deadlineAt =
           deadline.enabled === true &&
-          Number.isFinite(Number(deadline.deadline))
-            ? Number(deadline.deadline)
-            : 0;
+          Number.isFinite(Number(deadline.deadline)) ?
+          Number(deadline.deadline) :
+          0;
         const matchResult = await env.DB
           .prepare(`
             SELECT
@@ -9742,8 +9768,7 @@ export async function runTournamentReminders(
               toRound,
               deadlineAt,
               title: "Tournament Deadline Passed",
-              body:
-                `${tournament.name}: the submission deadline has passed. ` +
+              body: `${tournament.name}: the submission deadline has passed. ` +
                 `You have ${userMatches.length} unplayed match(es):\n` +
                 matchList
             });
@@ -9760,8 +9785,7 @@ export async function runTournamentReminders(
               toRound,
               deadlineAt,
               title: "Unplayed Tournament Matches",
-              body:
-                `${tournament.name}: you have ${userMatches.length} ` +
+              body: `${tournament.name}: you have ${userMatches.length} ` +
                 `unplayed match(es) in the current submission range:\n` +
                 matchList
             });
@@ -9830,8 +9854,7 @@ export async function runTournamentReminders(
           referenceId: submission.submission_id,
           userId: submission.admin_uid,
           title: "Match Submission Awaiting Review",
-          body:
-            `A match submission for ${submission.tournament_name} ` +
+          body: `A match submission for ${submission.tournament_name} ` +
             `has been pending for at least 12 hours. ` +
             `Match: ${matchDescription}. Please review it.`
         });
