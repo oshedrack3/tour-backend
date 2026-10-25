@@ -488,62 +488,59 @@ export async function createTeam(
 ) {
   const countResult =
     await db
-      .prepare(`
+    .prepare(`
         SELECT COUNT(*) AS count
         FROM teams
         WHERE owner_uid = ?
       `)
-      .bind(userId)
-      .first();
-
+    .bind(userId)
+    .first();
+  
   const teamCount =
     Number(countResult?.count) || 0;
-
+  
   const maxTeams =
-    userRole === "admin"
-      ? 20
-      : 1;
-
+    userRole === "admin" ?
+    20 :
+    1;
+  
   if (teamCount >= maxTeams) {
     return {
       success: false,
-      message:
-        userRole === "admin"
-          ? "You can create a maximum of 20 teams."
-          : "You can create only one team."
+      message: userRole === "admin" ?
+        "You can create a maximum of 20 teams." : "You can create only one team."
     };
   }
-
+  
   const teamName =
     String(team.name || "").trim();
-
+  
   if (!teamName) {
     return {
       success: false,
       message: "Team name is required."
     };
   }
-
+  
   const existingTeam =
     await db
-      .prepare(`
+    .prepare(`
         SELECT id
         FROM teams
         WHERE LOWER(TRIM(name)) =
               LOWER(TRIM(?))
         LIMIT 1
       `)
-      .bind(teamName)
-      .first();
-
+    .bind(teamName)
+    .first();
+  
   if (existingTeam) {
     return {
       success: false,
-      message:
-        "A team with this name already exists."
+      message: "A team with this name already exists."
     };
   }
-
+  
   try {
     await db
       .prepare(`
@@ -564,40 +561,39 @@ export async function createTeam(
         team.logo || null,
         team.created_at,
         team.updated_at ||
-          team.created_at
+        team.created_at
       )
       .run();
-
+    
   } catch (error) {
     if (
       String(error.message || "")
-        .toLowerCase()
-        .includes("unique")
+      .toLowerCase()
+      .includes("unique")
     ) {
       return {
         success: false,
-        message:
-          "A team with this name already exists."
+        message: "A team with this name already exists."
       };
     }
-
+    
     throw error;
   }
-
+  
   const createdTeam =
     await db
-      .prepare(`
+    .prepare(`
         SELECT *
         FROM teams
         WHERE id = ?
         AND owner_uid = ?
       `)
-      .bind(
-        team.id,
-        userId
-      )
-      .first();
-
+    .bind(
+      team.id,
+      userId
+    )
+    .first();
+  
   return {
     success: true,
     team: createdTeam
@@ -1116,6 +1112,15 @@ export async function updateTournamentPlayer(
     values.push(updates.status);
   }
   
+  if (
+    updates.registration_status !== undefined
+  ) {
+    fields.push("registration_status = ?");
+    values.push(
+      updates.registration_status
+    );
+  }
+  
   if (updates.joined_at !== undefined) {
     fields.push("joined_at = ?");
     values.push(updates.joined_at);
@@ -1285,7 +1290,7 @@ export async function updateMatchResultAtomic(
   updatePlayerStats = true
 ) {
   const now = Date.now();
-
+  
   const existingMatch = await db
     .prepare(`
       SELECT
@@ -1301,7 +1306,7 @@ export async function updateMatchResultAtomic(
       tournamentId
     )
     .first();
-
+  
   const homePlayer = await db
     .prepare(`
       SELECT user_id
@@ -1315,7 +1320,7 @@ export async function updateMatchResultAtomic(
       homeTeamId
     )
     .first();
-
+  
   const awayPlayer = await db
     .prepare(`
       SELECT user_id
@@ -1329,18 +1334,18 @@ export async function updateMatchResultAtomic(
       awayTeamId
     )
     .first();
-
+  
   const statements = [];
-
+  
   let homeRatingChange = 0;
   let awayRatingChange = 0;
-
+  
   const canRate =
     matchUpdates.played &&
     homePlayer?.user_id &&
     awayPlayer?.user_id &&
     homePlayer.user_id !== awayPlayer.user_id;
-
+  
   if (canRate) {
     const homeUser = await db
       .prepare(`
@@ -1352,7 +1357,7 @@ export async function updateMatchResultAtomic(
         homePlayer.user_id
       )
       .first();
-
+    
     const awayUser = await db
       .prepare(`
         SELECT rating
@@ -1363,22 +1368,22 @@ export async function updateMatchResultAtomic(
         awayPlayer.user_id
       )
       .first();
-
+    
     if (homeUser && awayUser) {
       let homeRating =
         homeUser.rating ?? 1500;
-
+      
       let awayRating =
         awayUser.rating ?? 1500;
-
+      
       if (existingMatch?.played) {
         homeRating -=
           existingMatch.home_rating_change || 0;
-
+        
         awayRating -=
           existingMatch.away_rating_change || 0;
       }
-
+      
       const elo =
         calculateElo(
           homeRating,
@@ -1386,41 +1391,41 @@ export async function updateMatchResultAtomic(
           matchUpdates.home_score,
           matchUpdates.away_score
         );
-
+      
       homeRatingChange =
         elo.homeChange;
-
+      
       awayRatingChange =
         elo.awayChange;
-
+      
       statements.push(
         db
-          .prepare(`
+        .prepare(`
             UPDATE users
             SET rating = ?
             WHERE id = ?
           `)
-          .bind(
-            homeRating + homeRatingChange,
-            homePlayer.user_id
-          ),
+        .bind(
+          homeRating + homeRatingChange,
+          homePlayer.user_id
+        ),
         db
-          .prepare(`
+        .prepare(`
             UPDATE users
             SET rating = ?
             WHERE id = ?
           `)
-          .bind(
-            awayRating + awayRatingChange,
-            awayPlayer.user_id
-          )
+        .bind(
+          awayRating + awayRatingChange,
+          awayPlayer.user_id
+        )
       );
     }
   }
-
+  
   statements.push(
     db
-      .prepare(`
+    .prepare(`
         UPDATE matches
         SET
           home_score = ?,
@@ -1435,21 +1440,21 @@ export async function updateMatchResultAtomic(
         WHERE id = ?
         AND tournament_id = ?
       `)
-      .bind(
-        matchUpdates.home_score,
-        matchUpdates.away_score,
-        matchUpdates.played,
-        matchUpdates.played_at,
-        matchUpdates.winner_team_id,
-        matchUpdates.stats || null,
-        homeRatingChange,
-        awayRatingChange,
-        now,
-        matchId,
-        tournamentId
-      )
+    .bind(
+      matchUpdates.home_score,
+      matchUpdates.away_score,
+      matchUpdates.played,
+      matchUpdates.played_at,
+      matchUpdates.winner_team_id,
+      matchUpdates.stats || null,
+      homeRatingChange,
+      awayRatingChange,
+      now,
+      matchId,
+      tournamentId
+    )
   );
-
+  
   if (
     updatePlayerStats &&
     homeStats &&
@@ -1457,7 +1462,7 @@ export async function updateMatchResultAtomic(
   ) {
     statements.push(
       db
-        .prepare(`
+      .prepare(`
           UPDATE tournament_players
           SET
             played = ?,
@@ -1470,20 +1475,20 @@ export async function updateMatchResultAtomic(
           WHERE tournament_id = ?
           AND team_id = ?
         `)
-        .bind(
-          homeStats.played,
-          homeStats.wins,
-          homeStats.draws,
-          homeStats.losses,
-          homeStats.gf,
-          homeStats.ga,
-          homeStats.points,
-          tournamentId,
-          homeTeamId
-        ),
-
+      .bind(
+        homeStats.played,
+        homeStats.wins,
+        homeStats.draws,
+        homeStats.losses,
+        homeStats.gf,
+        homeStats.ga,
+        homeStats.points,
+        tournamentId,
+        homeTeamId
+      ),
+      
       db
-        .prepare(`
+      .prepare(`
           UPDATE tournament_players
           SET
             played = ?,
@@ -1496,46 +1501,46 @@ export async function updateMatchResultAtomic(
           WHERE tournament_id = ?
           AND team_id = ?
         `)
-        .bind(
-          awayStats.played,
-          awayStats.wins,
-          awayStats.draws,
-          awayStats.losses,
-          awayStats.gf,
-          awayStats.ga,
-          awayStats.points,
-          tournamentId,
-          awayTeamId
-        )
+      .bind(
+        awayStats.played,
+        awayStats.wins,
+        awayStats.draws,
+        awayStats.losses,
+        awayStats.gf,
+        awayStats.ga,
+        awayStats.points,
+        tournamentId,
+        awayTeamId
+      )
     );
   }
-
+  
   await db.batch(statements);
-
+  
   const updatedMatch =
     await db
-      .prepare(`
+    .prepare(`
         SELECT *
         FROM matches
         WHERE id = ?
         AND tournament_id = ?
       `)
-      .bind(
-        matchId,
-        tournamentId
-      )
-      .first();
-
+    .bind(
+      matchId,
+      tournamentId
+    )
+    .first();
+  
   let updatedHomePlayer = null;
   let updatedAwayPlayer = null;
-
+  
   if (updatePlayerStats) {
     [
       updatedHomePlayer,
       updatedAwayPlayer
     ] = await Promise.all([
       db
-        .prepare(`
+      .prepare(`
           SELECT
             tp.*,
             tm.name AS team_name,
@@ -1546,14 +1551,14 @@ export async function updateMatchResultAtomic(
           WHERE tp.tournament_id = ?
           AND tp.team_id = ?
         `)
-        .bind(
-          tournamentId,
-          homeTeamId
-        )
-        .first(),
-
+      .bind(
+        tournamentId,
+        homeTeamId
+      )
+      .first(),
+      
       db
-        .prepare(`
+      .prepare(`
           SELECT
             tp.*,
             tm.name AS team_name,
@@ -1564,22 +1569,20 @@ export async function updateMatchResultAtomic(
           WHERE tp.tournament_id = ?
           AND tp.team_id = ?
         `)
-        .bind(
-          tournamentId,
-          awayTeamId
-        )
-        .first()
+      .bind(
+        tournamentId,
+        awayTeamId
+      )
+      .first()
     ]);
   }
-
+  
   return {
     match: updatedMatch,
-    players: updatePlayerStats
-      ? [
-          updatedHomePlayer,
-          updatedAwayPlayer
-        ]
-      : []
+    players: updatePlayerStats ? [
+      updatedHomePlayer,
+      updatedAwayPlayer
+    ] : []
   };
 }
 
@@ -1926,7 +1929,7 @@ export async function createNotice(
     notice.updated_at,
     notice.created_by
   ).run();
-
+  
   return notice;
 }
 
@@ -1945,16 +1948,13 @@ export async function getPublishedNotices(
       )
       ORDER BY created_at DESC
     `).bind(now).all();
-
+  
   return (result.results || []).map(
     notice => ({
       ...notice,
-      published:
-        Number(notice.published) === 1,
-      images:
-        notice.images
-          ? JSON.parse(notice.images)
-          : []
+      published: Number(notice.published) === 1,
+      images: notice.images ?
+        JSON.parse(notice.images) : []
     })
   );
 }
@@ -1970,17 +1970,14 @@ export async function getNotice(
       WHERE id = ?
       LIMIT 1
     `).bind(id).first();
-
+  
   if (!notice) return null;
-
+  
   return {
     ...notice,
-    published:
-      Number(notice.published) === 1,
-    images:
-      notice.images
-        ? JSON.parse(notice.images)
-        : []
+    published: Number(notice.published) === 1,
+    images: notice.images ?
+      JSON.parse(notice.images) : []
   };
 }
 export async function updateNotice(
@@ -2024,16 +2021,13 @@ export async function getExpiredNotices(
       WHERE expires_at IS NOT NULL
       AND expires_at <= ?
     `).bind(now).all();
-
+  
   return (result.results || []).map(
     notice => ({
       ...notice,
-      published:
-        Number(notice.published) === 1,
-      images:
-        notice.images
-          ? JSON.parse(notice.images)
-          : []
+      published: Number(notice.published) === 1,
+      images: notice.images ?
+        JSON.parse(notice.images) : []
     })
   );
 }
@@ -2046,7 +2040,7 @@ export async function deleteNotice(
     DELETE FROM notices
     WHERE id = ?
   `).bind(id).run();
-
+  
   return true;
 }
 export async function getNoticeChanges(
@@ -2076,10 +2070,10 @@ export async function getNoticesByIds(
   if (!ids.length) {
     return [];
   }
-
+  
   const placeholders =
     ids.map(() => "?").join(",");
-
+  
   const result =
     await db.prepare(`
       SELECT *
@@ -2088,16 +2082,13 @@ export async function getNoticesByIds(
     `).bind(
       ...ids
     ).all();
-
+  
   return (result.results || []).map(
     notice => ({
       ...notice,
-      published:
-        Number(notice.published) === 1,
-      images:
-        notice.images
-          ? JSON.parse(notice.images)
-          : []
+      published: Number(notice.published) === 1,
+      images: notice.images ?
+        JSON.parse(notice.images) : []
     })
   );
 }
@@ -2124,8 +2115,7 @@ export async function getHallOfFame(db) {
   
   return {
     categories: result.categories ?
-      JSON.parse(result.categories) :
-      [],
+      JSON.parse(result.categories) : [],
     updated_at: result.updated_at
   };
 }
@@ -2180,7 +2170,7 @@ export async function getUserProfile(
     teams
   ] = await Promise.all([
     db
-      .prepare(`
+    .prepare(`
         SELECT
           username,
           phone,
@@ -2191,10 +2181,10 @@ export async function getUserProfile(
         WHERE id = ?
         LIMIT 1
       `)
-      .bind(userId)
-      .first(),
+    .bind(userId)
+    .first(),
     db
-      .prepare(`
+    .prepare(`
         SELECT
           id,
           name,
@@ -2203,8 +2193,8 @@ export async function getUserProfile(
         WHERE owner_uid = ?
         ORDER BY created_at ASC
       `)
-      .bind(userId)
-      .all()
+    .bind(userId)
+    .all()
   ]);
   if (!user) {
     return null;
@@ -2212,12 +2202,9 @@ export async function getUserProfile(
   return {
     username: user.username,
     phone: user.phone || "",
-    payout_account_name:
-      user.payout_account_name || "",
-    payout_account_number:
-      user.payout_account_number || "",
-    payout_bank_name:
-      user.payout_bank_name || "",
+    payout_account_name: user.payout_account_name || "",
+    payout_account_number: user.payout_account_number || "",
+    payout_bank_name: user.payout_bank_name || "",
     teams: teams.results || []
   };
 }
@@ -2536,49 +2523,46 @@ export async function importTournamentPlayers(
       db,
       sourceTournamentId
     );
-
+  
   if (!sourcePlayers.length) {
     return [];
   }
-
+  
   const existingPlayers =
     await getTournamentPlayers(
       db,
       newTournamentId
     );
-
+  
   const existingTeamIds =
     new Set(
       existingPlayers.map(
         player =>
-          String(player.team_id)
+        String(player.team_id)
       )
     );
-
+  
   const playersToImport =
     sourcePlayers.filter(
       player =>
-        !existingTeamIds.has(
-          String(player.team_id)
-        )
+      !existingTeamIds.has(
+        String(player.team_id)
+      )
     );
-
+  
   if (!playersToImport.length) {
     return [];
   }
-
+  
   const now = Date.now();
-
+  
   const newPlayers =
     playersToImport.map(
       player => ({
         id: crypto.randomUUID(),
-        tournament_id:
-          newTournamentId,
-        user_id:
-          player.user_id,
-        team_id:
-          player.team_id,
+        tournament_id: newTournamentId,
+        user_id: player.user_id,
+        team_id: player.team_id,
         status: "accepted",
         invited_at: null,
         joined_at: now,
@@ -2587,12 +2571,12 @@ export async function importTournamentPlayers(
         invitation_count: 1
       })
     );
-
+  
   await createTournamentPlayersBatch(
     db,
     newPlayers
   );
-
+  
   return await getTournamentPlayers(
     db,
     newTournamentId
@@ -2983,8 +2967,7 @@ export async function reviewSquadChangeRequest(
     if (result.meta.changes !== 1) {
       return {
         success: false,
-        message:
-          "The request was already reviewed or could not be rejected."
+        message: "The request was already reviewed or could not be rejected."
       };
     }
     return {
@@ -3049,8 +3032,7 @@ export async function reviewSquadChangeRequest(
   ) {
     return {
       success: false,
-      message:
-        "The request could not be approved. Please refresh and try again."
+      message: "The request could not be approved. Please refresh and try again."
     };
   }
   return {

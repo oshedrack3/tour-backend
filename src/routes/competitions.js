@@ -485,6 +485,46 @@ async function updateCompetitionRoute(
       }
     }
     
+    if (body.registration_fee !== undefined) {
+      const registrationFee =
+        Number(body.registration_fee);
+      
+      if (
+        !Number.isSafeInteger(registrationFee) ||
+        registrationFee < 0
+      ) {
+        return Response.json({
+          success: false,
+          message: "Registration fee must be a non-negative integer."
+        }, {
+          status: 400
+        });
+      }
+      
+      updates.registration_fee =
+        registrationFee;
+    }
+    
+    if (body.admin_fee !== undefined) {
+      const adminFee =
+        Number(body.admin_fee);
+      
+      if (
+        !Number.isSafeInteger(adminFee) ||
+        adminFee < 0
+      ) {
+        return Response.json({
+          success: false,
+          message: "Admin fee must be a non-negative integer."
+        }, {
+          status: 400
+        });
+      }
+      
+      updates.admin_fee =
+        adminFee;
+    }
+    
     if (
       Object.keys(updates).length === 0
     ) {

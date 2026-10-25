@@ -6638,6 +6638,11 @@ async function updateTournamentRoute(
         completingTournament = true;
       }
       updates.season_status = seasonStatus;
+      updates.registration_status =
+        seasonStatus === "upcoming" ?
+        "open" :
+        "closed";
+      
       if (
         seasonStatus === "completed" &&
         existingStatus !== "completed"
