@@ -8,7 +8,10 @@ database_name = "champions"
 database_id = "bfea8a70-341a-44f2-92e4-7697a17cc592"
 
 [triggers]
-crons = ["0 0 1 * *"]
+crons = [
+"15 * * * *",
+"0 0 * * *"
+]
 
 [vars]
 FLW_REDIRECT_URL = "https://galaticoesport.pages.dev/"

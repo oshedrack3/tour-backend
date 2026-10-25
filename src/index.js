@@ -8,7 +8,16 @@ import { handleTeamRequest } from "./teams.js";
 import {
   handleGeneralRequest
 } from "./routes/generalRoutes.js";
-import { handleTournamentRequest } from "./routes/tournaments.js";
+import {
+  handleTournamentRequest,
+  runTournamentReminders,
+  parseTournament
+} from "./routes/tournaments.js";
+import {
+  sendPushToUser
+} from "./pushNotifications.js";
+
+
 import { handleCompetitionRequest } from "./routes/competitions.js";
 import {
   getExpiredNotices,
@@ -198,34 +207,42 @@ export default {
     }
   },
   
-  async scheduled(
-    event,
-    env,
-    ctx
-  ) {
-    try {
-      const expiredNotices =
-        await getExpiredNotices(
-          env.DB,
-          Date.now()
+  
+  async scheduled(event, env, ctx) {
+    if (event.cron === "15 * * * *") {
+      try {
+        const reminderStats = await runTournamentReminders(
+          env,
+          sendPushToUser,
+          parseTournament
         );
-      
-      for (
-        const notice of expiredNotices
-      ) {
-        const images =
-          notice.images || [];
-        
-        let cloudinaryFailed =
-          false;
-        
-        for (
-          const image of images
-        ) {
+        console.log(
+          "Tournament reminders completed:",
+          JSON.stringify(reminderStats)
+        );
+      } catch (error) {
+        console.error(
+          "Tournament reminder execution failed:",
+          error
+        );
+      }
+      return;
+    }
+    if (event.cron !== "0 0 * * *") {
+      return;
+    }
+    try {
+      const expiredNotices = await getExpiredNotices(
+        env.DB,
+        Date.now()
+      );
+      for (const notice of expiredNotices) {
+        const images = notice.images || [];
+        let cloudinaryFailed = false;
+        for (const image of images) {
           if (!image?.publicId) {
             continue;
           }
-          
           try {
             await deleteCloudinaryImage(
               image.publicId,
@@ -233,70 +250,48 @@ export default {
             );
           } catch (error) {
             cloudinaryFailed = true;
-            
             console.error(
               `Failed to delete Cloudinary image ${image.publicId} for notice ${notice.id}:`,
               error
             );
           }
         }
-        
         if (cloudinaryFailed) {
           continue;
         }
-        
-        await deleteNotice(
-          env.DB,
-          notice.id
-        );
+        await deleteNotice(env.DB, notice.id);
       }
-      
       const expiredSubmissions =
-        await getExpiredMatchSubmissions(
-          env.DB
-        );
-      
+        await getExpiredMatchSubmissions(env.DB);
       let deletedSubmissions = 0;
       let failedSubmissions = 0;
-      
-      for (
-        const submission of expiredSubmissions
-      ) {
+      for (const submission of expiredSubmissions) {
         try {
-          if (
-            submission.screenshot_public_id
-          ) {
+          if (submission.screenshot_public_id) {
             await deleteCloudinaryImage(
               submission.screenshot_public_id,
               env
             );
           }
-          
           await deleteMatchSubmission(
             env.DB,
             submission.id
           );
-          
           deletedSubmissions++;
-          
         } catch (error) {
           failedSubmissions++;
-          
           console.error(
             `Failed to clean match submission ${submission.id}:`,
             error
           );
         }
       }
-      
       console.log(
         `Expired notices found: ${expiredNotices.length}`
       );
-      
       console.log(
         `Expired match submissions: ${expiredSubmissions.length}, deleted: ${deletedSubmissions}, failed: ${failedSubmissions}`
       );
-      
     } catch (error) {
       console.error(
         "Scheduled cleanup error:",
@@ -304,6 +299,8 @@ export default {
       );
     }
   }
+  
+  
 };
 
 function addCors(response) {

@@ -2769,59 +2769,114 @@ async function createMatchSubmissionRoute(
       )
       .run();
     
-    if (
-      tournament.admin_uid &&
-      String(tournament.admin_uid) !== String(user.id)
-    ) {
-      try {
-        const [matchTeams, submitter] = await Promise.all([
-          env.DB.prepare(`
-        SELECT
-          ht.name AS home_team_name,
-          at.name AS away_team_name
-        FROM matches m
-        LEFT JOIN teams ht ON ht.id = m.home_team_id
-        LEFT JOIN teams at ON at.id = m.away_team_id
-        WHERE m.id = ?
-          AND m.tournament_id = ?
-        LIMIT 1
-      `)
-          .bind(matchId, tournamentId)
-          .first(),
-          env.DB.prepare(`
-        SELECT username
-        FROM users
-        WHERE id = ?
-        LIMIT 1
-      `)
-          .bind(user.id)
-          .first()
-        ]);
-        const submitterName =
-          submitter?.username ||
-          user.username ||
-          "Unknown Player";
-        const homeTeamName =
-          matchTeams?.home_team_name ||
-          "Unknown Team";
-        const awayTeamName =
-          matchTeams?.away_team_name ||
-          "Unknown Team";
-        await sendPushToUser(
-          env,
-          tournament.admin_uid,
-          "Match Result Submitted",
-          `${submitterName} submitted a result: ${homeTeamName} ${homeGoals}-${awayGoals} ${awayTeamName} in ${tournament.name || "Unknown Tournament"}.`,
-          `/tournament/${tournamentId}`
-        );
-      } catch (pushError) {
-        console.error(
-          "Match submission notification failed:",
-          pushError.message
-        );
-      }
+    const notificationTasks = [];
+try {
+  const [matchTeams, submitter] = await Promise.all([
+    env.DB.prepare(`
+      SELECT
+        ht.name AS home_team_name,
+        at.name AS away_team_name
+      FROM matches m
+      LEFT JOIN teams ht ON ht.id = m.home_team_id
+      LEFT JOIN teams at ON at.id = m.away_team_id
+      WHERE m.id = ?
+        AND m.tournament_id = ?
+      LIMIT 1
+    `)
+    .bind(matchId, tournamentId)
+    .first(),
+    env.DB.prepare(`
+      SELECT username
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+    `)
+    .bind(user.id)
+    .first()
+  ]);
+  const submitterName =
+    submitter?.username ||
+    user.username ||
+    "Unknown Player";
+  const homeTeamName =
+    matchTeams?.home_team_name ||
+    "Unknown Team";
+  const awayTeamName =
+    matchTeams?.away_team_name ||
+    "Unknown Team";
+  const tournamentName =
+    tournament.name ||
+    tournament.title ||
+    "Unknown Tournament";
+  const message =
+    `${submitterName} submitted a match result: ` +
+    `${homeTeamName} ${homeGoals}-${awayGoals} ${awayTeamName} ` +
+    `in ${tournamentName}. Review the result and contest it if incorrect.`;
+  const opponentTeamId =
+    String(submittingTeamId) === String(match.home_team_id) ?
+    String(match.away_team_id) :
+    String(match.home_team_id);
+  const opponent = await env.DB.prepare(`
+    SELECT DISTINCT user_id
+    FROM tournament_players
+    WHERE tournament_id = ?
+      AND team_id = ?
+      AND status = 'accepted'
+      AND user_id != ?
+  `)
+    .bind(
+      tournamentId,
+      opponentTeamId,
+      user.id
+    )
+    .all();
+  const opponentIds = [
+    ...new Set(
+      (opponent.results || [])
+      .map(player => player.user_id)
+      .filter(Boolean)
+      .map(String)
+    )
+  ];
+  for (const opponentId of opponentIds) {
+    notificationTasks.push(
+      sendPushToUser(
+        env,
+        opponentId,
+        "Match Result Submitted",
+        message
+      )
+    );
+  }
+  if (
+    tournament.admin_uid &&
+    String(tournament.admin_uid) !== String(user.id)
+  ) {
+    notificationTasks.push(
+      sendPushToUser(
+        env,
+        tournament.admin_uid,
+        "Match Result Submitted",
+        message
+      )
+    );
+  }
+  const results = await Promise.allSettled(notificationTasks);
+  for (const result of results) {
+    if (result.status === "rejected") {
+      console.error(
+        "Match submission notification failed:",
+        result.reason
+      );
     }
-    
+  }
+} catch (pushError) {
+  console.error(
+    "Match submission notification failed:",
+    pushError.message
+  );
+}
+
     
     return Response.json({
       success: true,
@@ -9436,6 +9491,9 @@ async function processChampionsLeaguePlayoffResult(
     knockoutMatches: knockoutResult.knockoutMatches || []
   };
 }
+
+
+
 
 
 
