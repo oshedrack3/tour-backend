@@ -532,8 +532,11 @@ async function handleMyRegistrations(env, user) {
       sr.payment_status,
       sr.payment_method,
       sr.payment_reference,
+      sr.rejection_reason,
       sr.created_at,
       sr.updated_at,
+      sr.submitted_at,
+      sr.reviewed_at,
       t.name AS tournament_name,
       t.season,
       c.name AS competition_name
@@ -545,13 +548,11 @@ async function handleMyRegistrations(env, user) {
     WHERE sr.user_id = ?
     ORDER BY sr.created_at DESC
   `).bind(user.id).all();
-  
   return json({
     success: true,
     registrations: result.results || []
   });
 }
-
 
 function secureStringEqual(a, b) {
   if (
