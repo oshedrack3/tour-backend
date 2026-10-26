@@ -1,7 +1,10 @@
 import {
   sendPushToUser
 } from "../pushNotifications.js";
-
+import {
+  uploadBase64Image,
+  deleteCloudinaryImage
+} from "../cloudinary.js";
 
 function json(data, status = 200) {
   return Response.json(data, { status });
@@ -2336,6 +2339,615 @@ async function handleFinancialContributions(request, env, user) {
   }
 }
 
+
+
+
+async function handleBankTransferDetails(env) {
+  if (
+    !env.BANK_TRANSFER_BANK_NAME ||
+    !env.BANK_TRANSFER_ACCOUNT_NAME ||
+    !env.BANK_TRANSFER_ACCOUNT_NUMBER
+  ) {
+    return json({
+      success: false,
+      message: "Bank transfer is not configured yet."
+    }, 503);
+  }
+  
+  return json({
+    success: true,
+    bank_details: {
+      bank_name: env.BANK_TRANSFER_BANK_NAME,
+      account_name: env.BANK_TRANSFER_ACCOUNT_NAME,
+      account_number: env.BANK_TRANSFER_ACCOUNT_NUMBER,
+      currency: "NGN"
+    }
+  });
+}
+
+async function handleSubmitBankTransfer(
+  request,
+  env,
+  user
+) {
+  if (!user) {
+    return json({
+      success: false,
+      message: "Please log in to continue."
+    }, 401);
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({
+      success: false,
+      message: "Invalid request body."
+    }, 400);
+  }
+  const tournamentId = String(
+    body.tournament_id || ""
+  ).trim();
+  const paymentProofImage =
+    body.payment_proof_image;
+  if (!tournamentId) {
+    return json({
+      success: false,
+      message: "Tournament ID is required."
+    }, 400);
+  }
+  if (
+    typeof paymentProofImage !== "string" ||
+    !paymentProofImage.startsWith("data:image/")
+  ) {
+    return json({
+      success: false,
+      message: "Upload your payment receipt image."
+    }, 400);
+  }
+  const tournament = await env.DB.prepare(`
+    SELECT
+      t.id,
+      t.name,
+      t.season_status,
+      t.registration_status,
+      t.registration_deadline,
+      t.registration_capacity,
+      t.admin_uid,
+      c.registration_fee,
+      c.admin_fee
+    FROM tournaments t
+    INNER JOIN competitions c
+      ON c.id = t.competition_id
+    WHERE t.id = ?
+    LIMIT 1
+  `).bind(tournamentId).first();
+  if (!tournament) {
+    return json({
+      success: false,
+      message: "Season not found."
+    }, 404);
+  }
+  if (
+    tournament.registration_status !== "open" ||
+    !["upcoming", "active"].includes(
+      tournament.season_status
+    ) ||
+    (
+      tournament.registration_deadline !== null &&
+      tournament.registration_deadline !== undefined &&
+      Number(tournament.registration_deadline) <= Date.now()
+    )
+  ) {
+    return json({
+      success: false,
+      message: "Registration for this season is closed."
+    }, 400);
+  }
+  const entryFee = Number(
+    tournament.registration_fee
+  );
+  const adminFee = Number(
+    tournament.admin_fee
+  );
+  const totalAmount = entryFee + adminFee;
+  if (
+    !Number.isSafeInteger(entryFee) ||
+    !Number.isSafeInteger(adminFee) ||
+    entryFee < 0 ||
+    adminFee < 0 ||
+    totalAmount <= 0
+  ) {
+    return json({
+      success: false,
+      message: "The registration fee is not configured correctly."
+    }, 400);
+  }
+  const existing = await env.DB.prepare(`
+    SELECT
+      id,
+      payment_status,
+      payment_method
+    FROM season_registrations
+    WHERE tournament_id = ?
+      AND user_id = ?
+    LIMIT 1
+  `).bind(
+    tournamentId,
+    user.id
+  ).first();
+  if (existing?.payment_status === "paid") {
+    return json({
+      success: false,
+      message: "You are already registered for this season."
+    }, 409);
+  }
+  if (
+    existing?.payment_status === "submitted" &&
+    existing?.payment_method === "bank_transfer"
+  ) {
+    return json({
+      success: false,
+      message: "Your bank transfer is already awaiting review."
+    }, 409);
+  }
+  const count = await env.DB.prepare(`
+    SELECT COUNT(*) AS total
+    FROM season_registrations
+    WHERE tournament_id = ?
+      AND payment_status = 'paid'
+  `).bind(tournamentId).first();
+  if (
+    Number(count?.total || 0) >=
+    Number(tournament.registration_capacity)
+  ) {
+    return json({
+      success: false,
+      message: "This season has reached its registration capacity."
+    }, 409);
+  }
+  const registrationId =
+    existing?.id || crypto.randomUUID();
+  const now = Date.now();
+  let upload;
+  try {
+    upload = await uploadBase64Image(
+      paymentProofImage,
+      "season-payment-proofs",
+      `${tournamentId}/${user.id}/${crypto.randomUUID()}`,
+      env
+    );
+  } catch (error) {
+    console.error(
+      "Payment receipt upload failed:",
+      error.message
+    );
+    return json({
+      success: false,
+      message: error.message ===
+        "Image size must not exceed 500KB." ?
+        error.message :
+        "Unable to upload your receipt. Please try again."
+    }, 400);
+  }
+  try {
+    if (existing) {
+      const result = await env.DB.prepare(`
+        UPDATE season_registrations
+        SET
+          league_entry_fee = ?,
+          admin_fee = ?,
+          total_amount = ?,
+          payment_status = 'submitted',
+          payment_method = 'bank_transfer',
+          payment_reference = ?,
+          payment_proof_url = ?,
+          payment_proof_public_id = ?,
+          submitted_at = ?,
+          reviewed_by = NULL,
+          reviewed_at = NULL,
+          rejection_reason = NULL,
+          updated_at = ?
+        WHERE id = ?
+          AND user_id = ?
+          AND payment_status != 'paid'
+          AND NOT (
+            payment_status = 'submitted'
+            AND payment_method = 'bank_transfer'
+          )
+      `).bind(
+        entryFee,
+        adminFee,
+        totalAmount,
+        createReference(),
+        upload.url,
+        upload.publicId,
+        now,
+        now,
+        registrationId,
+        user.id
+      ).run();
+      if (!result.meta?.changes) {
+        await deleteCloudinaryImage(
+          upload.publicId,
+          env
+        ).catch(() => {});
+        return json({
+          success: false,
+          message: "Your registration changed. Refresh and try again."
+        }, 409);
+      }
+    } else {
+      await env.DB.prepare(`
+        INSERT INTO season_registrations (
+          id,
+          tournament_id,
+          user_id,
+          league_entry_fee,
+          admin_fee,
+          total_amount,
+          payment_status,
+          payment_method,
+          payment_reference,
+          payment_proof_url,
+          payment_proof_public_id,
+          submitted_at,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          ?, ?, ?, ?, ?, ?,
+          'submitted',
+          'bank_transfer',
+          ?, ?, ?, ?, ?, ?
+        )
+      `).bind(
+        registrationId,
+        tournamentId,
+        user.id,
+        entryFee,
+        adminFee,
+        totalAmount,
+        createReference(),
+        upload.url,
+        upload.publicId,
+        now,
+        now,
+        now
+      ).run();
+    }
+  } catch (error) {
+    await deleteCloudinaryImage(
+      upload.publicId,
+      env
+    ).catch(() => {});
+    if (
+      String(error.message || "").includes("UNIQUE")
+    ) {
+      return json({
+        success: false,
+        message: "This registration already exists. Refresh and try again."
+      }, 409);
+    }
+    throw error;
+  }
+  try {
+    if (tournament.admin_uid) {
+      await sendPushToUser(
+        env,
+        tournament.admin_uid,
+        "Bank Transfer Submitted",
+        `${user.username || "A player"} submitted a payment receipt for ${tournament.name}. Verify the payment before approving.`,
+        `/tournament/${tournamentId}`
+      );
+    }
+  } catch (error) {
+    console.error(
+      "Bank transfer submission notification failed:",
+      error.message
+    );
+  }
+  return json({
+    success: true,
+    message: "Receipt submitted. Your payment is awaiting admin verification.",
+    registration_id: registrationId,
+    payment_status: "submitted",
+    payment_method: "bank_transfer",
+    amount: totalAmount,
+    currency: "NGN"
+  }, 201);
+}
+
+async function handlePendingBankTransfers(
+  request,
+  env,
+  user
+) {
+  const denied = await requireFinancialAdmin(env, user);
+  
+  if (denied) {
+    return denied;
+  }
+  
+  const url = new URL(request.url);
+  const tournamentId = String(
+    url.searchParams.get("tournament_id") || ""
+  ).trim();
+  
+  let query = `
+    SELECT
+      sr.id AS registration_id,
+      sr.tournament_id,
+      sr.user_id,
+      u.username,
+      u.email,
+      sr.league_entry_fee,
+      sr.admin_fee,
+      sr.total_amount,
+      sr.payment_status,
+      sr.payment_method,
+      sr.payment_reference,
+      sr.payment_proof_url,
+      sr.submitted_at,
+      sr.created_at,
+      t.name AS tournament_name,
+      t.season
+    FROM season_registrations sr
+    INNER JOIN users u
+      ON u.id = sr.user_id
+    INNER JOIN tournaments t
+      ON t.id = sr.tournament_id
+    WHERE t.admin_uid = ?
+      AND sr.payment_method = 'bank_transfer'
+      AND sr.payment_status = 'submitted'
+  `;
+  
+  const bindings = [user.id];
+  
+  if (tournamentId) {
+    query += ` AND sr.tournament_id = ?`;
+    bindings.push(tournamentId);
+  }
+  
+  query += ` ORDER BY sr.submitted_at ASC`;
+  
+  const result = await env.DB.prepare(query)
+    .bind(...bindings)
+    .all();
+  
+  return json({
+    success: true,
+    transfers: result.results || []
+  });
+}
+
+async function handleReviewBankTransfer(
+  request,
+  env,
+  user
+) {
+  const denied = await requireFinancialAdmin(env, user);
+  if (denied) {
+    return denied;
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({
+      success: false,
+      message: "Invalid request body."
+    }, 400);
+  }
+  const registrationId = String(
+    body.registration_id || ""
+  ).trim();
+  const decision = String(
+    body.decision || ""
+  ).trim().toLowerCase();
+  const rejectionReason = String(
+    body.rejection_reason || ""
+  ).trim();
+  if (!registrationId) {
+    return json({
+      success: false,
+      message: "Registration ID is required."
+    }, 400);
+  }
+  if (!["approve", "reject"].includes(decision)) {
+    return json({
+      success: false,
+      message: "Decision must be approve or reject."
+    }, 400);
+  }
+  if (
+    decision === "reject" &&
+    (
+      !rejectionReason ||
+      rejectionReason.length > 1000
+    )
+  ) {
+    return json({
+      success: false,
+      message: "Provide a rejection reason of up to 1000 characters."
+    }, 400);
+  }
+  const registration = await env.DB.prepare(`
+    SELECT
+      sr.id,
+      sr.tournament_id,
+      sr.user_id,
+      sr.payment_status,
+      sr.payment_method,
+      sr.total_amount,
+      sr.payment_proof_public_id,
+      t.name AS tournament_name,
+      t.admin_uid
+    FROM season_registrations sr
+    INNER JOIN tournaments t
+      ON t.id = sr.tournament_id
+    WHERE sr.id = ?
+      AND t.admin_uid = ?
+    LIMIT 1
+  `).bind(
+    registrationId,
+    user.id
+  ).first();
+  if (!registration) {
+    return json({
+      success: false,
+      message: "Transfer not found or you do not manage this season."
+    }, 404);
+  }
+  if (
+    registration.payment_method !== "bank_transfer" ||
+    registration.payment_status !== "submitted"
+  ) {
+    return json({
+      success: false,
+      message: "This transfer is no longer awaiting review."
+    }, 409);
+  }
+  if (decision === "approve") {
+    const tournament = await env.DB.prepare(`
+      SELECT registration_capacity
+      FROM tournaments
+      WHERE id = ?
+      LIMIT 1
+    `).bind(
+      registration.tournament_id
+    ).first();
+    const count = await env.DB.prepare(`
+      SELECT COUNT(*) AS total
+      FROM season_registrations
+      WHERE tournament_id = ?
+        AND payment_status = 'paid'
+    `).bind(
+      registration.tournament_id
+    ).first();
+    if (
+      Number(count?.total || 0) >=
+      Number(tournament?.registration_capacity || 0)
+    ) {
+      return json({
+        success: false,
+        message: "Season capacity has been reached. This transfer cannot be approved."
+      }, 409);
+    }
+  }
+  const now = Date.now();
+  const newStatus = decision === "approve" ?
+    "paid" :
+    "rejected";
+  const result = await env.DB.prepare(`
+    UPDATE season_registrations
+    SET
+      payment_status = ?,
+      reviewed_by = ?,
+      reviewed_at = ?,
+      rejection_reason = ?,
+      updated_at = ?
+    WHERE id = ?
+      AND payment_method = 'bank_transfer'
+      AND payment_status = 'submitted'
+      AND EXISTS (
+        SELECT 1
+        FROM tournaments t
+        WHERE t.id = season_registrations.tournament_id
+          AND t.admin_uid = ?
+      )
+  `).bind(
+    newStatus,
+    user.id,
+    now,
+    decision === "reject" ?
+    rejectionReason :
+    null,
+    now,
+    registrationId,
+    user.id
+  ).run();
+  if (!result.meta?.changes) {
+    return json({
+      success: false,
+      message: "Transfer status changed. Refresh and try again."
+    }, 409);
+  }
+  let receiptDeleted = false;
+  if (
+    decision === "approve" &&
+    registration.payment_proof_public_id
+  ) {
+    try {
+      const deletion = await deleteCloudinaryImage(
+        registration.payment_proof_public_id,
+        env
+      );
+      if (
+        deletion?.result === "ok" ||
+        deletion?.result === "not found"
+      ) {
+        const cleanup = await env.DB.prepare(`
+          UPDATE season_registrations
+          SET
+            payment_proof_url = NULL,
+            payment_proof_public_id = NULL,
+            updated_at = ?
+          WHERE id = ?
+            AND payment_status = 'paid'
+            AND payment_proof_public_id = ?
+        `).bind(
+          Date.now(),
+          registrationId,
+          registration.payment_proof_public_id
+        ).run();
+        receiptDeleted =
+          Boolean(cleanup.meta?.changes);
+      } else {
+        console.error(
+          "Cloudinary receipt deletion was not confirmed:",
+          registrationId,
+          deletion?.result
+        );
+      }
+    } catch (error) {
+      console.error(
+        "Cloudinary receipt cleanup failed:",
+        registrationId,
+        error.message
+      );
+    }
+  }
+  try {
+    await sendPushToUser(
+      env,
+      registration.user_id,
+      decision === "approve" ?
+      "Registration Payment Confirmed" :
+      "Bank Transfer Requires Attention",
+      decision === "approve" ?
+      `Your payment for ${registration.tournament_name} has been confirmed. Your registration is complete.` :
+      `Your transfer for ${registration.tournament_name} was not approved. Reason: ${rejectionReason}`,
+      `/tournament/${registration.tournament_id}`
+    );
+  } catch (error) {
+    console.error(
+      "Bank transfer review notification failed:",
+      error.message
+    );
+  }
+  return json({
+    success: true,
+    message: decision === "approve" ?
+      "Transfer approved. Registration is now paid." :
+      "Transfer rejected.",
+    registration_id: registrationId,
+    payment_status: newStatus,
+    receipt_deleted: receiptDeleted
+  });
+}
+
+
 export async function handleSeasonRegistrationRequest(
   request,
   env,
@@ -2347,6 +2959,46 @@ export async function handleSeasonRegistrationRequest(
     pathname === "/season-registrations/available"
   ) {
     return handleAvailableSeasons(env);
+  }
+  
+  if (
+    request.method === "GET" &&
+    pathname === "/season-registrations/bank-transfer/details"
+  ) {
+    return handleBankTransferDetails(env);
+  }
+  
+  if (
+    request.method === "POST" &&
+    pathname === "/season-registrations/bank-transfer/submit"
+  ) {
+    return handleSubmitBankTransfer(
+      request,
+      env,
+      user
+    );
+  }
+  
+  if (
+    request.method === "GET" &&
+    pathname === "/season-registrations/bank-transfer/pending"
+  ) {
+    return handlePendingBankTransfers(
+      request,
+      env,
+      user
+    );
+  }
+  
+  if (
+    request.method === "POST" &&
+    pathname === "/season-registrations/bank-transfer/review"
+  ) {
+    return handleReviewBankTransfer(
+      request,
+      env,
+      user
+    );
   }
   if (
     request.method === "GET" &&
