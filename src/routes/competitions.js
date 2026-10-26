@@ -77,6 +77,7 @@ export async function handleCompetitionRequest(
   }
   return null;
 }
+
 async function createCompetitionRoute(
   request,
   env,
@@ -98,10 +99,33 @@ async function createCompetitionRoute(
       body.logo ||
       body.logo_url ||
       null;
+    const rules =
+      String(body.rules || "").trim();
+    const registrationFee =
+      body.registration_fee === undefined
+        ? 0
+        : Number(body.registration_fee);
+    const adminFee =
+      body.admin_fee === undefined
+        ? 0
+        : Number(body.admin_fee);
     if (!name) {
       return Response.json({
         success: false,
         message: "Competition name is required."
+      }, {
+        status: 400
+      });
+    }
+    if (
+      !Number.isFinite(registrationFee) ||
+      registrationFee < 0 ||
+      !Number.isFinite(adminFee) ||
+      adminFee < 0
+    ) {
+      return Response.json({
+        success: false,
+        message: "Enter valid competition fees."
       }, {
         status: 400
       });
@@ -121,13 +145,12 @@ async function createCompetitionRoute(
           status: 400
         });
       }
-      logoData =
-        await uploadBase64Image(
-          logo,
-          "competitions",
-          id,
-          env
-        );
+      logoData = await uploadBase64Image(
+        logo,
+        "competitions",
+        id,
+        env
+      );
     }
     const competition =
       await createCompetition(
@@ -137,9 +160,15 @@ async function createCompetitionRoute(
           name,
           owner_id: user.id,
           logo_url: logoData?.url || null,
-          logo_public_id: logoData?.publicId || null,
+          logo_public_id:
+            logoData?.publicId || null,
           tournament_count: 0,
           active_seasons: 0,
+          rules,
+          rules_version: 1,
+          rules_updated_at: null,
+          registration_fee: registrationFee,
+          admin_fee: adminFee,
           created_at: now,
           updated_at: now
         }
@@ -157,7 +186,8 @@ async function createCompetitionRoute(
     );
     return Response.json({
       success: false,
-      message: error.message ||
+      message:
+        error.message ||
         "Failed to create competition."
     }, {
       status: 500

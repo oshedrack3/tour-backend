@@ -66,10 +66,12 @@ export async function createCompetition(
         rules,
         rules_version,
         rules_updated_at,
+        registration_fee,
+        admin_fee,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .bind(
       competition.id,
@@ -82,16 +84,18 @@ export async function createCompetition(
       competition.rules || null,
       competition.rules_version ?? 1,
       competition.rules_updated_at || null,
+      competition.registration_fee ?? 0,
+      competition.admin_fee ?? 0,
       competition.created_at,
       competition.updated_at || null
     )
     .run();
-  
   return await getCompetition(
     db,
     competition.id
   );
 }
+
 export async function getTournamentForUser(
   db,
   id,
@@ -228,90 +232,77 @@ export async function updateTournament(
       id,
       userId
     );
-  
   if (!existing) {
     return null;
   }
-  
   const fields = [];
   const values = [];
-  
   if (updates.name !== undefined) {
     fields.push("name = ?");
     values.push(updates.name);
   }
-  
   if (
     updates.competition_id !== undefined
   ) {
     fields.push("competition_id = ?");
     values.push(updates.competition_id);
   }
-  
   if (updates.season !== undefined) {
     fields.push("season = ?");
     values.push(updates.season);
   }
-  
   if (updates.format !== undefined) {
     fields.push("format = ?");
     values.push(updates.format);
   }
-  
   if (
     updates.season_status !== undefined
   ) {
     fields.push("season_status = ?");
     values.push(updates.season_status);
   }
-  
+  if (
+    updates.registration_status !== undefined
+  ) {
+    fields.push("registration_status = ?");
+    values.push(updates.registration_status);
+  }
   if (updates.champion !== undefined) {
     fields.push("champion = ?");
     values.push(updates.champion);
   }
-  
   if (
     updates.champion_name !== undefined
   ) {
     fields.push("champion_name = ?");
     values.push(updates.champion_name);
   }
-  
   if (updates.completed_at !== undefined) {
     fields.push("completed_at = ?");
     values.push(updates.completed_at);
   }
-  
   if (updates.start_date !== undefined) {
     fields.push("start_date = ?");
     values.push(updates.start_date);
   }
-  
   if (updates.end_date !== undefined) {
     fields.push("end_date = ?");
     values.push(updates.end_date);
   }
-  
   if (updates.match_days !== undefined) {
     fields.push("match_days = ?");
     values.push(
       typeof updates.match_days === "string" ?
       updates.match_days :
-      JSON.stringify(
-        updates.match_days
-      )
+      JSON.stringify(updates.match_days)
     );
   }
-  
   if (
     updates.tournament_image !== undefined
   ) {
     fields.push("tournament_image = ?");
-    values.push(
-      updates.tournament_image
-    );
+    values.push(updates.tournament_image);
   }
-  
   if (
     updates.tournament_image_public_id !== undefined
   ) {
@@ -322,41 +313,32 @@ export async function updateTournament(
       updates.tournament_image_public_id
     );
   }
-  
   if (updates.settings !== undefined) {
     fields.push("settings = ?");
     values.push(
       typeof updates.settings === "string" ?
       updates.settings :
-      JSON.stringify(
-        updates.settings
-      )
+      JSON.stringify(updates.settings)
     );
   }
-  
   if (
     updates.access_type !== undefined
   ) {
     fields.push("access_type = ?");
     values.push(updates.access_type);
   }
-  
   if (updates.is_public !== undefined) {
     fields.push("is_public = ?");
     values.push(
       updates.is_public ? 1 : 0
     );
   }
-  
   if (!fields.length) {
     return existing;
   }
-  
   fields.push("updated_at = ?");
   values.push(Date.now());
-  
   values.push(id);
-  
   await db
     .prepare(`
       UPDATE tournaments
@@ -365,7 +347,6 @@ export async function updateTournament(
     `)
     .bind(...values)
     .run();
-  
   return await getTournamentForUser(
     db,
     id,
