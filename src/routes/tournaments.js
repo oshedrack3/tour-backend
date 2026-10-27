@@ -421,6 +421,20 @@ export async function handleTournamentRequest(
   
   if (
     request.method === "POST" &&
+    /^\/tournaments\/[^/]+\/friendly-fixtures$/.test(pathname)
+  ) {
+    const id =
+      pathname.split("/")[2];
+    return await generateFriendlyFixturesRoute(
+      request,
+      env,
+      id,
+      user
+    );
+  }
+  
+  if (
+    request.method === "POST" &&
     /^\/tournaments\/[^/]+\/generate-cup$/.test(pathname)
   ) {
     const id = pathname.split("/")[2];
@@ -1469,7 +1483,7 @@ async function updateMatchResultRoute(
       });
     }
     const updatePlayerStats =
-      tournament.format === "league" ||
+     match.match_type === "league" ||
       match.match_type === "group";
     let newHomeStats = null;
     let newAwayStats = null;
@@ -1601,7 +1615,8 @@ async function updateMatchResultRoute(
         newHomeStats,
         newAwayStats,
         tournamentId,
-        updatePlayerStats
+        updatePlayerStats,
+        match.match_type
       );
     let groupStageResult =
       null;
@@ -9889,4 +9904,284 @@ export async function runTournamentReminders(
 }
 
 
-//end
+async function generateFriendlyFixturesRoute(
+  request,
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournamentForUser(
+        env.DB,
+        tournamentId,
+        user.id
+      );
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found or access denied."
+      }, {
+        status: 404
+      });
+    }
+    if (user.role !== "admin") {
+      return Response.json({
+        success: false,
+        message: "Access denied."
+      }, {
+        status: 403
+      });
+    }
+    const body =
+      await request.json().catch(() => ({}));
+    const opponentsPerTeam =
+      Number(body.opponents_per_team);
+    const rounds =
+      Number(body.rounds ?? 1);
+    if (
+      !Number.isInteger(rounds) ||
+      ![1, 2].includes(rounds)
+    ) {
+      return Response.json({
+        success: false,
+        message: "Rounds must be 1 or 2."
+      }, {
+        status: 400
+      });
+    }
+    const teams =
+      await getTeamsByTournament(
+        env.DB,
+        tournamentId
+      );
+    const teamIds =
+      teams.map(team => team.id);
+    const teamCount =
+      teamIds.length;
+    if (
+      teamCount < 2 ||
+      teamCount > 20
+    ) {
+      return Response.json({
+        success: false,
+        message: "Friendly tournaments must have between 2 and 20 teams."
+      }, {
+        status: 400
+      });
+    }
+    if (
+      !Number.isInteger(opponentsPerTeam) ||
+      opponentsPerTeam < 1 ||
+      opponentsPerTeam >= teamCount
+    ) {
+      return Response.json({
+        success: false,
+        message: `Opponents per team must be between 1 and ${teamCount - 1}.`
+      }, {
+        status: 400
+      });
+    }
+    if (
+      (teamCount * opponentsPerTeam) % 2 !== 0
+    ) {
+      return Response.json({
+        success: false,
+        message: "This number of teams and opponents per team cannot produce a valid schedule. Choose a different number of opponents or teams."
+      }, {
+        status: 400
+      });
+    }
+    const shuffledTeams = [...teamIds];
+    for (
+      let i = shuffledTeams.length - 1; i > 0; i--
+    ) {
+      const j =
+        Math.floor(Math.random() * (i + 1));
+      [
+        shuffledTeams[i],
+        shuffledTeams[j]
+      ] = [
+        shuffledTeams[j],
+        shuffledTeams[i]
+      ];
+    }
+    const opponentCounts =
+      new Map(
+        shuffledTeams.map(id => [id, 0])
+      );
+    const playedPairs =
+      new Set();
+    const firstLegRounds = [];
+    const maxAttempts = 1000;
+    let attempts = 0;
+    while (
+      [...opponentCounts.values()].some(
+        count => count < opponentsPerTeam
+      ) &&
+      attempts < maxAttempts
+    ) {
+      attempts++;
+      const roundFixtures = [];
+      const usedInRound =
+        new Set();
+      const availableTeams = [...shuffledTeams].sort(
+        (a, b) =>
+        (
+          opponentsPerTeam -
+          opponentCounts.get(b)
+        ) -
+        (
+          opponentsPerTeam -
+          opponentCounts.get(a)
+        )
+      );
+      for (
+        let i = 0; i < availableTeams.length; i++
+      ) {
+        const teamA =
+          availableTeams[i];
+        if (
+          usedInRound.has(teamA) ||
+          opponentCounts.get(teamA) >= opponentsPerTeam
+        ) {
+          continue;
+        }
+        for (
+          let j = i + 1; j < availableTeams.length; j++
+        ) {
+          const teamB =
+            availableTeams[j];
+          if (
+            usedInRound.has(teamB) ||
+            opponentCounts.get(teamB) >= opponentsPerTeam
+          ) {
+            continue;
+          }
+          const pairKey = [teamA, teamB].sort().join(":");
+          if (playedPairs.has(pairKey)) {
+            continue;
+          }
+          playedPairs.add(pairKey);
+          usedInRound.add(teamA);
+          usedInRound.add(teamB);
+          opponentCounts.set(
+            teamA,
+            opponentCounts.get(teamA) + 1
+          );
+          opponentCounts.set(
+            teamB,
+            opponentCounts.get(teamB) + 1
+          );
+          const isHome =
+            Math.random() < 0.5;
+          roundFixtures.push({
+            home_team_id: isHome ? teamA : teamB,
+            away_team_id: isHome ? teamB : teamA,
+            slot: roundFixtures.length + 1
+          });
+          break;
+        }
+      }
+      if (roundFixtures.length > 0) {
+        firstLegRounds.push(roundFixtures);
+      } else {
+        break;
+      }
+    }
+    const incompleteTeams = [...opponentCounts.entries()]
+      .filter(
+        ([, count]) =>
+        count !== opponentsPerTeam
+      );
+    if (incompleteTeams.length > 0) {
+      return Response.json({
+        success: false,
+        message: "A complete schedule could not be generated for this combination. Try a different number of opponents per team."
+      }, {
+        status: 400
+      });
+    }
+    const now = Date.now();
+    const fixtures = [];
+    let roundIndex = 1;
+    for (const roundFixtures of firstLegRounds) {
+      for (const fixture of roundFixtures) {
+        fixtures.push({
+          id: crypto.randomUUID(),
+          tournament_id: tournamentId,
+          home_team_id: fixture.home_team_id,
+          away_team_id: fixture.away_team_id,
+          home_score: null,
+          away_score: null,
+          played: 0,
+          played_at: null,
+          match_type: "friendly",
+          group_id: null,
+          round: String(roundIndex),
+          round_index: roundIndex,
+          slot: fixture.slot,
+          winner_team_id: null,
+          scheduled_at: null,
+          created_at: now,
+          updated_at: null
+        });
+      }
+      roundIndex++;
+    }
+    if (rounds === 2) {
+      const firstLegFixtures = [...fixtures];
+      const roundsPerLeg =
+        firstLegRounds.length;
+      for (let i = 0; i < roundsPerLeg; i++) {
+        const roundFixtures =
+          firstLegRounds[i];
+        for (const fixture of roundFixtures) {
+          fixtures.push({
+            id: crypto.randomUUID(),
+            tournament_id: tournamentId,
+            home_team_id: fixture.away_team_id,
+            away_team_id: fixture.home_team_id,
+            home_score: null,
+            away_score: null,
+            played: 0,
+            played_at: null,
+            match_type: "friendly",
+            group_id: null,
+            round: String(roundsPerLeg + i + 1),
+            round_index: roundsPerLeg + i + 1,
+            slot: fixture.slot,
+            winner_team_id: null,
+            scheduled_at: null,
+            created_at: now,
+            updated_at: null
+          });
+        }
+      }
+    }
+    await createMatchesBatch(
+      env.DB,
+      fixtures
+    );
+    return Response.json({
+      success: true,
+      match_type: "friendly",
+      opponents_per_team: opponentsPerTeam,
+      rounds,
+      total_matches: fixtures.length,
+      matches: fixtures
+    });
+  } catch (error) {
+    console.error(
+      "Generate friendly fixtures error:",
+      error
+    );
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to generate friendly fixtures."
+    }, {
+      status: 500
+    });
+  }
+}
