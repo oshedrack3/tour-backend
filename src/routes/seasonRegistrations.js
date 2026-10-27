@@ -289,7 +289,7 @@ async function handleCreateCheckout(request, env, user) {
   
   try {
     const response = await fetch(
-      "https://api.flutterwave.com/v4/payments",
+      "https://api.flutterwave.com/v3/payments",
       {
         method: "POST",
         headers: {
@@ -402,7 +402,7 @@ async function handleVerifyPayment(request, env, user) {
   
   try {
     const response = await fetch(
-      `https://api.flutterwave.com/v4/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`,
+      `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`,
       {
         headers: {
           Authorization: `Bearer ${env.FLW_SECRET_KEY}`,
@@ -650,7 +650,7 @@ export async function handleFlutterwaveWebhook(request, env) {
   let verificationResponse;
   try {
     const response = await fetch(
-      `https://api.flutterwave.com/v4/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`,
+      `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`,
       {
         method: "GET",
         headers: {
