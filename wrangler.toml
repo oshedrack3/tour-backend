@@ -2,6 +2,10 @@ name = "champions"
 main = "src/index.js"
 compatibility_date = "2026-10-24"
 
+[observability.logs]
+enabled = false
+invocation_logs = true
+
 [[d1_databases]]
 binding = "DB"
 database_name = "champions"
