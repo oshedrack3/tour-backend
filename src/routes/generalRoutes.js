@@ -3030,10 +3030,7 @@ export async function awardEligibleBadges(
   return awarded;
 }
 
-async function getMyBadgesRoute(
-  env,
-  user
-) {
+async function getMyBadgesRoute(env, user) {
   try {
     const result = await env.DB
       .prepare(`
@@ -3046,58 +3043,39 @@ async function getMyBadgesRoute(
       `)
       .bind(user.id)
       .all();
-    const badgeDefinitions = {
-      first_victory: {
-        name: "First Victory",
-        description: "Win your first official match.",
-        icon: "🏆",
-        tier: "bronze"
-      },
-      warrior: {
-        name: "Warrior",
-        description: "Complete 25 matches.",
-        icon: "⚔️",
-        tier: "bronze"
-      },
-      centurion: {
-        name: "Centurion",
-        description: "Complete 100 matches.",
-        icon: "🛡️",
-        tier: "silver"
-      },
-      match_legend: {
-        name: "Match Legend",
-        description: "Complete 250 matches.",
-        icon: "👑",
-        tier: "gold"
-      },
-      elite_player: {
-        name: "Elite Player",
-        description: "Reach a rating of 1800.",
-        icon: "💎",
-        tier: "special"
-      }
-    };
+    
+    const badgeMap = new Map(
+      BADGE_DEFINITIONS.map(badge => [
+        badge.id,
+        badge
+      ])
+    );
+    
     const badges = (result.results || [])
-      .map(item => ({
-        id: item.badge_id,
-        earned_at: item.earned_at,
-        ...badgeDefinitions[item.badge_id]
-      }))
-      .filter(badge => badge.name);
+      .map(item => {
+        const definition = badgeMap.get(item.badge_id);
+        
+        if (!definition) {
+          return null;
+        }
+        
+        return {
+          ...definition,
+          earned_at: item.earned_at
+        };
+      })
+      .filter(Boolean);
+    
     return Response.json({
       success: true,
       badges
     });
   } catch (error) {
-    console.error(
-      "Get badges error:",
-      error
-    );
+    console.error("Get badges error:", error);
+    
     return Response.json({
       success: false,
-      message: error.message ||
-        "Failed to retrieve badges."
+      message: error.message || "Failed to retrieve badges."
     }, {
       status: 500
     });
