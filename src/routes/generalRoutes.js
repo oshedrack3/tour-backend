@@ -55,14 +55,14 @@ export async function handleGeneralRequest(
   }
   
   if (
-  request.method === "GET" &&
-  pathname === "/notification-status"
-) {
-  return await getNotificationStatusRoute(
-    env,
-    user
-  );
-}
+    request.method === "GET" &&
+    pathname === "/notification-status"
+  ) {
+    return await getNotificationStatusRoute(
+      env,
+      user
+    );
+  }
   if (
     request.method === "POST" &&
     pathname === "/test"
@@ -93,6 +93,17 @@ export async function handleGeneralRequest(
       user
     );
   }
+  
+  if (
+  request.method === "GET" &&
+  pathname === "/badges"
+) {
+  return await getMyBadgesRoute(
+    env,
+    user
+  );
+}
+  
   if (
     request.method === "PUT" &&
     pathname === "/profile"
@@ -2528,6 +2539,565 @@ async function endSeasonRatingsRoute(
       step,
       message: error.message ||
         "Failed to process season ending."
+    }, {
+      status: 500
+    });
+  }
+}
+
+
+export const BADGE_DEFINITIONS = [
+  {
+    id: "first_victory",
+    name: "First Victory",
+    description: "Win your first official match.",
+    icon: "🏆",
+    tier: "bronze"
+  },
+  {
+    id: "warrior",
+    name: "Warrior",
+    description: "Complete 25 official matches.",
+    icon: "⚔️",
+    tier: "bronze"
+  },
+  {
+    id: "centurion",
+    name: "Centurion",
+    description: "Complete 100 official matches.",
+    icon: "🛡️",
+    tier: "silver"
+  },
+  {
+    id: "first_trophy",
+    name: "Trophy Hunter",
+    description: "Win your first eligible official trophy.",
+    icon: "🥇",
+    tier: "silver"
+  },
+  {
+    id: "winning_streak_10",
+    name: "Unstoppable",
+    description: "Win 10 official matches in a row.",
+    icon: "🔥",
+    tier: "gold"
+  },
+  {
+    id: "league_champion",
+    name: "League Champion",
+    description: "Win the Galatico league.",
+    icon: "🥇",
+    tier: "gold"
+  },
+  {
+    id: "league_cup_champion",
+    name: "League Cup Winner",
+    description: "Win the Galatico League Cup.",
+    icon: "🏆",
+    tier: "gold"
+  },
+  {
+    id: "multiple_trophies",
+    name: "Serial Winner",
+    description: "Win 3 eligible official trophies.",
+    icon: "🏆",
+    tier: "gold"
+  },
+  {
+    id: "match_legend",
+    name: "Match Legend",
+    description: "Complete 250 official matches.",
+    icon: "👑",
+    tier: "gold"
+  },
+  {
+    id: "goals_100_tournament",
+    name: "Goal Machine",
+    description: "Score 100 goals in a single tournament.",
+    icon: "⚽",
+    tier: "gold"
+  },
+  {
+    id: "world_cup_champion",
+    name: "World Cup Champion",
+    description: "Win the Galatico World Cup.",
+    icon: "🌍",
+    tier: "special"
+  },
+  {
+    id: "champions_league_champion",
+    name: "Champions League Champion",
+    description: "Win the Galatico Champions League.",
+    icon: "👑",
+    tier: "special"
+  },
+  {
+    id: "winning_streak_30",
+    name: "Invincible Force",
+    description: "Win 30 official matches in a row.",
+    icon: "💥",
+    tier: "special"
+  },
+  {
+    id: "career_goals_500",
+    name: "Legendary Scorer",
+    description: "Score 500 career goals.",
+    icon: "🎯",
+    tier: "special"
+  },
+  {
+    id: "league_undefeated",
+    name: "Invincible Champion",
+    description: "Win the league without losing a match.",
+    icon: "🛡️",
+    tier: "special"
+  },
+  {
+    id: "ucl_undefeated",
+    name: "Champions League Invincible",
+    description: "Win the Champions League without losing a match.",
+    icon: "💎",
+    tier: "special"
+  },
+  {
+    id: "elite_player",
+    name: "Elite Player",
+    description: "Reach a rating of 1800.",
+    icon: "💎",
+    tier: "special"
+  },
+  {
+    id: "galatico_elite",
+    name: "Galatico Elite",
+    description: "Reach a rating of 2000.",
+    icon: "🌟",
+    tier: "special"
+  }
+];
+
+export async function awardEligibleBadges(
+  db,
+  tournamentId,
+  homeTeamId,
+  awayTeamId,
+  matchType,
+  matchId,
+  winnerTeamId
+) {
+  if (
+    String(matchType).toLowerCase() === "friendly"
+  ) {
+    return [];
+  }
+
+  const participantResult = await db.prepare(`
+    SELECT
+      tp.team_id,
+      tp.user_id,
+      COALESCE(u.rating, 0) AS rating
+    FROM tournament_players tp
+    INNER JOIN users u
+      ON u.id = tp.user_id
+    WHERE tp.tournament_id = ?
+      AND tp.team_id IN (?, ?)
+      AND tp.status = 'accepted'
+  `).bind(
+    tournamentId,
+    homeTeamId,
+    awayTeamId
+  ).all();
+
+  const players = participantResult.results || [];
+
+  if (!players.length) {
+    return [];
+  }
+
+  const userIds = [
+    ...new Set(players.map(player => player.user_id))
+  ];
+
+  const placeholders = userIds.map(() => "?").join(", ");
+
+  const earnedResult = await db.prepare(`
+    SELECT
+      user_id,
+      badge_id
+    FROM user_badges
+    WHERE user_id IN (${placeholders})
+  `).bind(...userIds).all();
+
+  const earnedBadges = new Map();
+
+  for (const row of earnedResult.results || []) {
+    if (!earnedBadges.has(row.user_id)) {
+      earnedBadges.set(row.user_id, new Set());
+    }
+
+    earnedBadges.get(row.user_id).add(row.badge_id);
+  }
+
+  const hasBadge = (userId, badgeId) => {
+    return earnedBadges.get(userId)?.has(badgeId) || false;
+  };
+
+  const awarded = [];
+
+  async function awardBadge(userId, badgeId) {
+    if (hasBadge(userId, badgeId)) {
+      return;
+    }
+
+    const badge = BADGE_DEFINITIONS.find(
+      item => item.id === badgeId
+    );
+
+    if (!badge) {
+      return;
+    }
+
+    const result = await db.prepare(`
+      INSERT OR IGNORE INTO user_badges (
+        id,
+        user_id,
+        badge_id,
+        earned_at
+      )
+      VALUES (?, ?, ?, ?)
+    `).bind(
+      crypto.randomUUID(),
+      userId,
+      badgeId,
+      Date.now()
+    ).run();
+
+    if (result.meta?.changes > 0) {
+      if (!earnedBadges.has(userId)) {
+        earnedBadges.set(userId, new Set());
+      }
+
+      earnedBadges.get(userId).add(badgeId);
+
+      awarded.push({
+        user_id: userId,
+        ...badge
+      });
+    }
+  }
+
+  const careerBadgeIds = [
+    "warrior",
+    "centurion",
+    "match_legend"
+  ];
+
+  const playersNeedingCareerStats = players.filter(
+    player =>
+      careerBadgeIds.some(
+        badgeId => !hasBadge(player.user_id, badgeId)
+      )
+  );
+
+  const careerStats = new Map();
+
+  if (playersNeedingCareerStats.length) {
+    const careerUserIds = [
+      ...new Set(
+        playersNeedingCareerStats.map(
+          player => player.user_id
+        )
+      )
+    ];
+
+    const careerPlaceholders = careerUserIds
+      .map(() => "?")
+      .join(", ");
+
+    const careerResult = await db.prepare(`
+      WITH all_stats AS (
+        SELECT
+          user_id,
+          played
+        FROM tournament_players
+        WHERE status = 'accepted'
+          AND user_id IN (${careerPlaceholders})
+
+        UNION ALL
+
+        SELECT
+          user_id,
+          played
+        FROM tournament_player_knockout
+        WHERE user_id IN (${careerPlaceholders})
+      ),
+      career AS (
+        SELECT
+          user_id,
+          SUM(played) AS played
+        FROM all_stats
+        GROUP BY user_id
+      )
+      SELECT
+        user_id,
+        COALESCE(played, 0) AS played
+      FROM career
+    `).bind(
+      ...careerUserIds,
+      ...careerUserIds
+    ).all();
+
+    for (const row of careerResult.results || []) {
+      careerStats.set(
+        row.user_id,
+        Number(row.played) || 0
+      );
+    }
+  }
+
+  for (const player of players) {
+    const userId = player.user_id;
+
+    if (
+      winnerTeamId &&
+      String(player.team_id) === String(winnerTeamId)
+    ) {
+      await awardBadge(userId, "first_victory");
+    }
+
+    if (
+      !hasBadge(userId, "elite_player") &&
+      Number(player.rating) >= 1800
+    ) {
+      await awardBadge(userId, "elite_player");
+    }
+
+    if (
+      !hasBadge(userId, "galatico_elite") &&
+      Number(player.rating) >= 2000
+    ) {
+      await awardBadge(userId, "galatico_elite");
+    }
+
+    const needsCareerStats = careerBadgeIds.some(
+      badgeId => !hasBadge(userId, badgeId)
+    );
+
+    if (needsCareerStats) {
+      const played = careerStats.get(userId) || 0;
+
+      if (
+        played >= 25 &&
+        !hasBadge(userId, "warrior")
+      ) {
+        await awardBadge(userId, "warrior");
+      }
+
+      if (
+        played >= 100 &&
+        !hasBadge(userId, "centurion")
+      ) {
+        await awardBadge(userId, "centurion");
+      }
+
+      if (
+        played >= 250 &&
+        !hasBadge(userId, "match_legend")
+      ) {
+        await awardBadge(userId, "match_legend");
+      }
+    }
+
+    const needs10WinStreak =
+      !hasBadge(userId, "winning_streak_10");
+
+    const needs30WinStreak =
+      !hasBadge(userId, "winning_streak_30");
+
+    const isCurrentWinner =
+      winnerTeamId &&
+      String(player.team_id) === String(winnerTeamId);
+
+    if (
+      !isCurrentWinner ||
+      (!needs10WinStreak && !needs30WinStreak) ||
+      !matchId
+    ) {
+      continue;
+    }
+
+    const historyResult = await db.prepare(`
+      SELECT
+        m.id,
+        m.winner_team_id,
+        tp.team_id AS player_team_id,
+        m.played_at,
+        m.created_at
+      FROM matches m
+      INNER JOIN tournament_players tp
+        ON tp.tournament_id = m.tournament_id
+        AND tp.team_id = m.home_team_id
+      WHERE tp.user_id = ?
+        AND m.played = 1
+        AND LOWER(m.match_type) != 'friendly'
+        AND m.id != ?
+
+      UNION ALL
+
+      SELECT
+        m.id,
+        m.winner_team_id,
+        tp.team_id AS player_team_id,
+        m.played_at,
+        m.created_at
+      FROM matches m
+      INNER JOIN tournament_players tp
+        ON tp.tournament_id = m.tournament_id
+        AND tp.team_id = m.away_team_id
+      WHERE tp.user_id = ?
+        AND m.played = 1
+        AND LOWER(m.match_type) != 'friendly'
+        AND m.id != ?
+
+      ORDER BY played_at DESC, created_at DESC
+    `).bind(
+      userId,
+      matchId,
+      userId,
+      matchId
+    ).all();
+
+    let streak = 1;
+
+    for (const previousMatch of historyResult.results || []) {
+      if (
+        String(previousMatch.winner_team_id) !==
+        String(previousMatch.player_team_id)
+      ) {
+        break;
+      }
+
+      streak++;
+
+      if (
+        streak >= 10 &&
+        needs10WinStreak
+      ) {
+        await awardBadge(
+          userId,
+          "winning_streak_10"
+        );
+      }
+
+      if (
+        streak >= 30 &&
+        needs30WinStreak
+      ) {
+        await awardBadge(
+          userId,
+          "winning_streak_30"
+        );
+      }
+
+      if (
+        (!needs10WinStreak || streak >= 10) &&
+        (!needs30WinStreak || streak >= 30)
+      ) {
+        break;
+      }
+    }
+
+    if (
+      streak >= 10 &&
+      needs10WinStreak
+    ) {
+      await awardBadge(
+        userId,
+        "winning_streak_10"
+      );
+    }
+
+    if (
+      streak >= 30 &&
+      needs30WinStreak
+    ) {
+      await awardBadge(
+        userId,
+        "winning_streak_30"
+      );
+    }
+  }
+
+  return awarded;
+}
+
+async function getMyBadgesRoute(
+  env,
+  user
+) {
+  try {
+    const result = await env.DB
+      .prepare(`
+        SELECT
+          badge_id,
+          earned_at
+        FROM user_badges
+        WHERE user_id = ?
+        ORDER BY earned_at DESC
+      `)
+      .bind(user.id)
+      .all();
+    const badgeDefinitions = {
+      first_victory: {
+        name: "First Victory",
+        description: "Win your first official match.",
+        icon: "🏆",
+        tier: "bronze"
+      },
+      warrior: {
+        name: "Warrior",
+        description: "Complete 25 matches.",
+        icon: "⚔️",
+        tier: "bronze"
+      },
+      centurion: {
+        name: "Centurion",
+        description: "Complete 100 matches.",
+        icon: "🛡️",
+        tier: "silver"
+      },
+      match_legend: {
+        name: "Match Legend",
+        description: "Complete 250 matches.",
+        icon: "👑",
+        tier: "gold"
+      },
+      elite_player: {
+        name: "Elite Player",
+        description: "Reach a rating of 1800.",
+        icon: "💎",
+        tier: "special"
+      }
+    };
+    const badges = (result.results || [])
+      .map(item => ({
+        id: item.badge_id,
+        earned_at: item.earned_at,
+        ...badgeDefinitions[item.badge_id]
+      }))
+      .filter(badge => badge.name);
+    return Response.json({
+      success: true,
+      badges
+    });
+  } catch (error) {
+    console.error(
+      "Get badges error:",
+      error
+    );
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to retrieve badges."
     }, {
       status: 500
     });

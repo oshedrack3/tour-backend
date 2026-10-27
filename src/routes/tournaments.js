@@ -41,7 +41,9 @@ import {
 import {
   sendPushToUser
 } from "../pushNotifications.js";
-
+import {
+  awardEligibleBadges
+} from "./generalRoutes.js";
 
 export async function handleTournamentRequest(
   request,
@@ -1483,7 +1485,7 @@ async function updateMatchResultRoute(
       });
     }
     const updatePlayerStats =
-     match.match_type === "league" ||
+      match.match_type === "league" ||
       match.match_type === "group";
     let newHomeStats = null;
     let newAwayStats = null;
@@ -1646,12 +1648,25 @@ async function updateMatchResultRoute(
           matchId
         );
     }
+    
+    const newlyAwardedBadges =
+      await awardEligibleBadges(
+        env.DB,
+        tournamentId,
+        match.home_team_id,
+        match.away_team_id,
+        match.match_type,
+        matchId,
+        winnerTeamId
+      );
+    
     return Response.json({
       success: true,
       match: result.match,
       players: result.players,
       groupStage: groupStageResult,
-      knockout: knockoutResult
+      knockout: knockoutResult,
+      newlyAwardedBadges
     });
   } catch (error) {
     console.error(
