@@ -2853,7 +2853,7 @@ export async function getSquadChangeEligibility(
   }
   
   const cooldown =
-    60 * 24 * 60 * 60 * 1000;
+    7 * 24 * 60 * 60 * 1000;
   
   const nextEligibleAt =
     Number(squad.updated_at) + cooldown;

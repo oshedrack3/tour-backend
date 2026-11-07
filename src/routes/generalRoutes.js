@@ -1678,7 +1678,7 @@ async function requestSquadChangeRoute(
     if (!eligibility.eligible) {
       const messages = {
         pending_request: "You already have a pending squad change request.",
-        cooldown: "You can change your squad once every 60 days.",
+        cooldown: "You can change your squad once every 7 days.",
         no_registered_squad: "Register your squad before requesting a change."
       };
       
