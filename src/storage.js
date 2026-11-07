@@ -2804,16 +2804,17 @@ export async function createSquadChangeRequest(
   );
 }
 
-export async function getPendingSquadChangeRequests(
-  db
-) {
+export async function getPendingSquadChangeRequests(db) {
   const result = await db
     .prepare(`
       SELECT
         scr.*,
-        u.username
+        u.username,
+        rs.image_url AS current_image_url
       FROM squad_change_requests scr
       JOIN users u ON u.id = scr.user_id
+      LEFT JOIN registered_squads rs
+        ON rs.user_id = scr.user_id
       WHERE scr.status = 'pending'
       ORDER BY scr.created_at ASC
     `)
@@ -2821,7 +2822,6 @@ export async function getPendingSquadChangeRequests(
   
   return result.results || [];
 }
-
 
 export async function getSquadChangeEligibility(
   db,
