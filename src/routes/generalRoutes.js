@@ -22,7 +22,8 @@ import {
   createSquadChangeRequest,
   getSquadChangeEligibility,
   getUserRegisteredSquad,
-  reviewSquadChangeRequest
+  reviewSquadChangeRequest,
+  getSquadChangeRequest
 } from "../storage.js";
 
 import {
