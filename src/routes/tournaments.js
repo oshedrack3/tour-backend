@@ -2944,6 +2944,26 @@ function checkMatchSubmissionDeadline(
     };
   }
   
+  if (
+    match.match_type === "knockout" &&
+    match.round === "Playoff"
+  ) {
+    if (
+      deadline.enabled === true &&
+      deadline.deadline &&
+      Date.now() > Number(deadline.deadline)
+    ) {
+      return {
+        allowed: false,
+        message: "Submission deadline has passed."
+      };
+    }
+    
+    return {
+      allowed: true
+    };
+  }
+  
   const fromRound =
     Number(deadline.fromRound);
   
@@ -2981,8 +3001,7 @@ function checkMatchSubmissionDeadline(
   if (
     deadline.enabled === true &&
     deadline.deadline &&
-    Date.now() >
-    Number(deadline.deadline)
+    Date.now() > Number(deadline.deadline)
   ) {
     return {
       allowed: false,
@@ -2994,7 +3013,6 @@ function checkMatchSubmissionDeadline(
     allowed: true
   };
 }
-
 
 async function reviewMatchSubmissionRoute(
   request,
