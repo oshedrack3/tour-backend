@@ -18,9 +18,9 @@ crons = [
 ]
 
 [vars]
-BANK_TRANSFER_BANK_NAME = "Flutterwave MFB"
-BANK_TRANSFER_ACCOUNT_NAME = "Shedrack Omachonu Galatico eSport"
-BANK_TRANSFER_ACCOUNT_NUMBER = "9976886146"
+BANK_TRANSFER_BANK_NAME = "OPAY"
+BANK_TRANSFER_ACCOUNT_NAME = "Shedrack Chubiyo Omachonu "
+BANK_TRANSFER_ACCOUNT_NUMBER = "9073166527"
 FLW_REDIRECT_URL = "https://galaticoesport.pages.dev/"
 RP_NAME = "Galatico eSport"
 RP_ID = "galaticoesport.pages.dev"
