@@ -30,31 +30,31 @@ async function getLiveBroadcastDetails(db, broadcast) {
     getMatch(db, broadcast.match_id),
     getTeamsByTournament(db, broadcast.tournament_id)
   ]);
-
+  
   if (!tournament || !match) {
     throw new Error("Unable to retrieve live match details.");
   }
-
+  
   const getTeamName = (teamId, fallback) =>
     teams.find(team => team.id === teamId)?.name || fallback;
-
+  
   const homeTeamName = getTeamName(
     match.home_team_id,
     "Home Team"
   );
-
+  
   const awayTeamName = getTeamName(
     match.away_team_id,
     "Away Team"
   );
-
+  
   const selectedTeamName =
-    broadcast.selected_team_id === match.home_team_id
-      ? homeTeamName
-      : broadcast.selected_team_id === match.away_team_id
-        ? awayTeamName
-        : "Your Team";
-
+    broadcast.selected_team_id === match.home_team_id ?
+    homeTeamName :
+    broadcast.selected_team_id === match.away_team_id ?
+    awayTeamName :
+    "Your Team";
+  
   return {
     tournamentName: tournament.name,
     roundName: match.round || "Round not specified",
@@ -76,6 +76,7 @@ function getOtherParticipant(broadcast, userId) {
     broadcast.admin_user_id :
     broadcast.player_user_id;
 }
+
 
 
 export async function handleLiveRequest(
@@ -141,6 +142,7 @@ export async function handleLiveRequest(
         FROM live_broadcasts
         WHERE player_user_id = ?
           AND status IN ('waiting', 'live')
+          AND invitation_status IN ('pending', 'accepted')
           AND expires_at > ?
         ORDER BY created_at DESC
         LIMIT 1
@@ -326,6 +328,7 @@ export async function handleLiveRequest(
       player_user_id: match.player_user_id,
       admin_user_id: user.id,
       status: "waiting",
+      invitation_status: "pending",
       expires_at: expiresAt
     };
 
@@ -358,6 +361,7 @@ export async function handleLiveRequest(
         playerUserId: match.player_user_id,
         adminUserId: user.id,
         status: "waiting",
+        invitationStatus: "pending",
         expiresAt,
         ...details
       }
@@ -365,7 +369,7 @@ export async function handleLiveRequest(
   }
 
   const routeMatch = pathname.match(
-    /^\/live\/broadcasts\/([^/]+)(?:\/(signals|started|end))?$/
+    /^\/live\/broadcasts\/([^/]+)(?:\/(signals|started|end|respond))?$/
   );
 
   if (!routeMatch) {
@@ -422,6 +426,82 @@ export async function handleLiveRequest(
       success: false,
       message: "Live session has expired."
     }, 410);
+  }
+
+  if (action === "respond" && method === "POST") {
+    if (user.id !== broadcast.player_user_id) {
+      return json({
+        success: false,
+        message: "Only the invited player can respond."
+      }, 403);
+    }
+
+    if (broadcast.status !== "waiting") {
+      return json({
+        success: false,
+        message: "This invitation is no longer active."
+      }, 410);
+    }
+
+    if (broadcast.invitation_status !== "pending") {
+      return json({
+        success: false,
+        message: "You have already responded to this invitation."
+      }, 409);
+    }
+
+    let body;
+
+    try {
+      body = await request.json();
+    } catch {
+      return json({
+        success: false,
+        message: "Invalid request body."
+      }, 400);
+    }
+
+    const response = body.action;
+
+    if (!["accepted", "declined"].includes(response)) {
+      return json({
+        success: false,
+        message: "Invalid invitation response."
+      }, 400);
+    }
+
+    const result = await db
+      .prepare(`
+        UPDATE live_broadcasts
+        SET invitation_status = ?
+        WHERE id = ?
+          AND player_user_id = ?
+          AND invitation_status = 'pending'
+          AND status = 'waiting'
+          AND expires_at > ?
+      `)
+      .bind(
+        response,
+        broadcastId,
+        user.id,
+        now
+      )
+      .run();
+
+    if (!result.meta.changes) {
+      return json({
+        success: false,
+        message: "Unable to update this invitation. Please check its status."
+      }, 409);
+    }
+
+    return json({
+      success: true,
+      message: response === "accepted"
+        ? "Invitation accepted."
+        : "Invitation declined.",
+      invitationStatus: response
+    });
   }
 
   if (!action && method === "GET") {
@@ -644,5 +724,3 @@ export async function handleLiveRequest(
     message: "Route not found."
   }, 404);
 }
-
-
