@@ -1,5 +1,8 @@
 import { handleAuthRequest } from "./auth.js";
 import {
+  handleLiveRequest
+} from "./routes/liveRoutes.js";
+import {
   handleSeasonRegistrationRequest,
   handleFlutterwaveWebhook
 } from "./routes/seasonRegistrations.js";
@@ -115,6 +118,17 @@ export default {
       }
       
       const user = auth.user;
+      const liveResponse =
+        await handleLiveRequest(
+          request,
+          env,
+          pathname,
+          user
+        );
+      
+      if (liveResponse) {
+        return addCors(liveResponse);
+      }
       const seasonRegistrationResponse =
         await handleSeasonRegistrationRequest(
           request,
