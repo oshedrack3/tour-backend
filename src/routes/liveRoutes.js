@@ -1,3 +1,7 @@
+import {
+  sendPushToUser
+} from "../pushNotifications.js";
+
 function json(data, status = 200) {
   return Response.json(data, { status });
 }
@@ -241,6 +245,20 @@ export async function handleLiveRequest(
       }
       
       throw error;
+    }
+    
+    try {
+      await sendPushToUser(
+        env,
+        match.player_user_id,
+        "Galatico Live",
+        "You're invited to stream your tournament match! Open Galatico to view your live invitation."
+      );
+    } catch (error) {
+      console.error(
+        "[Galatico Live] Push notification failed:",
+        error
+      );
     }
     
     return json({
