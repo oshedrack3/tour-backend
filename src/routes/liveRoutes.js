@@ -172,6 +172,52 @@ export async function handleLiveRequest(
   }
   
   if (
+    method === "GET" &&
+    pathname === "/live/broadcasts"
+  ) {
+    if (user.role !== "admin") {
+      return json({
+        success: false,
+        message: "Admin access required."
+      }, 403);
+    }
+    
+    const now = Date.now();
+    
+    const result = await db
+      .prepare(`
+      SELECT *
+      FROM live_broadcasts
+      WHERE admin_user_id = ?
+        AND status IN ('waiting', 'live')
+        AND invitation_status IN ('pending', 'accepted')
+        AND expires_at > ?
+      ORDER BY created_at DESC
+      LIMIT 50
+    `)
+      .bind(user.id, now)
+      .all();
+    
+    const broadcasts = await Promise.all(
+      (result.results || []).map(async broadcast => {
+        const details = await getLiveBroadcastDetails(
+          db,
+          broadcast
+        );
+        
+        return {
+          ...broadcast,
+          ...details
+        };
+      })
+    );
+    
+    return json({
+      success: true,
+      broadcasts
+    });
+  }
+  if (
     method === "POST" &&
     pathname === "/live/broadcasts"
   ) {
@@ -498,8 +544,7 @@ export async function handleLiveRequest(
     return json({
       success: true,
       message: response === "accepted" ?
-        "Invitation accepted." :
-        "Invitation declined.",
+        "Invitation accepted." : "Invitation declined.",
       invitationStatus: response
     });
   }
