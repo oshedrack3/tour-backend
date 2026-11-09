@@ -90,6 +90,53 @@ export async function handleLiveRequest(
   
   if (
     method === "GET" &&
+    pathname === "/live/turn-credentials"
+  ) {
+    if (!["admin", "player"].includes(user.role)) {
+      return json({
+        success: false,
+        message: "Access denied."
+      }, 403);
+    }
+    
+    const username = env.EXPRESSTURN_USERNAME;
+    const credential = env.EXPRESSTURN_PASSWORD;
+    
+    if (!username || !credential) {
+      return json({
+        success: false,
+        message: "TURN credentials are not configured."
+      }, 500);
+    }
+    
+    return new Response(
+      JSON.stringify({
+        success: true,
+        iceServers: [
+        {
+          urls: "stun:stun.l.google.com:19302"
+        },
+        {
+          urls: [
+            "turn:free.expressturn.com:3478?transport=udp",
+            "turn:free.expressturn.com:3478?transport=tcp"
+          ],
+          username,
+          credential
+        }]
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store"
+        }
+      }
+    );
+  }
+  
+  if (
+    method === "GET" &&
     pathname === "/live/my-session"
   ) {
     const now = Date.now();
