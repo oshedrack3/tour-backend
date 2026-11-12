@@ -997,6 +997,7 @@ export async function createMatchesBatch(
   await db.batch(statements);
 }
 
+
 export async function getTournamentPlayer(
   db,
   tournamentId,
@@ -1007,9 +1008,12 @@ export async function getTournamentPlayer(
     .prepare(`
       SELECT
         tp.*,
+        u.username,
         t.name AS team_name,
         t.logo AS team_logo
       FROM tournament_players tp
+      LEFT JOIN users u
+        ON u.id = tp.user_id
       LEFT JOIN teams t
         ON t.id = tp.team_id
       WHERE tp.tournament_id = ?
@@ -1023,57 +1027,62 @@ export async function getTournamentPlayer(
     )
     .first();
 }
+
 export async function getTournamentPlayers(
   db,
   tournamentId
 ) {
-  const result =
-    await db
+  const result = await db
     .prepare(`
-        SELECT
-          tp.*,
-          t.name AS team_name,
-          t.logo AS team_logo
-        FROM tournament_players tp
-        LEFT JOIN teams t
-          ON t.id = tp.team_id
-        WHERE tp.tournament_id = ?
-        ORDER BY tp.joined_at ASC
-      `)
-    .bind(
-      tournamentId
-    )
+      SELECT
+        tp.*,
+        u.username,
+        t.name AS team_name,
+        t.logo AS team_logo
+      FROM tournament_players tp
+      LEFT JOIN users u
+        ON u.id = tp.user_id
+      LEFT JOIN teams t
+        ON t.id = tp.team_id
+      WHERE tp.tournament_id = ?
+      ORDER BY tp.joined_at ASC
+    `)
+    .bind(tournamentId)
     .all();
-  
+
   return result.results || [];
 }
+
 export async function getTournamentPlayersByUser(
   db,
   tournamentId,
   userId
 ) {
-  const result =
-    await db
+  const result = await db
     .prepare(`
-        SELECT
-          tp.*,
-          t.name AS team_name,
-          t.logo AS team_logo
-        FROM tournament_players tp
-        LEFT JOIN teams t
-          ON t.id = tp.team_id
-        WHERE tp.tournament_id = ?
-        AND tp.user_id = ?
-        ORDER BY tp.joined_at ASC
-      `)
+      SELECT
+        tp.*,
+        u.username,
+        t.name AS team_name,
+        t.logo AS team_logo
+      FROM tournament_players tp
+      LEFT JOIN users u
+        ON u.id = tp.user_id
+      LEFT JOIN teams t
+        ON t.id = tp.team_id
+      WHERE tp.tournament_id = ?
+      AND tp.user_id = ?
+      ORDER BY tp.joined_at ASC
+    `)
     .bind(
       tournamentId,
       userId
     )
     .all();
-  
+
   return result.results || [];
 }
+
 export async function updateTournamentPlayer(
   db,
   tournamentId,
