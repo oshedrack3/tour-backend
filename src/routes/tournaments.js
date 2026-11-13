@@ -3014,6 +3014,7 @@ function checkMatchSubmissionDeadline(
   };
 }
 
+
 async function reviewMatchSubmissionRoute(
   request,
   env,
@@ -3026,6 +3027,7 @@ async function reviewMatchSubmissionRoute(
       env.DB,
       tournamentId
     );
+
     if (!tournament) {
       return Response.json({
         success: false,
@@ -3034,6 +3036,7 @@ async function reviewMatchSubmissionRoute(
         status: 404
       });
     }
+
     if (
       user.role !== "admin" ||
       String(tournament.admin_uid) !== String(user.id)
@@ -3045,11 +3048,13 @@ async function reviewMatchSubmissionRoute(
         status: 403
       });
     }
+
     const submission = await getMatchSubmission(
       env.DB,
       tournamentId,
       submissionId
     );
+
     if (!submission) {
       return Response.json({
         success: false,
@@ -3058,6 +3063,7 @@ async function reviewMatchSubmissionRoute(
         status: 404
       });
     }
+
     if (submission.status !== "pending") {
       return Response.json({
         success: false,
@@ -3066,13 +3072,17 @@ async function reviewMatchSubmissionRoute(
         status: 409
       });
     }
+
     const body = await request.json().catch(() => ({}));
+
     const approved =
       body.approved === true ||
       body.status === "approved";
+
     const rejected =
       body.approved === false ||
       body.status === "rejected";
+
     if (!approved && !rejected) {
       return Response.json({
         success: false,
@@ -3081,7 +3091,9 @@ async function reviewMatchSubmissionRoute(
         status: 400
       });
     }
+
     const now = Date.now();
+
     const matchTeams = await env.DB.prepare(`
       SELECT
         ht.name AS home_team_name,
@@ -3095,12 +3107,14 @@ async function reviewMatchSubmissionRoute(
     `)
       .bind(submission.match_id, tournamentId)
       .first();
+
     if (rejected) {
       const rejectionReason = String(
         body.rejection_reason ||
         body.reason ||
         ""
       ).trim();
+
       const updatedSubmission = await updateMatchSubmission(
         env.DB,
         tournamentId,
@@ -3112,6 +3126,7 @@ async function reviewMatchSubmissionRoute(
           rejection_reason: rejectionReason || null
         }
       );
+
       await env.DB.prepare(`
         UPDATE tournaments
         SET updated_at = ?
@@ -3119,6 +3134,7 @@ async function reviewMatchSubmissionRoute(
       `)
         .bind(now, tournamentId)
         .run();
+
       try {
         await sendPushToUser(
           env,
@@ -3133,16 +3149,19 @@ async function reviewMatchSubmissionRoute(
           pushError.message
         );
       }
+
       return Response.json({
         success: true,
         message: "Submission rejected.",
         submission: updatedSubmission
       });
     }
+
     const match = await getMatch(
       env.DB,
       submission.match_id
     );
+
     if (
       !match ||
       String(match.tournament_id) !== String(tournamentId)
@@ -3154,6 +3173,7 @@ async function reviewMatchSubmissionRoute(
         status: 404
       });
     }
+
     if (Number(match.played) === 1) {
       return Response.json({
         success: false,
@@ -3162,9 +3182,12 @@ async function reviewMatchSubmissionRoute(
         status: 409
       });
     }
+
     const homeScore = Number(submission.home_goals);
     const awayScore = Number(submission.away_goals);
+
     let submittedStats = null;
+
     if (submission.stats) {
       try {
         submittedStats =
@@ -3180,6 +3203,7 @@ async function reviewMatchSubmissionRoute(
         });
       }
     }
+
     if (
       !Number.isInteger(homeScore) ||
       !Number.isInteger(awayScore) ||
@@ -3193,62 +3217,82 @@ async function reviewMatchSubmissionRoute(
         status: 400
       });
     }
-    const homePlayer = await getTournamentPlayerByTeam(
-      env.DB,
-      tournamentId,
-      match.home_team_id
-    );
-    const awayPlayer = await getTournamentPlayerByTeam(
-      env.DB,
-      tournamentId,
-      match.away_team_id
-    );
-    if (!homePlayer || !awayPlayer) {
-      return Response.json({
-        success: false,
-        message: "One or both teams do not have tournament player records."
-      }, {
-        status: 400
-      });
+
+    const updatePlayerStats =
+      match.match_type === "league" ||
+      match.match_type === "group";
+
+    let newHomeStats = null;
+    let newAwayStats = null;
+
+    if (updatePlayerStats) {
+      const homePlayer = await getTournamentPlayerByTeam(
+        env.DB,
+        tournamentId,
+        match.home_team_id
+      );
+
+      const awayPlayer = await getTournamentPlayerByTeam(
+        env.DB,
+        tournamentId,
+        match.away_team_id
+      );
+
+      if (!homePlayer || !awayPlayer) {
+        return Response.json({
+          success: false,
+          message: "One or both teams do not have tournament player records."
+        }, {
+          status: 400
+        });
+      }
+
+      const currentHome = {
+        played: Number(homePlayer.played) || 0,
+        wins: Number(homePlayer.wins) || 0,
+        draws: Number(homePlayer.draws) || 0,
+        losses: Number(homePlayer.losses) || 0,
+        gf: Number(homePlayer.gf) || 0,
+        ga: Number(homePlayer.ga) || 0,
+        points: Number(homePlayer.points) || 0
+      };
+
+      const currentAway = {
+        played: Number(awayPlayer.played) || 0,
+        wins: Number(awayPlayer.wins) || 0,
+        draws: Number(awayPlayer.draws) || 0,
+        losses: Number(awayPlayer.losses) || 0,
+        gf: Number(awayPlayer.gf) || 0,
+        ga: Number(awayPlayer.ga) || 0,
+        points: Number(awayPlayer.points) || 0
+      };
+
+      const newStats = getResultStats(
+        homeScore,
+        awayScore
+      );
+
+      newHomeStats = applyStats(
+        currentHome,
+        newStats.home,
+        1
+      );
+
+      newAwayStats = applyStats(
+        currentAway,
+        newStats.away,
+        1
+      );
     }
-    const currentHome = {
-      played: Number(homePlayer.played) || 0,
-      wins: Number(homePlayer.wins) || 0,
-      draws: Number(homePlayer.draws) || 0,
-      losses: Number(homePlayer.losses) || 0,
-      gf: Number(homePlayer.gf) || 0,
-      ga: Number(homePlayer.ga) || 0,
-      points: Number(homePlayer.points) || 0
-    };
-    const currentAway = {
-      played: Number(awayPlayer.played) || 0,
-      wins: Number(awayPlayer.wins) || 0,
-      draws: Number(awayPlayer.draws) || 0,
-      losses: Number(awayPlayer.losses) || 0,
-      gf: Number(awayPlayer.gf) || 0,
-      ga: Number(awayPlayer.ga) || 0,
-      points: Number(awayPlayer.points) || 0
-    };
-    const newStats = getResultStats(
-      homeScore,
-      awayScore
-    );
-    const newHomeStats = applyStats(
-      currentHome,
-      newStats.home,
-      1
-    );
-    const newAwayStats = applyStats(
-      currentAway,
-      newStats.away,
-      1
-    );
+
     let winnerTeamId = null;
+
     if (homeScore > awayScore) {
       winnerTeamId = match.home_team_id;
     } else if (awayScore > homeScore) {
       winnerTeamId = match.away_team_id;
     }
+
     const result = await updateMatchResultAtomic(
       env.DB,
       match.id,
@@ -3265,8 +3309,11 @@ async function reviewMatchSubmissionRoute(
       match.away_team_id,
       newHomeStats,
       newAwayStats,
-      tournamentId
+      tournamentId,
+      updatePlayerStats,
+      match.match_type
     );
+
     const updatedSubmission = await updateMatchSubmission(
       env.DB,
       tournamentId,
@@ -3278,6 +3325,7 @@ async function reviewMatchSubmissionRoute(
         rejection_reason: null
       }
     );
+
     await env.DB.prepare(`
       UPDATE tournaments
       SET updated_at = ?
@@ -3285,8 +3333,10 @@ async function reviewMatchSubmissionRoute(
     `)
       .bind(now, tournamentId)
       .run();
+
     let groupStageResult = null;
     let knockoutResult = null;
+
     if (match.match_type === "group") {
       groupStageResult = await checkGroupStageCompletion(
         env.DB,
@@ -3294,6 +3344,7 @@ async function reviewMatchSubmissionRoute(
         tournament
       );
     }
+
     if (
       match.match_type === "knockout" ||
       match.match_type === "third_place"
@@ -3304,6 +3355,7 @@ async function reviewMatchSubmissionRoute(
         match.id
       );
     }
+
     try {
       await sendPushToUser(
         env,
@@ -3318,6 +3370,7 @@ async function reviewMatchSubmissionRoute(
         pushError.message
       );
     }
+
     return Response.json({
       success: true,
       message: "Submission approved.",
@@ -3327,11 +3380,13 @@ async function reviewMatchSubmissionRoute(
       groupStage: groupStageResult,
       knockout: knockoutResult
     });
+
   } catch (error) {
     console.error(
       "Review match submission error:",
       error
     );
+
     return Response.json({
       success: false,
       message: error.message ||
