@@ -18,7 +18,7 @@ crons = [
 ]
 
 [vars]
-BANK_TRANSFER_BANK_NAME = "OPAY"
+BANK_TRANSFER_BANK_NAME = "PALMPAY"
 BANK_TRANSFER_ACCOUNT_NAME = "Shedrack Chubiyo Omachonu "
 BANK_TRANSFER_ACCOUNT_NUMBER = "9073166527"
 FLW_REDIRECT_URL = "https://galaticoesport.pages.dev/"
