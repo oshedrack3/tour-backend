@@ -1303,20 +1303,17 @@ async function generateFixturesRoute(
   }
 }
 
-function scheduleLeagueFixtures(
-  fixtures,
-  tournament
-) {
+
+function scheduleLeagueFixtures(fixtures, tournament) {
   const startDate = tournament.start_date;
   const endDate = tournament.end_date;
 
   let matchDays = [];
 
   try {
-    matchDays =
-      Array.isArray(tournament.match_days) ?
-      tournament.match_days :
-      JSON.parse(tournament.match_days || "[]");
+    matchDays = Array.isArray(tournament.match_days)
+      ? tournament.match_days
+      : JSON.parse(tournament.match_days || "[]");
   } catch {
     matchDays = [];
   }
@@ -1339,7 +1336,28 @@ function scheduleLeagueFixtures(
 
   const allowedDays = new Set(
     matchDays
-      .map(day => dayMap[day])
+      .map(day => {
+        if (typeof day === "number") {
+          return Number.isInteger(day) && day >= 0 && day <= 6
+            ? day
+            : undefined;
+        }
+
+        if (typeof day === "string") {
+          const value = day.trim();
+
+          if (/^[0-6]$/.test(value)) {
+            return Number(value);
+          }
+
+          return dayMap[
+            value.charAt(0).toUpperCase() +
+            value.slice(1).toLowerCase()
+          ];
+        }
+
+        return undefined;
+      })
       .filter(day => day !== undefined)
   );
 
@@ -1350,9 +1368,9 @@ function scheduleLeagueFixtures(
   }
 
   const start = new Date(`${startDate}T00:00:00Z`);
-  const end = endDate ?
-    new Date(`${endDate}T00:00:00Z`) :
-    null;
+  const end = endDate
+    ? new Date(`${endDate}T00:00:00Z`)
+    : null;
 
   if (
     Number.isNaN(start.getTime()) ||
@@ -1377,7 +1395,6 @@ function scheduleLeagueFixtures(
   ];
 
   const scheduledFixtures = [...fixtures];
-
   const rounds = new Map();
 
   for (const match of scheduledFixtures) {
@@ -1409,8 +1426,9 @@ function scheduleLeagueFixtures(
 
     while (matchIndex < roundFixtures.length) {
       if (allowedDays.has(currentDate.getUTCDay())) {
-        const date =
-          currentDate.toISOString().slice(0, 10);
+        const date = currentDate
+          .toISOString()
+          .slice(0, 10);
 
         for (const time of kickoffTimes) {
           if (matchIndex >= roundFixtures.length) {
