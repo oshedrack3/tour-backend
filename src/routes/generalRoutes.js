@@ -203,6 +203,20 @@ export async function handleGeneralRequest(
     );
   }
   
+  const matchThumbnailMatch =
+  pathname.match(/^\/matches\/([^/]+)\/thumbnail$/);
+
+if (
+  request.method === "GET" &&
+  matchThumbnailMatch
+) {
+  return await getMatchThumbnailRoute(
+    env,
+    decodeURIComponent(matchThumbnailMatch[1]),
+    user
+  );
+}
+  
   if (
     request.method === "GET" &&
     pathname === "/squad"
@@ -3217,6 +3231,98 @@ async function getMyBadgesRoute(env, user) {
     return Response.json({
       success: false,
       message: error.message || "Failed to retrieve badges."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function getMatchThumbnailRoute(
+  env,
+  matchId,
+  user
+) {
+  try {
+    const result = await env.DB.prepare(`
+      SELECT
+        m.*,
+        ht.id AS home_team_id,
+        ht.name AS home_team_name,
+        ht.logo AS home_team_logo,
+        hu.username AS home_username,
+        hu.profile_pic AS home_profile_pic,
+        at.id AS away_team_id,
+        at.name AS away_team_name,
+        at.logo AS away_team_logo,
+        au.username AS away_username,
+        au.profile_pic AS away_profile_pic
+      FROM matches m
+      LEFT JOIN teams ht
+        ON ht.id = m.home_team_id
+      LEFT JOIN users hu
+        ON hu.id = ht.owner_uid
+      LEFT JOIN teams at
+        ON at.id = m.away_team_id
+      LEFT JOIN users au
+        ON au.id = at.owner_uid
+      WHERE m.id = ?
+    `)
+      .bind(matchId)
+      .first();
+    
+    if (!result) {
+      return Response.json({
+        success: false,
+        message: "Match not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    const {
+      home_team_id,
+      home_team_name,
+      home_team_logo,
+      home_username,
+      home_profile_pic,
+      away_team_id,
+      away_team_name,
+      away_team_logo,
+      away_username,
+      away_profile_pic,
+      ...match
+    } = result;
+    
+    return Response.json({
+      success: true,
+      match: {
+        ...match,
+        home_team: home_team_id ? {
+          id: home_team_id,
+          name: home_team_name,
+          logo: home_team_logo,
+          owner: {
+            username: home_username,
+            profile_pic: home_profile_pic
+          }
+        } : null,
+        away_team: away_team_id ? {
+          id: away_team_id,
+          name: away_team_name,
+          logo: away_team_logo,
+          owner: {
+            username: away_username,
+            profile_pic: away_profile_pic
+          }
+        } : null
+      }
+    });
+  } catch (error) {
+    console.error("Get match thumbnail error:", error);
+    
+    return Response.json({
+      success: false,
+      message: "Unable to retrieve match information."
     }, {
       status: 500
     });
