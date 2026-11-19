@@ -1173,8 +1173,29 @@ async function updateProfileRoute(
   env,
   user
 ) {
+  let uploadedPublicId = null;
+  let databaseUpdated = false;
+  
   try {
     const body = await request.json();
+    const image = body.image;
+    
+    if (
+      image !== undefined &&
+      image !== null &&
+      (
+        typeof image !== "string" ||
+        !image.startsWith("data:image/")
+      )
+    ) {
+      return Response.json({
+        success: false,
+        message: "Please provide a valid profile image."
+      }, {
+        status: 400
+      });
+    }
+    
     const updates = {
       username: body.username,
       phone: body.phone,
@@ -1182,11 +1203,65 @@ async function updateProfileRoute(
       payout_account_number: body.payout_account_number,
       payout_bank_name: body.payout_bank_name
     };
+    
+    let previousPublicId = null;
+    
+    if (image) {
+      const existing = await env.DB
+        .prepare(`
+          SELECT profile_pic_public_id
+          FROM users
+          WHERE id = ?
+        `)
+        .bind(user.id)
+        .first();
+      
+      if (!existing) {
+        return Response.json({
+          success: false,
+          message: "User not found."
+        }, {
+          status: 404
+        });
+      }
+      
+      previousPublicId =
+        existing.profile_pic_public_id || null;
+      
+      const publicId = `profile-${user.id}`;
+      
+      const uploaded = await uploadBase64Image(
+        image,
+        "users/profile",
+        publicId,
+        env
+      );
+      
+      const uploadedId =
+        uploaded?.public_id ||
+        uploaded?.publicId;
+      
+      if (!uploaded?.url || !uploadedId) {
+        return Response.json({
+          success: false,
+          message: "Profile image upload failed."
+        }, {
+          status: 502
+        });
+      }
+      
+      uploadedPublicId = uploadedId;
+      
+      updates.profile_pic = uploaded.url;
+      updates.profile_pic_public_id = uploadedId;
+    }
+    
     const result = await updateUserProfile(
       env.DB,
       user.id,
       updates
     );
+    
     if (!result) {
       return Response.json({
         success: false,
@@ -1195,6 +1270,7 @@ async function updateProfileRoute(
         status: 404
       });
     }
+    
     if (!result.success) {
       return Response.json({
         success: false,
@@ -1203,20 +1279,58 @@ async function updateProfileRoute(
         status: 400
       });
     }
+    
+    databaseUpdated = true;
+    
+    if (
+      uploadedPublicId &&
+      previousPublicId &&
+      previousPublicId !== uploadedPublicId
+    ) {
+      try {
+        await deleteCloudinaryImage(
+          previousPublicId,
+          env
+        );
+      } catch (error) {
+        console.error(
+          "Previous profile image cleanup failed:",
+          error
+        );
+      }
+    }
+    
     const profile = await getUserProfile(
       env.DB,
       user.id
     );
+    
     return Response.json({
       success: true,
       message: "Profile updated successfully.",
       profile
     });
+    
   } catch (error) {
+    if (uploadedPublicId && !databaseUpdated) {
+      try {
+        await deleteCloudinaryImage(
+          uploadedPublicId,
+          env
+        );
+      } catch (cleanupError) {
+        console.error(
+          "New profile image cleanup failed:",
+          cleanupError
+        );
+      }
+    }
+    
     console.error(
       "Update profile error:",
       error
     );
+    
     return Response.json({
       success: false,
       message: error.message ||
@@ -1226,7 +1340,6 @@ async function updateProfileRoute(
     });
   }
 }
-
 async function subscribePushRoute(
   request,
   env,

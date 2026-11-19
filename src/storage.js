@@ -2136,10 +2136,11 @@ export async function getUserProfile(
     teams
   ] = await Promise.all([
     db
-    .prepare(`
+      .prepare(`
         SELECT
           username,
           phone,
+          profile_pic,
           payout_account_name,
           payout_account_number,
           payout_bank_name
@@ -2147,10 +2148,10 @@ export async function getUserProfile(
         WHERE id = ?
         LIMIT 1
       `)
-    .bind(userId)
-    .first(),
+      .bind(userId)
+      .first(),
     db
-    .prepare(`
+      .prepare(`
         SELECT
           id,
           name,
@@ -2159,18 +2160,24 @@ export async function getUserProfile(
         WHERE owner_uid = ?
         ORDER BY created_at ASC
       `)
-    .bind(userId)
-    .all()
+      .bind(userId)
+      .all()
   ]);
+
   if (!user) {
     return null;
   }
+
   return {
     username: user.username,
     phone: user.phone || "",
-    payout_account_name: user.payout_account_name || "",
-    payout_account_number: user.payout_account_number || "",
-    payout_bank_name: user.payout_bank_name || "",
+    profile_pic: user.profile_pic || null,
+    payout_account_name:
+      user.payout_account_name || "",
+    payout_account_number:
+      user.payout_account_number || "",
+    payout_bank_name:
+      user.payout_bank_name || "",
     teams: teams.results || []
   };
 }
@@ -2184,20 +2191,25 @@ export async function updateUserProfile(
     db,
     userId
   );
+
   if (!user) {
     return null;
   }
+
   const fields = [];
   const values = [];
+
   if (updates.username !== undefined) {
     const username =
       String(updates.username || "").trim();
+
     if (!username) {
       return {
         success: false,
         message: "Username is required."
       };
     }
+
     const existingUser = await db
       .prepare(`
         SELECT id
@@ -2208,40 +2220,49 @@ export async function updateUserProfile(
       `)
       .bind(username, userId)
       .first();
+
     if (existingUser) {
       return {
         success: false,
         message: "Username is already taken."
       };
     }
+
     fields.push("username = ?");
     values.push(username);
   }
+
   if (updates.phone !== undefined) {
     const phone =
       String(updates.phone || "").trim();
+
     fields.push("phone = ?");
     values.push(phone || null);
   }
+
   const payoutFields = [
     "payout_account_name",
     "payout_account_number",
     "payout_bank_name"
   ];
+
   for (const field of payoutFields) {
     if (updates[field] !== undefined) {
       const value =
         String(updates[field] || "").trim();
+
       if (value.length > 100) {
         return {
           success: false,
           message: `${field.replaceAll("_", " ")} cannot exceed 100 characters.`
         };
       }
+
       fields.push(`${field} = ?`);
       values.push(value || null);
     }
   }
+
   if (
     updates.payout_account_number !== undefined
   ) {
@@ -2249,6 +2270,7 @@ export async function updateUserProfile(
       String(
         updates.payout_account_number || ""
       ).trim();
+
     if (
       accountNumber &&
       !/^\d{10}$/.test(accountNumber)
@@ -2259,13 +2281,30 @@ export async function updateUserProfile(
       };
     }
   }
+
+  if (updates.profile_pic !== undefined) {
+    fields.push("profile_pic = ?");
+    values.push(updates.profile_pic || null);
+  }
+
+  if (
+    updates.profile_pic_public_id !== undefined
+  ) {
+    fields.push("profile_pic_public_id = ?");
+    values.push(
+      updates.profile_pic_public_id || null
+    );
+  }
+
   if (!fields.length) {
     return {
       success: true,
       user
     };
   }
+
   values.push(userId);
+
   await db
     .prepare(`
       UPDATE users
@@ -2274,16 +2313,17 @@ export async function updateUserProfile(
     `)
     .bind(...values)
     .run();
+
   const updatedUser = await getUserById(
     db,
     userId
   );
+
   return {
     success: true,
     user: updatedUser
   };
 }
-
 export async function createGroupsBatch(
   db,
   groups
