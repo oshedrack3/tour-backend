@@ -5,6 +5,7 @@ import {
   getTournamentRuleAcceptance,
   saveTournamentRuleAcceptance,
   getTournament,
+  getTournamentStatisticsMatches,
   deleteTournament,
   getTournamentsByOwner,
   getTournamentsByPlayer,
@@ -326,6 +327,18 @@ export async function handleTournamentRequest(
       user
     );
   }
+  if (
+  request.method === "GET" &&
+  /^\/tournaments\/[^/]+\/statistics$/.test(pathname)
+) {
+  const tournamentId = pathname.split("/")[2];
+  
+  return await getTournamentStatisticsRoute(
+    env,
+    tournamentId,
+    user
+  );
+}
   if (
     request.method === "GET" &&
     pathname === "/tournaments/my"
@@ -10432,6 +10445,61 @@ async function generateFriendlyFixturesRoute(
       success: false,
       message: error.message ||
         "Failed to generate friendly fixtures."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function getTournamentStatisticsRoute(
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament = await getTournament(
+      env.DB,
+      tournamentId
+    );
+    
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    const isAdmin =
+      user.role === "admin" &&
+      String(tournament.admin_uid) === String(user.id);
+    
+    if (user.role === "admin" && !isAdmin) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    const matches = await getTournamentStatisticsMatches(
+      env.DB,
+      tournamentId
+    );
+    
+    return Response.json({
+      success: true,
+      matches
+    });
+    
+  } catch (error) {
+    console.error("Get tournament statistics error:", error);
+    
+    return Response.json({
+      success: false,
+      message: error.message || "Failed to load tournament statistics."
     }, {
       status: 500
     });

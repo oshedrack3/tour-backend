@@ -3538,3 +3538,52 @@ export async function getTournamentDisciplinaryActions(
   
   return result.results || [];
 }
+
+export async function getTournamentStatisticsMatches(
+  db,
+  tournamentId
+) {
+  const result = await db
+    .prepare(`
+      SELECT
+        m.id,
+        m.tournament_id,
+        m.home_team_id,
+        m.away_team_id,
+        m.home_score,
+        m.away_score,
+        m.match_type,
+        m.round,
+        m.round_index,
+        m.group_id,
+        m.played,
+        m.played_at,
+        m.stats,
+        ht.name AS home_team_name,
+        ht.logo AS home_team_logo,
+        hu.id AS home_user_id,
+        hu.username AS home_username,
+        hu.profile_pic AS home_profile_pic,
+        at.name AS away_team_name,
+        at.logo AS away_team_logo,
+        au.id AS away_user_id,
+        au.username AS away_username,
+        au.profile_pic AS away_profile_pic
+      FROM matches m
+      LEFT JOIN teams ht
+        ON ht.id = m.home_team_id
+      LEFT JOIN users hu
+        ON hu.id = ht.owner_uid
+      LEFT JOIN teams at
+        ON at.id = m.away_team_id
+      LEFT JOIN users au
+        ON au.id = at.owner_uid
+      WHERE m.tournament_id = ?
+        AND m.played = 1
+      ORDER BY m.played_at ASC
+    `)
+    .bind(tournamentId)
+    .all();
+  
+  return result.results || [];
+}
