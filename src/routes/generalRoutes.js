@@ -3237,15 +3237,12 @@ async function getMyBadgesRoute(env, user) {
   }
 }
 
-async function getMatchThumbnailRoute(
-  env,
-  matchId,
-  user
-) {
+async function getMatchThumbnailRoute(env, matchId, user) {
   try {
     const result = await env.DB.prepare(`
       SELECT
         m.*,
+        m.scheduled_at AS scheduleAt,
         ht.id AS home_team_id,
         ht.name AS home_team_name,
         ht.logo AS home_team_logo,
@@ -3297,6 +3294,7 @@ async function getMatchThumbnailRoute(
       success: true,
       match: {
         ...match,
+        scheduleAt: result.scheduleAt || result.scheduled_at || null,
         home_team: home_team_id ? {
           id: home_team_id,
           name: home_team_name,
