@@ -900,33 +900,32 @@ async function getTournamentRoute(
   }
 }
 
+
 export function parseTournament(tournament) {
-  if (!tournament) {
-    return tournament;
-  }
-  
+  if (!tournament) return tournament;
+
   if (tournament.settings) {
     try {
-      tournament.settings =
-        JSON.parse(
-          tournament.settings
-        );
+      tournament.settings = JSON.parse(tournament.settings);
     } catch {
       tournament.settings = {};
     }
   }
-  
-  if (tournament.match_days) {
+
+  if (typeof tournament.match_days === "string") {
     try {
-      tournament.match_days =
-        JSON.parse(
-          tournament.match_days
-        );
+      tournament.match_days = JSON.parse(tournament.match_days);
     } catch {
       tournament.match_days = [];
     }
   }
-  
+
+  tournament.startDate = tournament.start_date || "";
+  tournament.endDate = tournament.end_date || "";
+  tournament.matchDays = Array.isArray(tournament.match_days)
+    ? tournament.match_days
+    : [];
+
   return tournament;
 }
 
