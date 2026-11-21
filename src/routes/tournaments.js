@@ -924,6 +924,108 @@ async function getTournamentRoute(
 }
 
 
+async function getTournamentRulesRoute(
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournament(
+        env.DB,
+        tournamentId
+      );
+    
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    if (!tournament.competition_id) {
+      return Response.json({
+        success: true,
+        rules: null,
+        rules_version: null,
+        accepted: true
+      });
+    }
+    
+    const competition =
+      await env.DB
+      .prepare(`
+          SELECT
+            id,
+            rules,
+            rules_version,
+            rules_updated_at
+          FROM competitions
+          WHERE id = ?
+        `)
+      .bind(
+        tournament.competition_id
+      )
+      .first();
+    
+    if (!competition) {
+      return Response.json({
+        success: true,
+        rules: null,
+        rules_version: null,
+        accepted: true
+      });
+    }
+    
+    if (!competition.rules) {
+      return Response.json({
+        success: true,
+        rules: null,
+        rules_version: competition.rules_version,
+        accepted: true
+      });
+    }
+    
+    const acceptance =
+      await getTournamentRuleAcceptance(
+        env.DB,
+        tournamentId,
+        user.id
+      );
+    
+    const accepted = !!acceptance &&
+      Number(
+        acceptance.rules_version
+      ) === Number(
+        competition.rules_version
+      );
+    
+    return Response.json({
+      success: true,
+      rules: competition.rules,
+      rules_version: competition.rules_version,
+      rules_updated_at: competition.rules_updated_at,
+      accepted
+    });
+    
+  } catch (error) {
+    console.error(
+      "Get tournament rules error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to load tournament rules."
+    }, {
+      status: 500
+    });
+  }
+}
+
 export function parseTournament(tournament) {
   if (!tournament) return tournament;
 
