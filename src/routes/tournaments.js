@@ -869,7 +869,7 @@ async function getTournamentRoute(
         env.DB,
         id
       );
-    
+
     if (!tournament) {
       return Response.json({
         success: false,
@@ -878,32 +878,41 @@ async function getTournamentRoute(
         status: 404
       });
     }
-    
+
     const tournamentPlayers =
       await getTournamentPlayers(
         env.DB,
         id
       );
-    
+
     const parsedTournament =
       parseTournament(
         tournament
       );
-    
+
     parsedTournament.tournament_players =
       tournamentPlayers || [];
-    
+
+    if (parsedTournament.champion) {
+      parsedTournament.champion_profile_pic =
+        await getTournamentChampionProfilePic(
+          env.DB,
+          id,
+          parsedTournament.champion
+        );
+    }
+
     return Response.json({
       success: true,
       tournament: parsedTournament
     });
-    
+
   } catch (error) {
     console.error(
       "Get tournament error:",
       error
     );
-    
+
     return Response.json({
       success: false,
       message: error.message ||
@@ -7303,70 +7312,6 @@ async function updateTournamentRoute(
 }
 
 
-async function getTournamentRoute(
-  env,
-  id,
-  user
-) {
-  try {
-    const tournament =
-      await getTournament(
-        env.DB,
-        id
-      );
-
-    if (!tournament) {
-      return Response.json({
-        success: false,
-        message: "Tournament not found."
-      }, {
-        status: 404
-      });
-    }
-
-    const tournamentPlayers =
-      await getTournamentPlayers(
-        env.DB,
-        id
-      );
-
-    const parsedTournament =
-      parseTournament(
-        tournament
-      );
-
-    parsedTournament.tournament_players =
-      tournamentPlayers || [];
-
-    if (parsedTournament.champion) {
-      parsedTournament.champion_profile_pic =
-        await getTournamentChampionProfilePic(
-          env.DB,
-          id,
-          parsedTournament.champion
-        );
-    }
-
-    return Response.json({
-      success: true,
-      tournament: parsedTournament
-    });
-
-  } catch (error) {
-    console.error(
-      "Get tournament error:",
-      error
-    );
-
-    return Response.json({
-      success: false,
-      message: error.message ||
-        "Failed to load tournament."
-    }, {
-      status: 500
-    });
-  }
-}
 
 async function acceptTournamentRulesRoute(
   env,
