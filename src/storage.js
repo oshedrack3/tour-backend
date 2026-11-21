@@ -126,6 +126,38 @@ export async function getTournamentForUser(
     .first();
 }
 
+export async function getTournamentChampionProfilePic(
+  db,
+  tournamentId,
+  championId
+) {
+  if (!tournamentId || !championId) return null;
+
+  const result = await db
+    .prepare(`
+      SELECT u.profile_pic
+      FROM tournament_players tp
+      INNER JOIN users u
+        ON u.id = tp.user_id
+      WHERE tp.tournament_id = ?
+      AND (
+        tp.team_id = ?
+        OR tp.user_id = ?
+      )
+      AND tp.status = 'accepted'
+      LIMIT 1
+    `)
+    .bind(
+      tournamentId,
+      championId,
+      championId
+    )
+    .first();
+
+  return result?.profile_pic || null;
+}
+
+
 export async function getTournamentsByOwner(
   db,
   adminUid

@@ -1,4 +1,5 @@
 import {
+  getTournamentChampionProfilePic,
   getTournamentDisciplinaryActions,
   deductTournamentPlayerPoints,
   reverseTournamentPlayerDeduction,
@@ -7301,18 +7302,19 @@ async function updateTournamentRoute(
   }
 }
 
-async function getTournamentRulesRoute(
+
+async function getTournamentRoute(
   env,
-  tournamentId,
+  id,
   user
 ) {
   try {
     const tournament =
       await getTournament(
         env.DB,
-        tournamentId
+        id
       );
-    
+
     if (!tournament) {
       return Response.json({
         success: false,
@@ -7321,82 +7323,45 @@ async function getTournamentRulesRoute(
         status: 404
       });
     }
-    
-    if (!tournament.competition_id) {
-      return Response.json({
-        success: true,
-        rules: null,
-        rules_version: null,
-        accepted: true
-      });
-    }
-    
-    const competition =
-      await env.DB
-      .prepare(`
-          SELECT
-            id,
-            rules,
-            rules_version,
-            rules_updated_at
-          FROM competitions
-          WHERE id = ?
-        `)
-      .bind(
-        tournament.competition_id
-      )
-      .first();
-    
-    if (!competition) {
-      return Response.json({
-        success: true,
-        rules: null,
-        rules_version: null,
-        accepted: true
-      });
-    }
-    
-    if (!competition.rules) {
-      return Response.json({
-        success: true,
-        rules: null,
-        rules_version: competition.rules_version,
-        accepted: true
-      });
-    }
-    
-    const acceptance =
-      await getTournamentRuleAcceptance(
+
+    const tournamentPlayers =
+      await getTournamentPlayers(
         env.DB,
-        tournamentId,
-        user.id
+        id
       );
-    
-    const accepted = !!acceptance &&
-      Number(
-        acceptance.rules_version
-      ) === Number(
-        competition.rules_version
+
+    const parsedTournament =
+      parseTournament(
+        tournament
       );
-    
+
+    parsedTournament.tournament_players =
+      tournamentPlayers || [];
+
+    if (parsedTournament.champion) {
+      parsedTournament.champion_profile_pic =
+        await getTournamentChampionProfilePic(
+          env.DB,
+          id,
+          parsedTournament.champion
+        );
+    }
+
     return Response.json({
       success: true,
-      rules: competition.rules,
-      rules_version: competition.rules_version,
-      rules_updated_at: competition.rules_updated_at,
-      accepted
+      tournament: parsedTournament
     });
-    
+
   } catch (error) {
     console.error(
-      "Get tournament rules error:",
+      "Get tournament error:",
       error
     );
-    
+
     return Response.json({
       success: false,
       message: error.message ||
-        "Failed to load tournament rules."
+        "Failed to load tournament."
     }, {
       status: 500
     });
