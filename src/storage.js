@@ -38,6 +38,8 @@ export async function getCompetitionsByOwner(
         rules,
         rules_version,
         rules_updated_at,
+        registration_fee,
+        admin_fee,
         created_at,
         updated_at
       FROM competitions
@@ -46,9 +48,9 @@ export async function getCompetitionsByOwner(
     `)
     .bind(ownerId)
     .all();
+  
   return result.results || [];
 }
-
 export async function createCompetition(
   db,
   competition
