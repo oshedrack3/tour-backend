@@ -21,36 +21,21 @@ export async function getCompetition(db, id) {
     .first();
 }
 
-export async function getCompetitionsByOwner(
-  db,
-  ownerId
-) {
+
+export async function getCompetitionsByOwner(db, ownerId) {
   const result = await db
     .prepare(`
-      SELECT
-        id,
-        name,
-        owner_id,
-        logo_url,
-        logo_public_id,
-        tournament_count,
-        active_seasons,
-        rules,
-        rules_version,
-        rules_updated_at,
-        registration_fee,
-        admin_fee,
-        created_at,
-        updated_at
+      SELECT *
       FROM competitions
       WHERE owner_id = ?
       ORDER BY created_at DESC
     `)
     .bind(ownerId)
     .all();
-  
+
   return result.results || [];
 }
+
 export async function createCompetition(
   db,
   competition
@@ -1841,16 +1826,7 @@ export async function updateMatchSubmission(
 export async function getAllCompetitions(db) {
   const result = await db
     .prepare(`
-      SELECT
-        id,
-        name,
-        owner_id,
-        logo_url,
-        logo_public_id,
-        tournament_count,
-        active_seasons,
-        created_at,
-        updated_at
+      SELECT *
       FROM competitions
       ORDER BY created_at DESC
     `)
