@@ -5,7 +5,10 @@ import {
   generateAuthenticationOptions,
   verifyAuthenticationResponse
 } from "@simplewebauthn/server";
-
+import {
+  authenticate,
+  createGuestToken
+} from "./middleware.js";
 import {
   sendPushToUser
 } from "./pushNotifications.js";
@@ -70,6 +73,12 @@ export async function handleAuthRequest(request, env) {
   ) {
     return await passkeyStatus(request, env);
   }
+  if (
+  request.method === "POST" &&
+  pathname === "/auth/guest"
+) {
+  return await createGuestSession(env);
+}
   return Response.json(
   {
     success: false,
@@ -406,91 +415,37 @@ async function logout(request, env) {
   }
 }
 
+
 async function verify(request, env) {
   try {
-    const body = await request.json();
+    const body = await request.json().catch(() => ({}));
     const token = String(body.token || "").trim();
     
-    if (!token) {
-      return Response.json(
-      {
-        success: false,
-        message: "Token is required."
-      }, { status: 400 });
+    const headers = new Headers(request.headers);
+    
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
     }
     
-    const session = await env.DB
-      .prepare(`
-        SELECT
-          s.token,
-          s.user_id,
-          s.created_at AS session_created_at,
-          s.expires_at,
-          s.active,
-          u.id,
-          u.username,
-          u.email,
-          u.role,
-          u.created_at
-        FROM sessions s
-        INNER JOIN users u
-          ON u.id = s.user_id
-        WHERE s.token = ?
-        LIMIT 1
-      `)
-      .bind(token)
-      .first();
-    
-    if (!session) {
-      return Response.json(
-      {
-        success: false,
-        message: "Invalid session."
-      }, { status: 401 });
-    }
-    
-    if (!Number(session.active)) {
-      return Response.json(
-      {
-        success: false,
-        message: "Session inactive."
-      }, { status: 401 });
-    }
-    
-    if (Date.now() > Number(session.expires_at)) {
-      await env.DB
-        .prepare(`
-          DELETE FROM sessions
-          WHERE token = ?
-        `)
-        .bind(token)
-        .run();
-      
-      return Response.json(
-      {
-        success: false,
-        message: "Session expired."
-      }, { status: 401 });
-    }
-    
-    return Response.json({
-      success: true,
-      user: {
-        id: session.id,
-        username: session.username,
-        email: session.email,
-        role: session.role,
-        created_at: session.created_at
-      }
+    const authRequest = new Request(request, {
+      headers
     });
+    
+    const auth = await authenticate(authRequest, env);
+    
+    return Response.json(auth, {
+      status: auth.success ? 200 : auth.status || 500
+    });
+    
   } catch (error) {
     console.error("Verify error:", error);
     
-    return Response.json(
-    {
+    return Response.json({
       success: false,
       message: error.message || "Session verification failed."
-    }, { status: 500 });
+    }, {
+      status: 500
+    });
   }
 }
 
@@ -1190,4 +1145,42 @@ async function passkeyStatus(request, env) {
 }
 
 
-
+async function createGuestSession(env) {
+  try {
+    const token = await createGuestToken(env);
+    
+    const auth = await authenticate(
+      new Request("https://internal/auth", {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      }),
+      env
+    );
+    
+    if (!auth.success) {
+      throw new Error(auth.message || "Guest authentication failed.");
+    }
+    
+    return Response.json({
+      success: true,
+      token,
+      user: auth.user,
+      expiresAt: Date.now() + 86400 * 1000
+    }, {
+      headers: {
+        "Cache-Control": "no-store"
+      }
+    });
+    
+  } catch (error) {
+    console.error("Guest session creation error:", error);
+    
+    return Response.json({
+      success: false,
+      message: "Unable to create guest session."
+    }, {
+      status: 500
+    });
+  }
+}

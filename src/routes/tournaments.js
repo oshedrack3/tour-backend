@@ -57,6 +57,32 @@ export async function handleTournamentRequest(
   const pathname =
     url.pathname.replace(/\/+$/, "") || "/";
   
+  const isGuest = user?.role === "guest";
+
+const guestAllowed =
+  request.method === "GET" &&
+  (
+    pathname === "/players/head-to-head" ||
+    pathname === "/players/search" ||
+    /^\/tournaments\/[^/]+$/.test(pathname) ||
+    /^\/tournaments\/[^/]+\/matches$/.test(pathname) ||
+    /^\/tournaments\/[^/]+\/table$/.test(pathname) ||
+    /^\/tournaments\/[^/]+\/statistics$/.test(pathname) ||
+    /^\/tournaments\/[^/]+\/rules$/.test(pathname) ||
+    /^\/tournaments\/[^/]+\/teams\/[^/]+\/squad$/.test(pathname) ||
+    /^\/tournaments\/[^/]+\/disciplinary-actions$/.test(pathname)
+  );
+
+if (isGuest && !guestAllowed) {
+  return Response.json({
+    success: false,
+    message: "Please sign in to perform this action."
+  }, {
+    status: 403
+  });
+}
+  
+  
   if (
     request.method === "POST" &&
     pathname === "/teams/create"
