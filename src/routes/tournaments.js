@@ -60,13 +60,22 @@ export async function handleTournamentRequest(
   request.method === "GET" &&
   /^\/public\/[^/]+\/[^/]+$/.test(pathname)
 ) {
-  const parts = pathname.split("/");
-  
-  return await getPublicTournamentRoute(
-    env,
-    decodeURIComponent(parts[2]),
-    decodeURIComponent(parts[3])
-  );
+  try {
+    const parts = pathname.split("/");
+    
+    return await getPublicTournamentRoute(
+      env,
+      decodeURIComponent(parts[2]),
+      decodeURIComponent(parts[3])
+    );
+  } catch (error) {
+    return Response.json({
+      success: false,
+      message: "Invalid public tournament URL."
+    }, {
+      status: 400
+    });
+  }
 }
   
   const isGuest = user?.role === "guest";
