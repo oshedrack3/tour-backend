@@ -414,8 +414,6 @@ async function logout(request, env) {
     }, { status: 500 });
   }
 }
-
-
 async function verify(request, env) {
   try {
     const body = await request.json().catch(() => ({}));
@@ -427,7 +425,8 @@ async function verify(request, env) {
       headers.set("Authorization", `Bearer ${token}`);
     }
     
-    const authRequest = new Request(request, {
+    const authRequest = new Request(request.url, {
+      method: "GET",
       headers
     });
     
@@ -448,7 +447,6 @@ async function verify(request, env) {
     });
   }
 }
-
 async function hashPassword(password) {
   const encoder = new TextEncoder();
   
