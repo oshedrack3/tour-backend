@@ -56,6 +56,18 @@ export async function handleTournamentRequest(
   
   const pathname =
     url.pathname.replace(/\/+$/, "") || "/";
+  if (
+  request.method === "GET" &&
+  /^\/public\/[^/]+\/[^/]+$/.test(pathname)
+) {
+  const parts = pathname.split("/");
+  
+  return await getPublicTournamentRoute(
+    env,
+    decodeURIComponent(parts[2]),
+    decodeURIComponent(parts[3])
+  );
+}
   
   const isGuest = user?.role === "guest";
 
@@ -10538,6 +10550,81 @@ async function getTournamentStatisticsRoute(
     return Response.json({
       success: false,
       message: error.message || "Failed to load tournament statistics."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function getPublicTournamentRoute(
+  env,
+  competitionSlug,
+  tournamentSlug
+) {
+  try {
+    const tournament = await env.DB.prepare(`
+      SELECT
+        t.*,
+        c.name AS competition_name,
+        c.public_slug AS competition_slug
+      FROM tournaments t
+      INNER JOIN competitions c
+        ON c.id = t.competition_id
+      WHERE LOWER(REPLACE(TRIM(c.public_slug), ' ', '')) =
+            LOWER(REPLACE(TRIM(?), ' ', ''))
+      AND LOWER(REPLACE(TRIM(t.public_slug), ' ', '')) =
+            LOWER(REPLACE(TRIM(?), ' ', ''))
+      LIMIT 1
+    `).bind(
+      competitionSlug,
+      tournamentSlug
+    ).first();
+    
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    const parsedTournament = parseTournament(tournament);
+    
+    parsedTournament.tournament_players =
+      await getTournamentPlayers(
+        env.DB,
+        tournament.id
+      ) || [];
+    
+    if (parsedTournament.champion) {
+      parsedTournament.champion_profile_pic =
+        await getTournamentChampionProfilePic(
+          env.DB,
+          tournament.id,
+          parsedTournament.champion
+        );
+    }
+    
+    return Response.json({
+      success: true,
+      competition: {
+        id: tournament.competition_id,
+        name: tournament.competition_name,
+        public_slug: tournament.competition_slug
+      },
+      tournament: parsedTournament
+    });
+    
+  } catch (error) {
+    console.error(
+      "Get public tournament error:",
+      error
+    );
+    
+    return Response.json({
+      success: false,
+      message: "Failed to load tournament."
     }, {
       status: 500
     });

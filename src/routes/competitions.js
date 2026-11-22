@@ -27,6 +27,16 @@ export async function handleCompetitionRequest(
     );
   }
   if (
+  request.method === "GET" &&
+  pathname.startsWith("/competitions/public/")
+) {
+  const slug = pathname.split("/")[3];
+  
+  if (slug) {
+    return await getPublicCompetitionRoute(env, slug);
+  }
+}
+  if (
     request.method === "GET" &&
     pathname === "/competitions/my"
   ) {
@@ -612,6 +622,41 @@ async function updateCompetitionRoute(
       success: false,
       message: error.message ||
         "Failed to update competition."
+    }, {
+      status: 500
+    });
+  }
+}
+
+async function getPublicCompetitionRoute(env, slug) {
+  try {
+    const competition = await env.DB.prepare(`
+      SELECT *
+      FROM competitions
+      WHERE LOWER(TRIM(public_slug)) = LOWER(TRIM(?))
+      LIMIT 1
+    `).bind(slug).first();
+    
+    if (!competition) {
+      return Response.json({
+        success: false,
+        message: "Competition not found."
+      }, {
+        status: 404
+      });
+    }
+    
+    return Response.json({
+      success: true,
+      competition
+    });
+    
+  } catch (error) {
+    console.error("Get public competition error:", error);
+    
+    return Response.json({
+      success: false,
+      message: "Failed to load competition."
     }, {
       status: 500
     });
