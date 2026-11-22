@@ -1507,6 +1507,7 @@ async function testPushRoute(
 }
 
 
+
 async function getGlobalRankingsRoute(
   request,
   env,
@@ -1514,9 +1515,9 @@ async function getGlobalRankingsRoute(
 ) {
   try {
     const url = new URL(request.url);
-    
+
     const limitParam = url.searchParams.get("limit");
-    
+
     const limit = Math.min(
       Math.max(
         parseInt(limitParam, 10) || 100,
@@ -1524,7 +1525,7 @@ async function getGlobalRankingsRoute(
       ),
       100
     );
-    
+
     const result = await env.DB
       .prepare(`
         WITH all_stats AS (
@@ -1566,6 +1567,7 @@ async function getGlobalRankingsRoute(
         SELECT
           u.id,
           u.username,
+          u.profile_pic,
           u.rating,
           u.highest_rating,
           u.highest_rank,
@@ -1608,17 +1610,18 @@ async function getGlobalRankingsRoute(
       `)
       .bind(limit)
       .all();
-    
+
     return Response.json({
       success: true,
       rankings: result.results || []
     });
+
   } catch (error) {
     console.error(
       "Global rankings error:",
       error
     );
-    
+
     return Response.json({
       success: false,
       message: error.message ||
