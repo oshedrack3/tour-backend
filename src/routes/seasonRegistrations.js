@@ -47,35 +47,53 @@ async function getAvailableSeasons(env) {
   `).bind(Date.now()).all();
 }
 
+
 async function handleAvailableSeasons(env) {
   const result = await getAvailableSeasons(env);
-  
+
   const seasons = (result.results || [])
     .filter(tournament =>
       Number(tournament.registered_count) <
       Number(tournament.registration_capacity)
     )
-    .map(tournament => ({
-      tournament_id: tournament.tournament_id,
-      tournament_name: tournament.tournament_name,
-      season: tournament.season,
-      competition_id: tournament.competition_id,
-      competition_name: tournament.competition_name,
-      registration_status: tournament.registration_status,
-      registration_deadline: tournament.registration_deadline,
-      registration_capacity: Number(tournament.registration_capacity),
-      registered_count: Number(tournament.registered_count),
-      available_spaces: Math.max(
-        0,
-        Number(tournament.registration_capacity) -
-        Number(tournament.registered_count)
-      ),
-      registration_fee: Number(tournament.registration_fee),
-      admin_fee: Number(tournament.admin_fee),
-      total_amount: Number(tournament.registration_fee) +
-        Number(tournament.admin_fee)
-    }));
-  
+    .map(tournament => {
+      const paidCount = Number(tournament.registered_count) || 0;
+      const entryFee = Number(tournament.registration_fee) || 0;
+      const prizePool = paidCount * entryFee;
+
+      const first = Math.round(prizePool * 0.40);
+      const second = Math.round(prizePool * 0.30);
+      const third = Math.round(prizePool * 0.20);
+      const fourth = prizePool - first - second - third;
+
+      return {
+        tournament_id: tournament.tournament_id,
+        tournament_name: tournament.tournament_name,
+        season: tournament.season,
+        competition_id: tournament.competition_id,
+        competition_name: tournament.competition_name,
+        registration_status: tournament.registration_status,
+        registration_deadline: tournament.registration_deadline,
+        registration_capacity: Number(tournament.registration_capacity),
+        registered_count: paidCount,
+        paid_registration_count: paidCount,
+        available_spaces: Math.max(
+          0,
+          Number(tournament.registration_capacity) - paidCount
+        ),
+        registration_fee: entryFee,
+        admin_fee: Number(tournament.admin_fee),
+        total_amount: entryFee + Number(tournament.admin_fee),
+        prize_pool: prizePool,
+        prize_distribution: {
+          first,
+          second,
+          third,
+          fourth
+        }
+      };
+    });
+
   return json({
     success: true,
     seasons
