@@ -1508,22 +1508,22 @@ async function testPushRoute(
 
 
 
-async function getGlobalRankingsRoute(
-  request,
-  env,
-  user
-) {
+
+async function getGlobalRankingsRoute(request, env, user) {
   try {
     const url = new URL(request.url);
 
-    const limitParam = url.searchParams.get("limit");
+    const limitParam = parseInt(url.searchParams.get("limit"), 10);
+    const offsetParam = parseInt(url.searchParams.get("offset"), 10);
 
     const limit = Math.min(
-      Math.max(
-        parseInt(limitParam, 10) || 100,
-        1
-      ),
+      Math.max(limitParam || 100, 1),
       100
+    );
+
+    const offset = Math.max(
+      Number.isNaN(offsetParam) ? 0 : offsetParam,
+      0
     );
 
     const result = await env.DB
@@ -1571,23 +1571,15 @@ async function getGlobalRankingsRoute(
           u.rating,
           u.highest_rating,
           u.highest_rank,
-          COALESCE(u.trophies_won, 0)
-            AS trophies_won,
-          COALESCE(c.played, 0)
-            AS played,
-          COALESCE(c.wins, 0)
-            AS wins,
-          COALESCE(c.draws, 0)
-            AS draws,
-          COALESCE(c.losses, 0)
-            AS losses,
+          COALESCE(u.trophies_won, 0) AS trophies_won,
+          COALESCE(c.played, 0) AS played,
+          COALESCE(c.wins, 0) AS wins,
+          COALESCE(c.draws, 0) AS draws,
+          COALESCE(c.losses, 0) AS losses,
+          COALESCE(c.goals_for, 0) AS goals_for,
+          COALESCE(c.goals_against, 0) AS goals_against,
           COALESCE(c.goals_for, 0)
-            AS goals_for,
-          COALESCE(c.goals_against, 0)
-            AS goals_against,
-          COALESCE(c.goals_for, 0)
-            - COALESCE(c.goals_against, 0)
-            AS goal_difference,
+            - COALESCE(c.goals_against, 0) AS goal_difference,
           ROUND(
             100.0 * COALESCE(c.wins, 0)
             / NULLIF(c.played, 0),
@@ -1606,26 +1598,27 @@ async function getGlobalRankingsRoute(
           ) DESC,
           COALESCE(c.goals_for, 0) DESC,
           u.username COLLATE NOCASE ASC
-        LIMIT ?
+        LIMIT ? OFFSET ?
       `)
-      .bind(limit)
+      .bind(limit + 1, offset)
       .all();
+
+    const rows = result.results || [];
+    const hasMore = rows.length > limit;
+    const rankings = rows.slice(0, limit);
 
     return Response.json({
       success: true,
-      rankings: result.results || []
+      rankings,
+      hasMore
     });
 
   } catch (error) {
-    console.error(
-      "Global rankings error:",
-      error
-    );
+    console.error("Global rankings error:", error);
 
     return Response.json({
       success: false,
-      message: error.message ||
-        "Failed to load global rankings."
+      message: error.message || "Failed to load global rankings."
     }, {
       status: 500
     });
