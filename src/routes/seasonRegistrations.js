@@ -48,8 +48,26 @@ async function getAvailableSeasons(env) {
 }
 
 
+
 async function handleAvailableSeasons(env) {
-  const result = await getAvailableSeasons(env);
+  const [result, contributionsResult] = await Promise.all([
+    getAvailableSeasons(env),
+    env.DB.prepare(`
+      SELECT
+        tournament_id,
+        SUM(amount) AS contribution_total
+      FROM financial_contributions
+      WHERE tournament_id IS NOT NULL
+      GROUP BY tournament_id
+    `).all()
+  ]);
+
+  const contributionsMap = new Map(
+    (contributionsResult.results || []).map(item => [
+      String(item.tournament_id),
+      Number(item.contribution_total) || 0
+    ])
+  );
 
   const seasons = (result.results || [])
     .filter(tournament =>
@@ -59,7 +77,11 @@ async function handleAvailableSeasons(env) {
     .map(tournament => {
       const paidCount = Number(tournament.registered_count) || 0;
       const entryFee = Number(tournament.registration_fee) || 0;
-      const prizePool = paidCount * entryFee;
+      const contributionTotal =
+        contributionsMap.get(String(tournament.tournament_id)) || 0;
+
+      const registrationTotal = paidCount * entryFee;
+      const prizePool = registrationTotal + contributionTotal;
 
       const first = Math.round(prizePool * 0.40);
       const second = Math.round(prizePool * 0.30);
@@ -84,6 +106,8 @@ async function handleAvailableSeasons(env) {
         registration_fee: entryFee,
         admin_fee: Number(tournament.admin_fee),
         total_amount: entryFee + Number(tournament.admin_fee),
+        registration_total: registrationTotal,
+        contribution_total: contributionTotal,
         prize_pool: prizePool,
         prize_distribution: {
           first,
