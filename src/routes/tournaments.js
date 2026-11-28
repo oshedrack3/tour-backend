@@ -126,6 +126,21 @@ if (isGuest && !guestAllowed) {
   }
   
   if (
+  request.method === "POST" &&
+  /^\/tournaments\/[^/]+\/matches\/schedule$/.test(pathname)
+) {
+  const tournamentId =
+    pathname.split("/")[2];
+  
+  return await scheduleMatchesRoute(
+    request,
+    env,
+    tournamentId,
+    user
+  );
+}
+  
+  if (
     request.method === "GET" &&
     pathname === "/players/search"
   ) {
@@ -620,6 +635,195 @@ if (isGuest && !guestAllowed) {
   }
   
   return null;
+}
+
+
+
+async function scheduleMatchesRoute(
+  request,
+  env,
+  tournamentId,
+  user
+) {
+  try {
+    const tournament =
+      await getTournamentForUser(
+        env.DB,
+        tournamentId,
+        user.id
+      );
+
+    if (!tournament) {
+      return Response.json({
+        success: false,
+        message: "Tournament not found or access denied."
+      }, {
+        status: 404
+      });
+    }
+
+    if (tournament.admin_uid !== user.id) {
+      return Response.json({
+        success: false,
+        message: "Only the tournament admin can schedule matches."
+      }, {
+        status: 403
+      });
+    }
+
+    const body = await request.json();
+
+    const {
+      matchId,
+      date,
+      time
+    } = body;
+
+    if (
+      !matchId ||
+      typeof matchId !== "string"
+    ) {
+      return Response.json({
+        success: false,
+        message: "Match ID is required."
+      }, {
+        status: 400
+      });
+    }
+
+    const match = await env.DB
+      .prepare(`
+        SELECT id, played
+        FROM matches
+        WHERE id = ?
+        AND tournament_id = ?
+      `)
+      .bind(
+        matchId,
+        tournamentId
+      )
+      .first();
+
+    if (!match) {
+      return Response.json({
+        success: false,
+        message: "Match not found."
+      }, {
+        status: 404
+      });
+    }
+
+    if (Number(match.played) === 1) {
+      return Response.json({
+        success: false,
+        message: "Completed matches cannot be scheduled."
+      }, {
+        status: 400
+      });
+    }
+
+    if (
+      !date ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(date)
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid date."
+      }, {
+        status: 400
+      });
+    }
+
+    const parsedDate = new Date(
+      `${date}T00:00:00Z`
+    );
+
+    if (
+      Number.isNaN(parsedDate.getTime()) ||
+      parsedDate.toISOString().slice(0, 10) !== date
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid calendar date."
+      }, {
+        status: 400
+      });
+    }
+
+    const today = new Intl.DateTimeFormat(
+      "en-CA",
+      {
+        timeZone: "Africa/Lagos",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }
+    ).format(new Date());
+
+    if (date < today) {
+      return Response.json({
+        success: false,
+        message: "Match date cannot be in the past."
+      }, {
+        status: 400
+      });
+    }
+
+    if (
+      typeof time !== "string" ||
+      !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)
+    ) {
+      return Response.json({
+        success: false,
+        message: "Invalid kickoff time. Use HH:mm format."
+      }, {
+        status: 400
+      });
+    }
+
+    const scheduledAt =
+      `${date}T${time}:00+01:00`;
+
+    await env.DB
+      .prepare(`
+        UPDATE matches
+        SET
+          scheduled_at = ?,
+          updated_at = ?
+        WHERE
+          id = ?
+          AND tournament_id = ?
+          AND played = 0
+      `)
+      .bind(
+        scheduledAt,
+        Date.now(),
+        matchId,
+        tournamentId
+      )
+      .run();
+
+    return Response.json({
+      success: true,
+      message: "Match scheduled successfully.",
+      matchId,
+      scheduled_at: scheduledAt
+    });
+
+  } catch (error) {
+    console.error(
+      "Schedule match error:",
+      error
+    );
+
+    return Response.json({
+      success: false,
+      message: error.message ||
+        "Failed to schedule match."
+    }, {
+      status: 500
+    });
+  }
 }
 
 
